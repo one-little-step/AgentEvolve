@@ -45,7 +45,7 @@ src/agent_evolve/
     contracts.py          # agent-neutral data and adapter contracts
   adapters/
     base.py               # runtime adapter validation
-    cuga.py               # future CUGA SDK adapter (after inspection)
+    cuga.py               # planned future CUGA SDK adapter path (not present; after inspection)
 ```
 
 All new capabilities must be tested against these contracts before any claim of

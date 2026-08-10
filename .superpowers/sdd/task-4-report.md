@@ -139,3 +139,20 @@ sentence. The boundary now contains both the mandated sentence and a no-scope-
 expansion restatement needed for the existing assertion.
 
 Final result: **1 passed**.
+
+## Re-Review Follow-Up
+
+Reviewer finding: the inventory package-tree block inaccurately claimed that
+`src/agent_evolve/adapters/cuga.py` exists. The path is not present in the
+repository.
+
+Resolution: marked `cuga.py` as a planned future CUGA SDK adapter path and
+explicitly stated that it is not present. No unrelated material was changed.
+
+Test command:
+
+```bash
+uv run pytest tests/test_self_contained_migration.py -v 2>&1 | tee terminal_output/migration/08_decision_boundary_tests.log
+```
+
+Result: **5 passed**.
