@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.env
+vendor/
+artifacts/
+terminal_output/
+*.egg-info/
+
+# Reference snapshot: keep only source, never bytecode
+reference/**/__pycache__/
+reference/**/*.py[cod]
