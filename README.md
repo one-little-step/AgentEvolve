@@ -23,7 +23,12 @@ or vendor CUGA and must not assume undocumented CUGA APIs.
 8. Read `docs/rho_evolution/18-rho-parallel-gepa-target-architecture.md`.
 9. Read `docs/rho_evolution/19-rho-parallel-gepa-research-hypotheses.md`.
 10. Read `docs/migration/cuga-adaptation-guide.md`.
-11. Read `reference/gaia_evolution_core/README.md`.
+11. Read `docs/migration/self-contained-migration-inventory.md`.
+12. Read `reference/gaia_evolution_core/README.md`.
+
+A fresh agent must use these local materials before changing architecture or
+attempting CUGA integration. Do not invent CUGA APIs, artifact types, trace
+fields, checkpoint behavior, replay semantics, or package names.
 
 The historical RHO-GEPA archive in `docs/rho_evolution/` eliminates any need to
 rediscover the RHO-GEPA design from scratch; use it as authoritative rationale,
