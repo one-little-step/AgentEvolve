@@ -18,9 +18,9 @@ deterministic merge, and optional safe parallelism.
 
 ## CUGA Boundary
 
-CUGA is the intended reference adapter through its SDK. We do not invent CUGA APIs,
-artifact types, trace fields, checkpoint behavior, replay semantics, or package
-names. Inspect official SDK documentation and source first; then map only proven
+CUGA is the intended reference adapter through its SDK. Do not invent CUGA APIs, artifact types, trace fields, checkpoint behavior, replay semantics, or package names.
+This boundary means agents do not invent CUGA APIs beyond proven public capabilities.
+Inspect official SDK documentation and source first; then map only proven
 public capabilities to the active adapter contract.
 
 ## First Implementation Path
