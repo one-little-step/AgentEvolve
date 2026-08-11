@@ -1,10 +1,71 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1]
+
+REQUIRED_TRACKED_PATHS = {
+    ".gitignore",
+    "pyproject.toml",
+    "uv.lock",
+    "README.md",
+    "AGENTS.md",
+    "docs/START_HERE.md",
+    "docs/architecture/target-rho-parallel-gepa.md",
+    "docs/research/hypotheses-and-validation.md",
+    "docs/migration/gaia-baseline-and-gap-audit.md",
+    "docs/migration/cuga-adaptation-guide.md",
+    "docs/migration/cuga-sdk-integration-notes.md",
+    "docs/migration/self-contained-migration-inventory.md",
+    "docs/plans/rho-parallel-gepa-completion.md",
+    "docs/vision-and-decision-record.md",
+    "docs/rho_evolution/README.md",
+    "docs/rho_evolution/18-rho-parallel-gepa-target-architecture.md",
+    "docs/rho_evolution/19-rho-parallel-gepa-research-hypotheses.md",
+    "reference/gaia_evolution_core/README.md",
+    "tests/test_contracts.py",
+}
+
+REQUIRED_ACTIVE_PACKAGE_PATHS = {
+    "src/agent_evolve/__init__.py",
+    "src/agent_evolve/core/__init__.py",
+    "src/agent_evolve/core/contracts.py",
+    "src/agent_evolve/adapters/__init__.py",
+    "src/agent_evolve/adapters/base.py",
+}
+
+
+def test_active_package_configuration_and_onboarding_are_tracked() -> None:
+    tracked = set(
+        subprocess.run(
+            ["git", "ls-files"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+    )
+    required = REQUIRED_TRACKED_PATHS | REQUIRED_ACTIVE_PACKAGE_PATHS
+    assert required <= tracked, sorted(required - tracked)
+
+    package = ROOT / "src" / "agent_evolve"
+    assert package.is_dir()
+    assert {path.relative_to(ROOT).as_posix() for path in package.rglob("*.py")} >= REQUIRED_ACTIVE_PACKAGE_PATHS
+
+
+def test_repository_ignores_macos_finder_metadata() -> None:
+    assert ".DS_Store" in (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+
+def test_historical_archive_quick_start_is_explicitly_non_runnable() -> None:
+    archive_readme = (ROOT / "docs" / "rho_evolution" / "README.md").read_text(encoding="utf-8")
+    assert "not runnable in AgentEvolve" in archive_readme
+    assert "unavailable in AgentEvolve" in archive_readme
+    assert "../START_HERE.md" in archive_readme
+    assert "CUGA-neutral" in archive_readme
 
 
 def test_complete_rho_evolution_archive_is_present() -> None:

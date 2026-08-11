@@ -4,7 +4,10 @@
 > RHO and RHO-GEPA analysis that informed AgentEvolve. They are authoritative for
 > established rationale, schemas, debugging evidence, and target architecture;
 > Gaia-specific paths and runtime assumptions are historical examples, not active
-> AgentEvolve dependencies. Read `../vision-and-decision-record.md` and
+> AgentEvolve dependencies. The commands in the historical Quick Start below are
+> **not runnable in AgentEvolve**: their Gaia `dataset/...` scripts are
+> **unavailable in AgentEvolve**. For the active CUGA-neutral path, start at
+> `../START_HERE.md`, then read `../vision-and-decision-record.md` and
 > `../migration/cuga-adaptation-guide.md` before implementing against CUGA.
 
 This directory contains a complete, self-contained explanation of the
@@ -42,6 +45,11 @@ optionally materializes the best candidate as a new immutable version.
 | [19-rho-parallel-gepa-research-hypotheses.md](19-rho-parallel-gepa-research-hypotheses.md) | Research claims, baselines, calibration, entropy/clustering validation, merge metrics, and ablation protocol |
 
 ## Quick Start
+
+> **Historical example only, do not run in AgentEvolve.** The following Gaia
+> `dataset/...` commands are preserved to explain the former workflow, but those
+> scripts are unavailable in this repository. Follow the active CUGA-neutral
+> onboarding path in `../START_HERE.md` instead.
 
 Run one evolution round:
 
