@@ -22,7 +22,7 @@ describes intent and those documents state a mandate, the mandate governs.
 | `clustering.py` | target completion | Task-local mechanism alignment and barrier refresh | Cross-task semantic equivalence assumptions |
 | `pool.py` | target replacement | Candidate registry, score comparability, Pareto, parent/champion selection | Workspace mutation or persistence format internals |
 | `entropy.py` | target narrowing | Incremental comparable-evidence entropy statistics | Work-item selection policy |
-| `issues.py` | new | Work-item creation, compatibility constraints, DPP/severity/random selection | Editing or evaluation |
+| `issues.py` | new | Work-item creation, compatibility constraints, quality-diversity DPP plus severity/coverage/random ablation modes | Editing or evaluation |
 | `memory.py` | target replacement | Redacted attempts, worked/failed/probe/retry state, bounded retrieval | Raw task/evaluator/editor payload persistence |
 | `editor.py` | target narrowing | Editor protocol, authorized reads/writes, repairable response handling | Candidate promotion decisions |
 | `evaluation.py` | new | Validation plan, score collection, protected floors, probe budgeting | Adapter-specific evaluator implementation |
@@ -132,8 +132,9 @@ may depend on `cuga_wrapper` or a concrete adapter.
 - Full task IDs, never prefixes/substrings, are used as aggregation keys.
 - Missing comparable mechanisms are excluded from Pareto calculations.
 - Protected floors reject otherwise positive aggregate candidates.
-- DPP selection penalizes similarity, uses greedy MAP inference, and records its
-  deterministic algorithm and prefilter bounds.
+- DPP selection jointly optimizes quality and diversity, uses greedy MAP
+  inference with Schur-complement updates, and records `theta`, score floor,
+  prefilter bounds, and any fallback reason.
 - Editor writes outside the authorized set fail before workspace sealing.
 - Nested or textual sensitive material is rejected/redacted before persistence.
 - A malformed analyzer/editor response yields bounded repair then a recorded

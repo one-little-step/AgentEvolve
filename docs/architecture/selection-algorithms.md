@@ -5,8 +5,14 @@
 This document removes algorithmic ambiguity from `core/issues.py`,
 `core/entropy.py`, and `core/pool.py`. Every formula, algorithm choice, bound,
 and fallback below is mandatory. An implementation must not substitute an
-alternative heuristic, and must not present a quality-ranked selector as a
-diversity selector.
+alternative heuristic.
+
+DPP selection optimizes **quality and diversity together**. A selector that
+maximizes only one of the two is a different, separately named mode and must not
+be presented as DPP. The kernel construction, quality normalization, and
+`theta` balance follow the RHO selection specification in
+[selection_algo_explaination.md](../rho_evolution/selection_algo_explaination.md),
+which remains the authoritative mathematical reference.
 
 ## Entropy Statistics
 
@@ -60,10 +66,15 @@ coordinator barrier, never inside a worker.
 
 ## Issue Quality
 
-Issue quality is a bounded product-free weighted sum in `[0, 1]`:
+DPP optimizes **quality and diversity jointly**. Quality enters the kernel
+diagonal, diversity enters the off-diagonals, and `theta` controls the balance.
+Neither objective may be dropped: a quality-only selector is `severity_rank`, and
+a diversity-only selector is `coverage`. Both exist separately as ablations.
+
+Raw issue quality combines the available evidence signals:
 
 ```text
-quality(i) =
+raw_quality(i) =
     w_severity   * severity(i)
   + w_confidence * confidence(i)
   + w_entropy    * normalized_entropy(i)
@@ -82,6 +93,41 @@ Requirements:
   `GEPA_ENTROPY_FRONTIER_WEIGHT` rather than discarded.
 - Any issue lacking trace-backed artifact attribution is rejected before ranking.
 
+Quality is then floored and normalized, following the RHO construction in
+[selection_algo_explaination.md](../rho_evolution/selection_algo_explaination.md):
+
+```text
+floored(i)    = max(raw_quality(i), GEPA_DPP_SCORE_FLOOR)     # floor default 0.1
+normalized(i) = floored(i) / max_j floored(j)
+```
+
+The floor is strictly positive. It prevents low-quality items from collapsing to
+near-zero weight, which would make the kernel numerically degenerate.
+
+## Theta: Quality Versus Diversity Balance
+
+`theta` scales how strongly quality influences selection, without altering
+embeddings or similarity:
+
+```text
+alpha    = theta / (2 * max(1 - theta, 1e-6))
+quality(i) = normalized(i) ** alpha        if theta < 1.0
+quality(i) = normalized(i)                 if theta == 1.0
+```
+
+`theta == 1.0` is special-cased to avoid an unbounded exponent.
+
+| `theta` | Selection tendency |
+| ---: | --- |
+| 0.0 | Quality effectively uniform; diversity dominates |
+| 0.3 | Diversity first, modest preference for high-value issues |
+| 0.7 | Default balance of value and coverage |
+| 0.9 | Stronger focus on high-value issues |
+| 1.0 | Quality-oriented limit |
+
+Default: `GEPA_DPP_THETA=0.7`, giving `alpha ≈ 1.167`. The resolved `theta`,
+`alpha`, and score floor are mandatory manifest fields.
+
 ## Hard Constraints Before Selection
 
 Applied as filters, not as scoring penalties:
@@ -97,36 +143,73 @@ reserve capacity for under-covered task/mechanism regions
 
 ## DPP Selection: Mandated Algorithm
 
+DPP jointly maximizes quality and diversity. The selection objective is:
+
+```text
+argmax over |Y| = k of det(L_Y)
+```
+
 Similarity uses cosine similarity over issue embeddings, clamped to `[0, 1]`:
 
 ```text
-sim(i, j) = max(0.0, cosine_similarity(e_i, e_j))
+sim(i, j) = clip(cosine_similarity(e_i, e_j), 0.0, 1.0)
 ```
 
-The kernel is quality-weighted:
+Embeddings are L2-normalized before use. A structural similarity signal may be
+blended when the profile declares it, following the RHO construction:
 
 ```text
-L[i][j] = quality(i) * sim(i, j) * quality(j)
-L[i][i] = quality(i)^2 + JITTER      # JITTER default 1e-9
+sim(i, j) = clip(w_sem * semantic(i, j) + w_struct * structural(i, j), 0.0, 1.0)
 ```
 
+with defaults `w_sem = 0.85` and `w_struct = 0.15`, both recorded.
+
+The kernel carries quality on the diagonal and quality-weighted similarity off
+the diagonal:
+
+```text
+L = Q S Q + JITTER * I          # Q = diag(quality), JITTER default 1e-6
+L[i][j] = quality(i) * sim(i, j) * quality(j)
+L[i][i] = quality(i)^2 + JITTER
+```
+
+Why this is a joint objective, not a similarity penalty: for a pair,
+
+```text
+det([[q_i^2, q_i q_j s], [q_i q_j s, q_j^2]]) = q_i^2 * q_j^2 * (1 - s^2)
+```
+
+High quality raises the determinant; high similarity lowers it. Both terms are
+required. An implementation that maximizes only `q` or only `(1 - s)` is not a
+DPP and must not be labelled one.
+
 Selection uses **greedy MAP inference with Cholesky-style incremental
-log-determinant updates**. This is mandatory:
+Schur-complement updates**. This is mandatory:
 
 ```text
 1. Prefilter to at most GEPA_DPP_MAX_ITEMS (default 100) items using the entropy
    heap and quality ranking. Record the prefilter threshold and item counts.
-2. Initialize d[i]^2 = L[i][i] for all candidates.
-3. Repeat until k items are selected or no positive gain remains:
-     select j = argmax_i log(d[i]^2) over remaining items
-     if d[j]^2 <= GEPA_DPP_MIN_GAIN (default 1e-12): stop
-     append j to the selected set
+2. Initialize gain[i] = L[i][i] for all candidates; c[i] = [] for all candidates.
+3. Repeat until k items are selected or no candidate has sufficient gain:
+     select j = the remaining item with maximum gain[i],
+              breaking ties by ascending stable issue/attempt ID
+     if gain[j] <= GEPA_DPP_MIN_GAIN (default 1e-12): stop
+     append j to the selected set and remove it from the remaining set
+     d_j = sqrt(gain[j])
      for each remaining i:
-         e = (L[i][j] - dot(c[i], c[j])) / d[j]
+         e = (L[i][j] - dot(c[i], c[j])) / d_j
          c[i].append(e)
-         d[i]^2 = d[i]^2 - e * e
-4. Break ties by ascending stable issue/attempt ID for determinism.
+         gain[i] = gain[i] - e * e        # selecting j reduces redundant gain
+4. Return the selected set in selection order.
 ```
+
+Notes:
+
+- The first pick maximizes `L[i][i]`, which is the highest quality-weighted item.
+- Compare gains directly. Do not take a logarithm of the gain, since gains reach
+  zero or small negative values from floating-point error and `log` is undefined
+  there.
+- Clamp `gain[i]` at `0.0` after each update to absorb floating-point drift.
 
 Forbidden implementations:
 
@@ -134,12 +217,28 @@ Forbidden implementations:
 - Any selector that adds similarity to quality, which rewards redundancy.
 - Any selector that ignores `sim` and returns top-K by quality while being named
   or documented as DPP.
+- Any selector that ignores `quality` and returns a pure farthest-first set while
+  being named or documented as DPP.
 - Any selector whose output depends on unseeded randomness.
 
-Marginal-gain semantics: selecting an item must reduce the remaining marginal
-gain of similar items. A required test asserts that, given two near-duplicate
-high-quality issues and one dissimilar high-quality issue, the selector returns
-one duplicate plus the dissimilar issue.
+Required behavioral tests:
+
+```text
+test_dpp_penalizes_similarity_and_promotes_diversity
+    Two near-duplicate high-quality issues plus one dissimilar high-quality
+    issue, k=2: the dissimilar issue is selected and both duplicates are not.
+
+test_dpp_prefers_quality_among_equally_diverse_items
+    Three mutually dissimilar issues with distinct quality, k=1: the highest
+    quality issue is selected.
+
+test_dpp_theta_shifts_quality_diversity_balance
+    Raising theta increases selection of high-quality near-duplicates; lowering
+    theta increases distinct-family coverage.
+
+test_dpp_is_deterministic
+    Identical input and configuration produce identical selections.
+```
 
 Hierarchical selection is mandatory to bound cost:
 
@@ -151,10 +250,27 @@ Stage 2: within each selected task, select mechanism clusters.
 Alternate modes remain available for ablations and must be recorded:
 
 ```text
-GEPA_ISSUE_SELECTION_MODE = dpp | severity_rank | random
-severity_rank: order by (severity, confidence, entropy availability, stable ID)
-random: seeded deterministic RNG, seed recorded in manifest
+GEPA_ISSUE_SELECTION_MODE = dpp | severity_rank | coverage | random
+dpp:           joint quality and diversity (default)
+severity_rank: quality only; order by (severity, confidence, entropy availability, stable ID)
+coverage:      diversity only; greedy farthest-first over embeddings
+random:        seeded deterministic RNG, seed recorded in manifest
 ```
+
+## Degenerate-Kernel Fallback
+
+The DPP path falls back to deterministic quality-ordered selection, recording the
+reason, when any of the following holds:
+
+```text
+fewer than two valid candidate issues
+missing, malformed, or dimension-incompatible embeddings
+non-positive eigenvalues or condition number above 1e12
+an exception during kernel construction or greedy selection
+```
+
+The fallback orders by descending quality and breaks ties by stable ID. Silent
+fallback is forbidden; the manifest records `fallback_reason`.
 
 ## Embedding Fallback
 
