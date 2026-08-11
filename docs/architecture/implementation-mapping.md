@@ -28,17 +28,24 @@ refactors before the relevant target contract and tests are approved.
 
 1. Approve these architecture contracts and define the source-of-truth test
    matrix for contracts, redaction, atomicity, and CUGA wrapper behavior.
-2. Add `errors.py`, `config.py`, and `storage.py` with tests before moving
-   orchestration behavior.
-3. Correct pool/evaluation/memory invariants before adding feature depth.
-4. Split analysis, issue selection, and evaluation responsibilities from the
-   current broad modules.
-5. Implement transactional parallel services and test failure rollback.
-6. Implement `cuga_wrapper` against fake runtime factories and immutable
+2. Write `core/contracts.py` and `core/errors.py` to
+   [Data Contracts](data-contracts.md) with every rejection rule tested. Lock
+   these schemas before any consuming module is written.
+3. Add `config.py` and a transactional `storage.py` per
+   [Storage And Transactions](storage-and-transactions.md), including
+   failure-injection and recovery tests.
+4. Correct pool/evaluation/memory invariants before adding feature depth.
+5. Split analysis, issue selection, and evaluation responsibilities from the
+   current broad modules, implementing
+   [Selection Algorithms](selection-algorithms.md) exactly.
+6. Implement [Merge Resolution](merge-resolution.md), then transactional parallel
+   services with rollback tests.
+7. Refactor the orchestrator into an explicit coordinator.
+8. Implement `cuga_wrapper` against fake runtime factories and immutable
    manifests.
-7. Complete development-time CUGA SDK inspection and adapter tests.
-8. Add `CUGAAdapter` only for verified, pinned SDK behavior.
-9. Run matched-budget profile ablations before making research claims.
+9. Complete development-time CUGA SDK inspection and adapter tests.
+10. Add `CUGAAdapter` only for verified, pinned SDK behavior.
+11. Run matched-budget profile ablations before making research claims.
 
 ## Explicit Non-Claims
 

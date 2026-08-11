@@ -41,8 +41,10 @@ runs/
       errors.jsonl
 ```
 
-Actual storage may be filesystem, database, or object store behind `storage.py`.
-The logical record model and atomicity requirements are invariant.
+Actual storage is a transactional metadata store plus a content-addressed blob
+store, as mandated in [Storage And Transactions](storage-and-transactions.md).
+The directory view above is the logical record model; the transactional store is
+authoritative and a filesystem-only backend cannot satisfy the barrier invariant.
 
 ## Immutable Candidate Versioning
 

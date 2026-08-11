@@ -2,11 +2,12 @@
 
 ## Contract Style
 
-This document specifies target ownership and externally visible behavior. Exact
-Python signatures belong in implementation plans once the target contract is
-reviewed; they must preserve these preconditions and postconditions. This avoids
-inventing SDK types or over-constraining LLM reasoning before a concrete
-integration is verified.
+This document specifies target ownership and externally visible behavior. The
+binding record schemas are in [Data Contracts](data-contracts.md); the binding
+algorithms are in [Selection Algorithms](selection-algorithms.md) and
+[Merge Resolution](merge-resolution.md); the binding persistence semantics are in
+[Storage And Transactions](storage-and-transactions.md). Where this document
+describes intent and those documents state a mandate, the mandate governs.
 
 ## Core Modules
 
@@ -88,13 +89,15 @@ Merge starts from a common ancestor and artifact-level change provenance:
 left unchanged, right changed: inherit right
 left changed, right unchanged: inherit left
 both unchanged or identical: inherit shared content
-both changed differently: select evidence-backed side or retain ancestor
+both changed differently: resolve by cited-artifact evidence score, else ancestor
 ```
 
 Only an unresolved conflict within one declared artifact unit may request an
 editor-assisted refinement. The refiner receives that unit's ancestor, left,
 right, relevant evidence, and allowed write target only. The resulting child
-uses normal validation and admission.
+uses normal validation and admission. The exact evidence formula, coverage guard,
+deletion handling, and tie policy are mandated in
+[Merge Resolution](merge-resolution.md).
 
 ## Dependency Boundaries
 
@@ -129,11 +132,15 @@ may depend on `cuga_wrapper` or a concrete adapter.
 - Full task IDs, never prefixes/substrings, are used as aggregation keys.
 - Missing comparable mechanisms are excluded from Pareto calculations.
 - Protected floors reject otherwise positive aggregate candidates.
-- DPP selection penalizes similarity and records its deterministic algorithm.
+- DPP selection penalizes similarity, uses greedy MAP inference, and records its
+  deterministic algorithm and prefilter bounds.
 - Editor writes outside the authorized set fail before workspace sealing.
 - Nested or textual sensitive material is rejected/redacted before persistence.
 - A malformed analyzer/editor response yields bounded repair then a recorded
   non-promotion outcome.
-- A barrier failure leaves pool, score tensor, history, and manifest unchanged.
+- A barrier failure leaves pool, score tensor, history, and manifest unchanged,
+  verified by failure injection at each write statement.
 - Disjoint artifact changes merge without an LLM; an unresolved conflict cannot
   modify unrelated artifacts.
+- A record with an out-of-range score, zero rollouts, or missing mechanism
+  cluster raises a typed validation error.
