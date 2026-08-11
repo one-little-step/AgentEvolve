@@ -217,6 +217,7 @@ class BatchCoordinator:
     def commit_barrier(
         self,
         on_attempt_committed: "Callable[[WorkerResult], None]",
+        on_attempt_rolled_back: "Callable[[WorkerResult], None] | None" = None,
     ) -> tuple[WorkerResult, ...]:
         """Atomically commit all submitted results.
 
@@ -232,6 +233,10 @@ class BatchCoordinator:
         * Results are passed to the callback in deterministic (attempt_id)
           order.
         * Commit happens at most once.
+        * A callback failure invokes compensation callbacks in reverse order
+          before the error is re-raised. The real production barrier will
+          move this responsibility into ``core.storage``'s ACID transaction;
+          this compensation hook keeps the prototype path fail-closed.
         """
         with self._lock:
             if self._committed:
@@ -256,8 +261,16 @@ class BatchCoordinator:
                 self._results[aid] for aid in sorted(self._results.keys())
             )
 
-            for r in sorted_results:
-                on_attempt_committed(r)
+            committed: list[WorkerResult] = []
+            try:
+                for r in sorted_results:
+                    on_attempt_committed(r)
+                    committed.append(r)
+            except Exception:
+                if on_attempt_rolled_back is not None:
+                    for r in reversed(committed):
+                        on_attempt_rolled_back(r)
+                raise
 
             self._committed = True
             return sorted_results

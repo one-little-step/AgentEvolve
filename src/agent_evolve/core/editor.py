@@ -140,10 +140,13 @@ class ValidationResult:
     score: float
     trace_id: str
     passed: bool
+    mechanism_cluster_id: str = "*"
 
     def __post_init__(self) -> None:
         if not (0.0 <= self.score <= 1.0):
             raise ValueError("score must be in [0, 1]")
+        if not self.mechanism_cluster_id:
+            raise ValueError("mechanism_cluster_id is required")
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,15 +214,19 @@ def floors_violated(
     floors: Sequence[ProtectedFloor],
 ) -> tuple[ProtectedFloor, ...]:
     """Return the floors violated by these results."""
-    by_cell: dict[tuple[str, str], float] = {}
-    for r in results:
-        # We can't see the mechanism cluster from ValidationResult; floors
-        # must be checked by the caller using the probe's task + cluster.
-        # For now, this helper just checks task-level floors (cluster="*").
-        pass
     out: list[ProtectedFloor] = []
     for f in floors:
-        relevant = [r for r in results if r.task_id == f.task_id]
+        relevant = [
+            result
+            for result in results
+            if result.task_id == f.task_id
+            and (
+                result.mechanism_cluster_id == f.mechanism_cluster_id
+                # Existing validation callers did not carry a cluster. Their
+                # wildcard remains conservative rather than bypassing floors.
+                or result.mechanism_cluster_id == "*"
+            )
+        ]
         if relevant and max(r.score for r in relevant) < f.min_score:
             out.append(f)
     return tuple(out)

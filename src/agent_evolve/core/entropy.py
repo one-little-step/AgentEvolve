@@ -36,6 +36,8 @@ import random
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Sequence
 
+import numpy as np
+
 
 # ---------------------------------------------------------------------- #
 # Cell-level entropy
@@ -249,42 +251,78 @@ class Issue:
     freshness_weight: float
 
 
+def greedy_map_dpp(
+    kernel: np.ndarray,
+    k: int,
+    min_gain: float = 1e-12,
+) -> tuple[int, ...]:
+    """Select a DPP MAP approximation via incremental Schur complements.
+
+    Selecting an item subtracts its projection from each remaining item's
+    marginal gain. Therefore highly similar candidates lose gain after one of
+    their near-duplicates is selected. This is the required bounded O(N^2)
+    alternative to exact eigendecomposition.
+    """
+    if kernel.ndim != 2 or kernel.shape[0] != kernel.shape[1]:
+        raise ValueError("kernel must be a square matrix")
+    if k <= 0 or kernel.shape[0] == 0:
+        return ()
+    n = kernel.shape[0]
+    if k >= n:
+        return tuple(range(n))
+
+    gains = np.diag(kernel).astype(float, copy=True)
+    coefficients: list[list[float]] = [[] for _ in range(n)]
+    remaining = set(range(n))
+    selected: list[int] = []
+
+    for _ in range(k):
+        # Index is the stable-ID order once callers have sorted their items.
+        chosen = min(remaining, key=lambda index: (-gains[index], index))
+        if gains[chosen] <= min_gain:
+            break
+        selected.append(chosen)
+        remaining.remove(chosen)
+        diagonal = math.sqrt(gains[chosen])
+        for index in remaining:
+            projection = sum(
+                left * right
+                for left, right in zip(coefficients[index], coefficients[chosen])
+            )
+            coefficient = (kernel[index, chosen] - projection) / diagonal
+            coefficients[index].append(coefficient)
+            # Clamp only floating-point drift; never reward similarity.
+            gains[index] = max(0.0, gains[index] - coefficient * coefficient)
+
+    return tuple(selected)
+
+
 def _dpp_select(
     items: Sequence[tuple[str, float, float]],
     k: int,
     similarity: "callable[[str, str], float]",
     rng: random.Random,
 ) -> tuple[str, ...]:
-    """Greedy k-DPP over items.
-
-    Each item is (id, quality, diversity_weight). At each step pick the item
-    maximizing::
-
-        quality[i] + lambda_div * sum_{j in S} similarity(i, j)
-
-    where S is the already-selected set. This is the standard greedy
-    approximation to k-DPP.
-    """
-    if k <= 0:
+    """Build a quality-weighted kernel and run deterministic greedy-MAP DPP."""
+    del rng  # DPP is deterministic; random is an explicitly separate ablation.
+    if k <= 0 or not items:
         return ()
-    if k >= len(items):
-        return tuple(i[0] for i in items)
 
-    selected: list[str] = []
-    remaining = list(items)
-    while remaining and len(selected) < k:
-        best_idx = 0
-        best_score = -math.inf
-        for idx, (iid, quality, _) in enumerate(remaining):
-            div = sum(similarity(iid, j) for j in selected) if selected else 0.0
-            # Tiebreak by id for determinism.
-            score = (quality + div, iid)
-            if score > (best_score, ""):
-                best_score = score[0]
-                best_idx = idx
-        selected.append(remaining[best_idx][0])
-        remaining.pop(best_idx)
-    return tuple(selected)
+    # Bound the dense matrix and make its positional tie-break reflect stable IDs.
+    capped = sorted(items, key=lambda item: (-item[1], item[0]))[:100]
+    ids = tuple(item[0] for item in capped)
+    raw_qualities = [max(item[1], 0.1) for item in capped]
+    maximum = max(raw_qualities)
+    qualities = [quality / maximum for quality in raw_qualities]
+    kernel = np.empty((len(capped), len(capped)), dtype=float)
+    for row, item_id in enumerate(ids):
+        for column, other_id in enumerate(ids):
+            if row == column:
+                kernel[row, column] = qualities[row] ** 2 + 1e-6
+            else:
+                sim = min(1.0, max(0.0, similarity(item_id, other_id)))
+                kernel[row, column] = qualities[row] * sim * qualities[column]
+    return tuple(ids[index] for index in greedy_map_dpp(kernel, min(k, len(ids))))
 
 
 @dataclass(slots=True)

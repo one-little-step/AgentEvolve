@@ -143,13 +143,19 @@ class PoolEntry:
         return tuple(self.score_tensor.keys())
 
     def mean_score_per_task(self) -> Mapping[str, float]:
-        """Mean across mechanisms, per task. Used for quick Pareto checks."""
+        """Mean across mechanisms, per task. Used for quick Pareto checks.
+
+        The grouping key is the complete ``task_id``. Prefixes, slices, and
+        truncations are forbidden as aggregation keys per
+        docs/architecture/data-contracts.md, because they silently merge
+        distinct tasks into a single Pareto objective.
+        """
         by_task: dict[str, list[float]] = {}
-        for (_, _m), cell in self.score_tensor.items():
-            # cell may have 0 rollouts; skip those.
+        for (task_id, _cluster_id), cell in self.score_tensor.items():
+            # A cell with no rollouts carries no evidence; it is not a zero.
             if cell.rollout_count == 0:
                 continue
-            by_task.setdefault(_[0], []).append(cell.mean)
+            by_task.setdefault(task_id, []).append(cell.mean)
         return {t: sum(v) / len(v) for t, v in by_task.items() if v}
 
 
