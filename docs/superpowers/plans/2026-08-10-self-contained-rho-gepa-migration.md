@@ -493,14 +493,14 @@ git diff --stat
 
 Expected: no whitespace errors; only intended AgentEvolve source, documentation, tests, lockfile, and configuration changes appear.
 
-- [ ] **Step 4: Commit remaining migration metadata and verification updates**
+- [x] **Step 4: Commit remaining migration metadata and verification updates**
 
 ```bash
 git add docs/superpowers/specs/2026-08-10-self-contained-rho-gepa-migration-design.md docs/superpowers/plans/2026-08-10-self-contained-rho-gepa-migration.md
 git commit -m "docs: record self-contained migration plan"
 ```
 
-- [ ] **Step 5: Verify final repository state before optional push**
+- [x] **Step 5: Verify final repository state before optional push**
 
 Run:
 
