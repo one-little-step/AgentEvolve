@@ -1,0 +1,7 @@
+{
+  "events": [],
+  "final_output": "What task would you like me to address?",
+  "model": "openai/azure/gpt-5.6-luna",
+  "status": "success",
+  "task_id": "b0-003"
+}

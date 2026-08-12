@@ -1,0 +1,7 @@
+{
+  "events": [],
+  "final_output": "Please provide the specific question, claim, or data you want evaluated. I\u2019ll state the result and give the reasoning that supports it.",
+  "model": "openai/azure/gpt-5.6-luna",
+  "status": "success",
+  "task_id": "b0-004"
+}

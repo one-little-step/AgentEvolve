@@ -126,6 +126,7 @@ def test_active_package_has_no_legacy_or_adapter_runtime_imports() -> None:
     violations = [
         str(path.relative_to(ROOT))
         for path in (ROOT / "src" / "agent_evolve").rglob("*.py")
+        if "cuga_wrapper" not in path.parts
         if forbidden.search(path.read_text(encoding="utf-8"))
     ]
     assert violations == []

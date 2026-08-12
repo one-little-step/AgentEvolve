@@ -1,0 +1,7 @@
+{
+  "events": [],
+  "final_output": "I need the task, plan, or situation you want analyzed. Please provide the relevant context, and I\u2019ll identify the main constraint and state the next action.",
+  "model": "openai/azure/gpt-5.6-luna",
+  "status": "success",
+  "task_id": "b0-002"
+}

@@ -1,0 +1,7 @@
+{
+  "events": [],
+  "final_output": "Why did the cat and dog become best friends?\n\nBecause the cat was always purr-suasive, and the dog was paws-itively loyal!",
+  "model": "openai/azure/gpt-5.6-luna",
+  "status": "success",
+  "task_id": "baseline-demo-001"
+}
