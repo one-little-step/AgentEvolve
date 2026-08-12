@@ -1,158 +1,107 @@
-# Task 4 Report: Self-Contained CUGA Continuation Guidance
+# Phase-1 Task 4 Report: Merge and Memory Contracts
 
 ## Status
 
-Completed.
+Completed without a commit. Production and test edits are confined to the task
+scope: `src/agent_evolve/core/contracts.py` and
+`tests/test_contracts_validation.py`. This report and the required command logs
+are task evidence.
 
-All required documents were created or updated, the specified decision and
-import-boundary tests were run with tee capture, and the changes were committed.
+## Governing Requirements
 
-## Scope Executed
+- `data-contracts.md:178-190` defines merge provenance, the three distinct
+  parent IDs, an optional child candidate only for an admitted child, non-empty
+  artifact decisions, non-negative complementarity, and eligibility checks.
+- `data-contracts.md:191-213` defines artifact decision fields and the shared,
+  ancestor, refined, and no-operation relationships.
+- `data-contracts.md:214-231` defines an append-only, sanitized,
+  reference-based memory record and prohibits raw prompt/payload/response/trace
+  categories.
+- `task-4-brief.md:42-48` requires ordinary `ValueError` model validators and
+  frozen `RedactionReport` and `MemoryRecord`, with `extra="forbid"` on the
+  latter and no recursive sanitation implementation.
+- The explicit user decision accepts standard Pydantic construction, coercion,
+  nested mutability, exception chains, and `ValidationError`.
 
-### Documents Created
+## Tests First (RED)
 
-1. `docs/vision-and-decision-record.md`
-   - Includes the mandatory literal sections: Vision, Approved Target,
-     CUGA Boundary, and First Implementation Path.
-   - Enumerates 12 settled decisions with rationale and source links.
-   - Distinguishes historical versus active material.
-   - Lists explicit deferrals.
-   - States the "do not redo" instruction.
-   - Provides links to all relevant entry, architecture, research, migration,
-     and reference documents.
+Added test-first helpers and relation tests to
+`tests/test_contracts_validation.py`:
 
-2. `docs/migration/cuga-adaptation-guide.md`
-   - Contains the required historical-to-active mapping table.
-   - Describes reference-module reuse and limitations from
-     `reference/gaia_evolution_core/README.md`.
-   - Provides a detailed CUGA inspection checklist covering package/version/license,
-     artifacts, traces, tool/subagent provenance, candidate workspaces, state
-     checkpoints, replay validity, concurrency behavior, and error semantics.
-   - Includes an empty adapter-mapping table to be filled after SDK inspection.
+- refined inheritance requires `refinement_request_ref`;
+- shared inheritance requires equal parent hashes;
+- an ancestor-resulting hash cannot emit an operation;
+- an admitted merge requires `child_candidate_id` and an unadmitted merge
+  rejects one;
+- `MemoryRecord` rejects undeclared `raw_prompt` data; and
+- a valid memory record accepts the declared outcome and redaction report.
 
-3. `docs/migration/self-contained-migration-inventory.md`
-   - Lists the 21-file `docs/rho_evolution/` archive.
-   - Lists the five read-only `reference/gaia_evolution_core/` modules.
-   - Enumerates intentionally excluded material (Gaia runtime, datasets, evaluator
-     internals, credentials, CUGA source).
-   - Identifies `src/agent_evolve/` as the only active implementation location.
-
-### Documents Modified
-
-1. `docs/START_HERE.md`
-   - Expanded the decision record description to mention the CUGA boundary.
-   - Added `migration/self-contained-migration-inventory.md` to required reading.
-   - Clarified that the adaptation guide maps historical concepts to CUGA-neutral
-     capabilities without inventing SDK APIs.
-   - Added a fresh-agent instruction to read local materials before changing
-     architecture or attempting CUGA integration.
-   - Added two fresh-agent first actions: read the vision record and inventory.
-
-2. `AGENTS.md`
-   - Added `docs/migration/self-contained-migration-inventory.md` to the required
-     reading order.
-   - Added a fresh-agent instruction to use local materials before CUGA integration
-     and not to invent CUGA APIs, artifact types, trace fields, checkpoint
-     behavior, replay semantics, or package names.
-
-3. `README.md`
-   - Added `docs/migration/self-contained-migration-inventory.md` to the Start Here
-     list.
-   - Added the same fresh-agent instruction about local materials and not inventing
-     CUGA APIs.
-
-## Test Execution
-
-Command run:
+RED command:
 
 ```bash
-uv run pytest tests/test_self_contained_migration.py::test_continuation_brief_names_vision_decisions_and_cuga_boundary tests/test_self_contained_migration.py::test_active_package_has_no_legacy_or_adapter_runtime_imports -v 2>&1 | tee terminal_output/migration/08_decision_boundary_tests.log
+uv run --extra dev pytest tests/test_contracts_validation.py -v 2>&1 | tee terminal_output/phase-1-contract-completion/merge-memory-red.log
 ```
 
-Result: **2 passed**.
+Result: failed during collection because `MemoryRecord` and `RedactionReport`
+did not yet exist in `agent_evolve.core.contracts`, proving the requested schema
+surface was absent. Evidence:
+`terminal_output/phase-1-contract-completion/merge-memory-red.log`.
 
-Additional sanity check:
+## Implementation
+
+Updated `src/agent_evolve/core/contracts.py`:
+
+- `ArtifactMergeDecision` now declares `refinement_request_ref` and
+  `operation_emitted`. Its ordinary `ValueError` validator enforces refined
+  refinement provenance, disallows a refinement reference for other inheritance
+  modes, retains the documented shared/ancestor checks, and prevents an
+  operation where `resulting_hash == ancestor_hash`.
+- `MergeProvenance` now declares `child_admitted` and enforces the exact
+  admitted-child/child-ID relation with ordinary `ValueError`, preserving the
+  existing distinct-parent validation.
+- Added frozen `RedactionReport` with `rule_hits` and non-negative
+  `truncations`, reflecting the report requirements in
+  `storage-and-transactions.md:118-129`.
+- Added frozen `MemoryRecord` with `extra="forbid"` and all reference-only
+  fields listed in `data-contracts.md:218-227`. Its `outcome` uses the existing
+  terminal attempt-status enum.
+
+No custom error classes, strict mode, sanitation scanner, recursive freezing,
+factories, or Pydantic API overrides were introduced.
+
+## GREEN Verification
+
+The first GREEN run exposed two existing merge fixtures that lacked the newly
+required `operation_emitted` field. Those fixtures were updated in the scoped
+test file, then the exact required command passed.
 
 ```bash
-uv run pytest tests/test_self_contained_migration.py -v
+uv run --extra dev pytest tests/test_contracts_validation.py tests/test_contracts_immutability.py -v 2>&1 | tee terminal_output/phase-1-contract-completion/merge-memory-green.log
+git diff --check 2>&1 | tee terminal_output/phase-1-contract-completion/task-4-diff-check.log
 ```
 
-Result: **5 passed** (archive presence, reference baseline, vision/boundary,
-import boundary, and broken-link checks).
+Results:
 
-## Commit
+- `66 passed in 0.15s`; evidence:
+  `terminal_output/phase-1-contract-completion/merge-memory-green.log`.
+- `git diff --check` exited successfully with no output; evidence:
+  `terminal_output/phase-1-contract-completion/task-4-diff-check.log`.
 
-```text
-73053aca0e468d5117a6f39a65e84edc258a6416
-```
+## Self-Review
 
-Message: `docs: add self-contained CUGA continuation guidance`
-
-Files in commit:
-
-- `AGENTS.md`
-- `README.md`
-- `docs/START_HERE.md`
-- `docs/vision-and-decision-record.md`
-- `docs/migration/cuga-adaptation-guide.md`
-- `docs/migration/self-contained-migration-inventory.md`
+- Verified the changed models remain agent-neutral and add no CUGA, Gaia,
+  adapter, persistence, or orchestration import.
+- Confirmed all new cross-field checks raise ordinary `ValueError`, which
+  Pydantic reports as `ValidationError`.
+- Confirmed `MemoryRecord` uses `extra="forbid"`, so the representative
+  prohibited `raw_prompt` field fails closed at the boundary.
+- Confirmed scope did not modify unrelated dirty files. Existing unrelated
+  worktree modifications remain preserved.
 
 ## Concerns
 
-- The test `test_continuation_brief_names_vision_decisions_and_cuga_boundary`
-  checks literal substrings (`base plus every RHO candidate`,
-  `do not invent CUGA APIs`) that cross line boundaries in the source markdown.
-  Initial drafts split these phrases across lines, causing two test failures.
-  The final document keeps each required phrase contiguous on a single wrapped
-  line. Future edits to this file should preserve these literal phrases exactly.
-
-- `terminal_output/migration/08_decision_boundary_tests.log` was captured as
-  required by `AGENTS.md`, but the brief's explicit commit command did not
-  include it. The `terminal_output/` directory appears to be untracked and
-  likely gitignored, so it was left out of the commit per the brief's
-  instruction.
-
-- The repository contains many untracked files and directories that predate this
-  task (e.g., `src/`, `tests/`, `docs/architecture/`, `pyproject.toml`). Only the
-  six files specified in the brief were committed.
-
-- No source code outside `AgentEvolve/` was modified.
-
-## Review Follow-Up
-
-Reviewer finding: the CUGA Boundary section must reproduce the required imperative
-sentence literally. Replaced the wording drift (`We do not invent`) with:
-
-```text
-Do not invent CUGA APIs, artifact types, trace fields, checkpoint behavior, replay semantics, or package names.
-```
-
-Test command:
-
-```bash
-uv run pytest tests/test_self_contained_migration.py::test_continuation_brief_names_vision_decisions_and_cuga_boundary -v 2>&1 | tee terminal_output/migration/08_decision_boundary_tests.log
-```
-
-Initial result: **1 failed**. The existing test requires the lowercase substring
-`do not invent CUGA APIs`, while the review requires the uppercase imperative
-sentence. The boundary now contains both the mandated sentence and a no-scope-
-expansion restatement needed for the existing assertion.
-
-Final result: **1 passed**.
-
-## Re-Review Follow-Up
-
-Reviewer finding: the inventory package-tree block inaccurately claimed that
-`src/agent_evolve/adapters/cuga.py` exists. The path is not present in the
-repository.
-
-Resolution: marked `cuga.py` as a planned future CUGA SDK adapter path and
-explicitly stated that it is not present. No unrelated material was changed.
-
-Test command:
-
-```bash
-uv run pytest tests/test_self_contained_migration.py -v 2>&1 | tee terminal_output/migration/08_decision_boundary_tests.log
-```
-
-Result: **5 passed**.
+- Task 4 deliberately provides a reference-only memory schema and field-level
+  extra rejection. It does not inspect nested values for sensitive content; the
+  governing brief explicitly defers recursive sanitation to a later phase.
+- The focused suite was run as required. No full repository suite was run for
+  this task because the brief only requires the two contract test modules.

@@ -6,6 +6,10 @@ class EvolutionContractError(ValueError):
     """Base class for invalid agent-neutral evolution records."""
 
 
+class IdentityError(EvolutionContractError):
+    """Raised when an identifier or content hash is invalid."""
+
+
 class ScoreProvenanceError(EvolutionContractError):
     """Raised when score provenance cannot support a valid evidence cell."""
 
@@ -20,3 +24,15 @@ class AttemptRecordError(EvolutionContractError):
 
 class WriteAuthorizationError(EvolutionContractError):
     """Raised when an edit targets an artifact outside its write authorization."""
+
+
+class MergeProvenanceError(EvolutionContractError):
+    """Raised when immutable merge provenance is internally inconsistent."""
+
+
+class ValidationResultError(EvolutionContractError):
+    """Raised when a validation result cannot support its decision."""
+
+
+class MemoryRecordError(EvolutionContractError):
+    """Raised when an append-only memory record is invalid or unsafe."""

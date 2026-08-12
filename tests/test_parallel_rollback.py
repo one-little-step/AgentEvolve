@@ -11,7 +11,13 @@ def _result(attempt_id: str) -> WorkerResult:
     return WorkerResult(
         attempt_id=attempt_id,
         workspace=None,  # type: ignore[arg-type] - not consumed by the coordinator
-        edits=(ArtifactEdit(f"artifact-{attempt_id}", "replace", {}),),
+        edits=(
+            ArtifactEdit(
+                artifact_id=f"artifact-{attempt_id}",
+                operation="replace",
+                payload={},
+            ),
+        ),
         trace=None,  # type: ignore[arg-type] - not consumed by the coordinator
         attempt=None,  # type: ignore[arg-type] - not consumed by the coordinator
     )

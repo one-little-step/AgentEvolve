@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from agent_evolve.core.contracts import (
     ArtifactEdit,
@@ -91,12 +92,9 @@ def test_response_rejects_empty_edits():
         )
 
 
-def test_response_rejects_edit_with_empty_artifact_id():
-    bad = ArtifactEdit(artifact_id="", operation="replace", payload={"content": "x"})
-    with pytest.raises(ValueError):
-        EditorResponse(
-            rationale="r", edits=(bad,), reads={}, writes={}, risks={}, expected_effects={}
-        )
+def test_artifact_edit_rejects_empty_artifact_id_at_construction() -> None:
+    with pytest.raises(ValidationError, match="artifact_id"):
+        ArtifactEdit(artifact_id="", operation="replace", payload={})
 
 
 def test_response_rejects_writes_with_denied_key():
