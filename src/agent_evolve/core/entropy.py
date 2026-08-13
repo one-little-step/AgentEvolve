@@ -105,6 +105,9 @@ class EntropyTracker:
     """
 
     epsilon_floor: float = 0.05
+    score_floor: float = 0.15
+    recombination_score_threshold: float = 0.30
+    frontier_weight: float = 0.30
     min_comparable_candidates: int = 3
     min_rollouts_per_candidate: int = 2
     _cells: dict[CellKey, _Cell] = field(default_factory=dict)
@@ -115,6 +118,12 @@ class EntropyTracker:
     def __post_init__(self) -> None:
         if not (0.0 <= self.epsilon_floor <= 1.0):
             raise ValueError("epsilon_floor must be in [0, 1]")
+        if not (0.0 <= self.score_floor <= 1.0):
+            raise ValueError("score_floor must be in [0, 1]")
+        if not (0.0 <= self.recombination_score_threshold <= 1.0):
+            raise ValueError("recombination_score_threshold must be in [0, 1]")
+        if not (0.0 <= self.frontier_weight <= 1.0):
+            raise ValueError("frontier_weight must be in [0, 1]")
         if self.min_comparable_candidates < 1:
             raise ValueError("min_comparable_candidates must be >= 1")
         if self.min_rollouts_per_candidate < 1:
@@ -165,23 +174,77 @@ class EntropyTracker:
             return 0.0
         return self._entropy(cell)
 
-    def _entropy(self, cell: _Cell) -> float:
-        # Filter to comparable candidates only.
-        comp = {c for c in cell.comparable if c in cell.scores}
+    def _comparable_candidates(self, cell: _Cell) -> set[str]:
+        # Comparable candidates that also have recorded scores.
+        return {c for c in cell.comparable if c in cell.scores}
+
+    def _comparable_scores(self, cell: _Cell) -> list[float]:
+        out: list[float] = []
+        for c in self._comparable_candidates(cell):
+            out.extend(cell.scores[c])
+        return out
+
+    def _meets_evidence_floor(self, cell: _Cell) -> bool:
+        comp = self._comparable_candidates(cell)
         if len(comp) < self.min_comparable_candidates:
-            return 0.0
-        # And require min rollouts per candidate.
+            return False
         if any(len(cell.scores[c]) < self.min_rollouts_per_candidate for c in comp):
+            return False
+        return True
+
+    def _entropy(self, cell: _Cell) -> float:
+        if not self._meets_evidence_floor(cell):
             return 0.0
-        # Flatten scores across comparable candidates.
-        all_scores: list[float] = []
-        for c in comp:
-            all_scores.extend(cell.scores[c])
+        all_scores = self._comparable_scores(cell)
         if not all_scores:
             return 0.0
         var = _variance(all_scores)
         max_score = max(all_scores)
         return var * max(max_score, self.epsilon_floor)
+
+    def entropy(self, task_id: str, mechanism_cluster_id: str) -> float | None:
+        """Population-variance entropy with the score floor, or None below the
+        evidence floor.
+
+        Per the selection-algorithms contract::
+
+            H(t, m) = variance * max(max_score, score_floor)
+
+        Returns ``None`` when comparable candidates or rollouts fall below the
+        evidence floor, so callers can distinguish "unavailable" from zero.
+        """
+        key = CellKey(task_id=task_id, mechanism_cluster_id=mechanism_cluster_id)
+        cell = self._cells.get(key)
+        if cell is None or not self._meets_evidence_floor(cell):
+            return None
+        scores = self._comparable_scores(cell)
+        variance = _variance(scores)
+        max_score = max(scores) if scores else 0.0
+        return variance * max(max_score, self.score_floor)
+
+    def classify(self, task_id: str, mechanism_cluster_id: str) -> str:
+        """Three-tier classification of a (task, mechanism) entropy cell.
+
+        * ``"skip"``: evidence floor unmet (fewer than
+          ``min_comparable_candidates`` comparable candidates or fewer than
+          ``min_rollouts_per_candidate`` rollouts) or zero variance.
+        * ``"recombination_target"``: sufficient evidence and variance, and
+          max score above ``recombination_score_threshold``.
+        * ``"frontier_exploration"``: sufficient evidence and variance, but max
+          score at or below ``recombination_score_threshold``.
+        """
+        key = CellKey(task_id=task_id, mechanism_cluster_id=mechanism_cluster_id)
+        cell = self._cells.get(key)
+        if cell is None or not self._meets_evidence_floor(cell):
+            return "skip"
+        scores = self._comparable_scores(cell)
+        if not scores:
+            return "skip"
+        if _variance(scores) <= 0.0:
+            return "skip"
+        if max(scores) > self.recombination_score_threshold:
+            return "recombination_target"
+        return "frontier_exploration"
 
     def entropy_weighted_with_freshness(
         self, task_id: str, mechanism_cluster_id: str, current_iter: int

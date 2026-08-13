@@ -143,6 +143,53 @@ def test_refresh_at_barrier_rejects_negative():
 
 
 # ---------------------------------------------------------------------- #
+# EntropyTracker — tier classification / population-variance entropy
+# ---------------------------------------------------------------------- #
+def tracker_with_three_candidates_two_rollouts(
+    max_score: float, variance: float
+) -> EntropyTracker:
+    """Three comparable candidates, two rollouts each, max score = ``max_score``.
+
+    Scores are spread below the maximum so the cell has non-zero population
+    variance (meeting the evidence floor for tier classification).
+    """
+    tracker = EntropyTracker()
+    spread = min(max_score, variance)
+    for cand, score in (
+        ("h1", max_score),
+        ("h2", max_score - 0.5 * spread),
+        ("h3", max_score - spread),
+    ):
+        tracker.mark_comparable("task-1", "cluster-1", cand)
+        tracker.record_score("task-1", "cluster-1", cand, score)
+        tracker.record_score("task-1", "cluster-1", cand, score)
+    return tracker
+
+
+def test_entropy_classifies_recombination_target() -> None:
+    tracker = tracker_with_three_candidates_two_rollouts(max_score=0.8, variance=0.2)
+    assert tracker.classify("task-1", "cluster-1") == "recombination_target"
+
+
+def test_entropy_classifies_frontier_exploration() -> None:
+    tracker = tracker_with_three_candidates_two_rollouts(max_score=0.2, variance=0.2)
+    assert tracker.classify("task-1", "cluster-1") == "frontier_exploration"
+
+
+def test_entropy_classifies_skip_when_evidence_is_insufficient() -> None:
+    assert EntropyTracker().classify("task-1", "cluster-1") == "skip"
+
+
+def test_entropy_returns_none_when_evidence_insufficient() -> None:
+    assert EntropyTracker().entropy("task-1", "cluster-1") is None
+
+
+def test_entropy_returns_float_when_floor_met() -> None:
+    tracker = tracker_with_three_candidates_two_rollouts(max_score=0.8, variance=0.2)
+    assert isinstance(tracker.entropy("task-1", "cluster-1"), float)
+
+
+# ---------------------------------------------------------------------- #
 # EntropyTracker — heap
 # ---------------------------------------------------------------------- #
 def test_top_entropy_cells_orders_descending():
