@@ -4,10 +4,13 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from agent_evolve.core.blame import empty_analysis
 from agent_evolve.core.contracts import (
     ArtifactEdit,
     CandidateWorkspace,
+    EditPlan,
     EvolutionTask,
+    ExpectedEffect,
 )
 from agent_evolve.core.editor import (
     AcceptanceDecision,
@@ -23,7 +26,10 @@ from agent_evolve.core.editor import (
     decide_acceptance,
     lineage_of,
     record_attempt,
+    repair_once_then_classify,
+    validate_editor_plan,
 )
+from agent_evolve.core.errors import WriteAuthorizationError
 from agent_evolve.core.memory import (
     AttemptStatus,
     EditMemory,
@@ -352,3 +358,109 @@ def test_lineage_of_defaults_to_parent_version():
 def test_lineage_of_uses_sorted_parents_when_provided():
     ws = _workspace(parent="base-v0")
     assert lineage_of(ws, ["c2-v0", "c1-v0"]) == "c1-v0|c2-v0"
+
+
+# ---------------------------------------------------------------------- #
+# Authorization boundary + repair protocol
+# ---------------------------------------------------------------------- #
+def plan_targeting(artifact_id: str, read_requests: tuple[str, ...] = ()) -> EditPlan:
+    return EditPlan(
+        attempt_id="att-1",
+        issue_fingerprint="fp-1",
+        read_requests=read_requests,
+        authorized_writes=(artifact_id,),
+        edits=(ArtifactEdit(artifact_id=artifact_id, operation="replace", payload={"content": "x"}),),
+        rationale="fix",
+        risks=(),
+        expected_effect=ExpectedEffect(mechanism_cluster_refs=("cluster-1",)),
+    )
+
+
+def _editor_request() -> EditorRequest:
+    return EditorRequest(
+        base_workspace=_workspace(),
+        task=_task(),
+        analysis=empty_analysis(),
+        issue_id="i1",
+        write_set=("skills/a",),
+        current_artifacts={"skills/a": "x"},
+    )
+
+
+class MalformedEditor:
+    """An editor that always produces an empty-edit reply (contract rejects)."""
+
+    editor_model_id = "malformed-editor"
+
+    def propose_edit(self, request: EditorRequest) -> EditorResponse:
+        return EditorResponse(
+            rationale="r", edits=(), reads={}, writes={}, risks={}, expected_effects={}
+        )
+
+
+class RecoveringEditor:
+    """Returns malformed output until it receives a correction request."""
+
+    editor_model_id = "recovering-editor"
+
+    def __init__(self) -> None:
+        self.proposals = 0
+
+    def propose_edit(self, request: EditorRequest) -> EditorResponse:
+        self.proposals += 1
+        if not request.correction_request:
+            raise ValueError("edits is required (cannot be empty)")
+        return EditorResponse(
+            rationale="repaired",
+            edits=(
+                ArtifactEdit(
+                    artifact_id="skills/a", operation="replace", payload={"content": "y"}
+                ),
+            ),
+            reads={},
+            writes={},
+            risks={},
+            expected_effects={},
+        )
+
+
+def test_editor_plan_rejects_edit_outside_authorized_write_set() -> None:
+    with pytest.raises(WriteAuthorizationError):
+        validate_editor_plan(plan_targeting("artifact-outside"), authorized_writes=("artifact-inside",))
+
+
+def test_second_malformed_response_returns_recordable_non_promotion() -> None:
+    result = repair_once_then_classify(MalformedEditor(), _editor_request())
+    assert result.status == "malformed"
+    assert result.correction_requests == 1
+    assert result.response is None
+
+
+def test_valid_editor_plan_passes_authorization() -> None:
+    plan = plan_targeting("skills/a", read_requests=("skills/a",))
+    assert (
+        validate_editor_plan(
+            plan,
+            readable=frozenset({"skills/a"}),
+            authorized_writes=frozenset({"skills/a"}),
+        )
+        is plan
+    )
+
+
+def test_editor_plan_rejects_unreadable_read_request() -> None:
+    with pytest.raises(WriteAuthorizationError):
+        validate_editor_plan(
+            plan_targeting("skills/a", read_requests=("skills/b",)),
+            readable=frozenset({"skills/a"}),
+            authorized_writes=frozenset({"skills/a"}),
+        )
+
+
+def test_repair_once_then_valid_recovers() -> None:
+    editor = RecoveringEditor()
+    result = repair_once_then_classify(editor, _editor_request())
+    assert result.status == "valid"
+    assert result.correction_requests == 1
+    assert result.response is not None
+    assert editor.proposals == 2
