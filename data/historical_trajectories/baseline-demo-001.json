@@ -1,7 +1,27 @@
 {
+  "active_artifacts": {
+    "instructions": [
+      "instructions"
+    ],
+    "memory": [],
+    "policies": [],
+    "skills": [],
+    "tools": [
+      "multiply"
+    ]
+  },
   "events": [],
-  "final_output": "Why did the cat and dog become best friends?\n\nBecause the cat was always purr-suasive, and the dog was paws-itively loyal!",
+  "final_output": "I currently have access to one connected tool:\n\n- `multiply(left: int, right: int)` \u2014 multiplies two integers.\n\nI can also help with reasoning, summarization, drafting, formatting, and other text-based tasks using information you provide, but I don\u2019t currently have access to external apps, files, browsing, email, calendars, or databases.",
+  "harness_version": "b0-v1",
   "model": "openai/azure/gpt-5.6-luna",
   "status": "success",
-  "task_id": "baseline-demo-001"
+  "task_id": "baseline-demo-001",
+  "unavailable_artifacts": {
+    "memory": [
+      "baseline_note"
+    ],
+    "skills": [
+      "arithmetic"
+    ]
+  }
 }

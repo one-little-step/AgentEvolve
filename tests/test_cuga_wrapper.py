@@ -4,6 +4,7 @@ from agent_evolve.cuga_wrapper import (
     CugaSdkRuntime,
     CugaWrapper,
     InMemoryRuntime,
+    MockHarnessRuntime,
     RuntimeSettings,
 )
 
@@ -88,13 +89,16 @@ def test_cuga_sdk_runtime_captures_invoke_result_as_json_trace():
         "task_id": "task-1",
         "status": "success",
         "final_output": "four",
+        "harness_version": "unversioned",
+        "active_artifacts": {"instructions": [], "skills": [], "memory": [], "tools": [], "policies": []},
+        "unavailable_artifacts": {},
         "events": [
             {"event_id": "task-1:tool:0", "kind": "tool_call", "tool_call": {"name": "calculator", "result": "4"}},
         ],
     }
 
 
-def test_cuga_sdk_runtime_injects_updated_wrapper_artifacts_as_instructions():
+def test_cuga_sdk_runtime_does_not_relabel_opaque_artifacts_as_instructions():
     received_configs = []
 
     class FakeResult:
@@ -109,18 +113,94 @@ def test_cuga_sdk_runtime_injects_updated_wrapper_artifacts_as_instructions():
         async def aclose(self):
             return None
 
-    runtime = CugaSdkRuntime(
-        agent_factory=lambda config: received_configs.append(config) or FakeAgent(),
-        artifacts={"skills/default": "Prefer exact calculations."},
-    )
-    runtime.update_artifact("skills/default", "Use citations when possible.")
+    runtime = CugaSdkRuntime(agent_factory=lambda config: received_configs.append(config) or FakeAgent())
 
-    runtime.run_task("task-1", {"input": "answer", "special_instructions": "Be concise."})
+    runtime.run_task("task-1", {"input": "answer"})
 
-    assert runtime.get_artifacts() == {"skills/default": "Use citations when possible."}
-    assert received_configs == [
+    assert runtime.get_artifacts() == {}
+    assert received_configs == [{}]
+
+
+def test_mock_harness_runtime_reports_active_artifacts_and_applies_mock_tool():
+    wrapper = CugaWrapper(MockHarnessRuntime(), RuntimeSettings(model="mock-model"))
+
+    trace = wrapper.run_task(
+        "task-1",
         {
+            "version": "b1-v2",
+            "instructions": "Answer in one sentence.",
+            "skills": {"retrieval": "Use the catalog."},
+            "memory": {"city": "Paris"},
+            "tools": [{"name": "lookup", "when": "lookup", "result": "catalog-result"}],
+            "policies": {"style": "concise"},
+            "input": "lookup the catalog",
+        },
+    )
+
+    assert trace["harness_version"] == "b1-v2"
+    assert trace["active_artifacts"] == {
+        "instructions": ["instructions"],
+        "skills": ["retrieval"],
+        "memory": ["city"],
+        "tools": ["lookup"],
+        "policies": ["style"],
+    }
+    assert trace["final_output"] == "catalog-result"
+    assert trace["events"][-2]["tool_call"]["name"] == "lookup"
+
+
+def test_mock_harness_runtime_exposes_configured_memory_to_recall_tasks():
+    wrapper = CugaWrapper(MockHarnessRuntime(), RuntimeSettings(model="mock-model"))
+
+    trace = wrapper.run_task(
+        "task-1",
+        {
+            "version": "b1-v2",
+            "instructions": "",
+            "skills": {},
+            "memory": {"capital": "Paris"},
+            "tools": [],
+            "policies": {},
+            "input": "recall capital",
+        },
+    )
+
+    assert trace["final_output"] == "Paris"
+    assert trace["events"][-2] == {"event_id": "task-1:memory:capital", "kind": "memory_recalled"}
+
+
+def test_cuga_sdk_runtime_passes_only_verified_surfaces_to_agent():
+    received_configs = []
+
+    class FakeResult:
+        answer = "done"
+        error = None
+        tool_calls = []
+
+    class FakeAgent:
+        async def invoke(self, message, *, track_tool_calls):
+            return FakeResult()
+
+        async def aclose(self):
+            return None
+
+    tool = object()
+    runtime = CugaSdkRuntime(agent_factory=lambda config: received_configs.append(config) or FakeAgent())
+
+    trace = runtime.run_task(
+        "task-1",
+        {
+            "version": "b1-v2",
+            "instructions": "Use exact language.",
+            "skills": {"retrieval": "unverified"},
+            "memory": {"fact": "unverified"},
+            "tools": [tool],
+            "policies": {"style": "unverified"},
             "input": "answer",
-            "special_instructions": "Be concise.\n\nUse citations when possible.",
-        }
-    ]
+        },
+    )
+
+    assert received_configs == [{"instructions": "Use exact language.", "tools": [tool]}]
+    assert trace["active_artifacts"]["instructions"] == ["instructions"]
+    assert trace["active_artifacts"]["tools"] == ["tool-0"]
+    assert trace["unavailable_artifacts"] == {"skills": ["retrieval"], "memory": ["fact"], "policies": ["style"]}

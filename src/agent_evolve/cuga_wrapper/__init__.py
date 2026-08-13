@@ -70,13 +70,17 @@ class CugaWrapper:
 
     def run_task(self, task_id: str, harness_config: Mapping[str, object]) -> dict[str, object]:
         trace = self._runtime.run_task(task_id, harness_config)
-        return {
+        result = {
             "task_id": trace["task_id"],
             "status": trace["status"],
             "model": self._settings.model,
             "final_output": trace["final_output"],
             "events": trace["events"],
         }
+        for field_name in ("harness_version", "active_artifacts", "unavailable_artifacts"):
+            if field_name in trace:
+                result[field_name] = trace[field_name]
+        return result
 
     def get_artifacts(self) -> dict[str, str]:
         return self._runtime.get_artifacts()
@@ -112,6 +116,94 @@ class InMemoryRuntime:
         self._artifacts[artifact_id] = content
 
 
+def _artifact_metadata(harness_config: Mapping[str, object], *, available: set[str]) -> dict[str, object]:
+    """Describe exactly which declared harness artifacts reached a runtime."""
+    active = {"instructions": [], "skills": [], "memory": [], "tools": [], "policies": []}
+    unavailable: dict[str, list[str]] = {}
+    for field_name in ("skills", "memory", "policies"):
+        entries = harness_config.get(field_name, {})
+        names = list(entries) if isinstance(entries, Mapping) else []
+        if field_name in available:
+            active[field_name] = names
+        elif names:
+            unavailable[field_name] = names
+    instructions = harness_config.get("instructions")
+    if instructions:
+        if "instructions" in available:
+            active["instructions"] = ["instructions"]
+        else:
+            unavailable["instructions"] = ["instructions"]
+    tools = harness_config.get("tools", [])
+    tool_names = [
+        (
+            str(tool.get("name", f"tool-{index}"))
+            if isinstance(tool, Mapping)
+            else str(getattr(tool, "name", f"tool-{index}"))
+        )
+        for index, tool in enumerate(tools if isinstance(tools, list) else [])
+    ]
+    if tool_names:
+        if "tools" in available:
+            active["tools"] = tool_names
+        else:
+            unavailable["tools"] = tool_names
+    return {
+        "harness_version": str(harness_config.get("version", "unversioned")),
+        "active_artifacts": active,
+        "unavailable_artifacts": unavailable,
+    }
+
+
+class MockHarnessRuntime:
+    """Deterministic structured-harness runtime for evolution-loop testing.
+
+    It simulates every configured component locally; it does not claim an SDK
+    mapping for CUGA-only skills, memory, or policies.
+    """
+
+    def run_task(self, task_id: str, harness_config: Mapping[str, object]) -> dict[str, object]:
+        metadata = _artifact_metadata(
+            harness_config,
+            available={"instructions", "skills", "memory", "tools", "policies"},
+        )
+        input_text = str(harness_config.get("input", ""))
+        tools = harness_config.get("tools", [])
+        events = [{"event_id": f"{task_id}:started", "kind": "run_started"}]
+        for tool in tools if isinstance(tools, list) else []:
+            if isinstance(tool, Mapping) and str(tool.get("when", "")) in input_text:
+                result = str(tool.get("result", ""))
+                events.append(
+                    {
+                        "event_id": f"{task_id}:tool:0",
+                        "kind": "tool_call",
+                        "tool_call": {"name": str(tool.get("name", "tool")), "result": result},
+                    }
+                )
+                events.append({"event_id": f"{task_id}:completed", "kind": "run_completed"})
+                return {"task_id": task_id, "status": "success", "final_output": result, "events": events, **metadata}
+        memory = harness_config.get("memory", {})
+        if input_text.startswith("recall ") and isinstance(memory, Mapping):
+            memory_id = input_text.removeprefix("recall ")
+            if memory_id in memory:
+                events.append({"event_id": f"{task_id}:memory:{memory_id}", "kind": "memory_recalled"})
+                events.append({"event_id": f"{task_id}:completed", "kind": "run_completed"})
+                return {
+                    "task_id": task_id,
+                    "status": "success",
+                    "final_output": str(memory[memory_id]),
+                    "events": events,
+                    **metadata,
+                }
+        events.append({"event_id": f"{task_id}:completed", "kind": "run_completed"})
+        return {"task_id": task_id, "status": "success", "final_output": input_text, "events": events, **metadata}
+
+    def get_artifacts(self) -> dict[str, str]:
+        return {}
+
+    def update_artifact(self, artifact_id: str, content: str) -> None:
+        raise NotImplementedError("MockHarnessRuntime receives artifacts through HARNESS")
+
+
 class CugaSdkRuntime:
     """Official-SDK runtime for one-shot vanilla trajectory collection.
 
@@ -135,8 +227,10 @@ class CugaSdkRuntime:
         def build_agent(harness_config: Mapping[str, object]) -> object:
             from cuga import CugaAgent
 
-            instructions = harness_config.get("special_instructions")
+            instructions = harness_config.get("instructions")
+            tools = harness_config.get("tools")
             return CugaAgent(
+                tools=tools if isinstance(tools, list) else None,
                 special_instructions=str(instructions) if instructions else None,
                 auto_load_policies=False,
                 filesystem_sync=False,
@@ -147,15 +241,7 @@ class CugaSdkRuntime:
         return cls(build_agent)
 
     def run_task(self, task_id: str, harness_config: Mapping[str, object]) -> dict[str, object]:
-        config = dict(harness_config)
-        artifact_instructions = "\n\n".join(self._artifacts.values())
-        existing_instructions = config.get("special_instructions")
-        if artifact_instructions:
-            config["special_instructions"] = "\n\n".join(
-                part
-                for part in (str(existing_instructions) if existing_instructions else "", artifact_instructions)
-                if part
-            )
+        config = {key: harness_config[key] for key in ("instructions", "tools") if key in harness_config}
         agent = self._agent_factory(config)
         message = str(harness_config["input"])
         result = asyncio.run(agent.invoke(message, track_tool_calls=True))
@@ -170,11 +256,13 @@ class CugaSdkRuntime:
             for index, tool_call in enumerate(tool_calls)
         ]
         error = getattr(result, "error", None)
+        metadata = _artifact_metadata(harness_config, available={"instructions", "tools"})
         return {
             "task_id": task_id,
             "status": "error" if error else "success",
             "final_output": str(getattr(result, "answer", "")),
             "events": events,
+            **metadata,
         }
 
     def get_artifacts(self) -> dict[str, str]:

@@ -19,6 +19,7 @@ def test_mock_inference_writes_json_trace(tmp_path, capsys):
     setattr(CONFIG, "OUTPUT_PATH", output_path)
     setattr(CONFIG, "TASK_ID", "demo-1")
     setattr(CONFIG, "TASK_INPUT", "hello")
+    setattr(CONFIG, "HARNESS", {"version": "test-v1", "instructions": "be brief", "skills": {}, "memory": {}, "tools": [], "policies": {}})
     setattr(CONFIG, "USE_MOCK_RUNTIME", True)
 
     exit_code = RUNNER.main()
@@ -29,6 +30,9 @@ def test_mock_inference_writes_json_trace(tmp_path, capsys):
         "status": "success",
         "model": "mock-model",
         "final_output": "hello",
+        "harness_version": "test-v1",
+        "active_artifacts": {"instructions": ["instructions"], "skills": [], "memory": [], "tools": [], "policies": []},
+        "unavailable_artifacts": {},
         "events": [
             {"event_id": "demo-1:started", "kind": "run_started"},
             {"event_id": "demo-1:completed", "kind": "run_completed"},
