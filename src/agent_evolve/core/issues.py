@@ -238,6 +238,7 @@ def greedy_map(
     Tie-breaks on the full ascending string ID (``ids[i]``), clamps gains at
     0.0 only to absorb floating-point drift.
     """
+    k = min(k, len(ids))
     gains = np.diag(kernel).copy()
     factors: list[list[float]] = [[] for _ in ids]
     selected: list[int] = []
@@ -426,10 +427,9 @@ class HierarchicalDPPSelector:
             for i, n in zip(issues, normalized)
         ]
 
-    def _apply_hard_constraints(
-        self, issues: Sequence[Issue], raw: Sequence[float]
-    ) -> list[Issue]:
+    def _apply_hard_constraints(self, issues: Sequence[Issue]) -> list[Issue]:
         attributed = [i for i in issues if i.writable_artifact_ids]
+        raw = self._final_raw_quality(attributed)
         order = sorted(
             range(len(attributed)),
             key=lambda idx: (-raw[idx], attributed[idx].issue_id),
@@ -467,7 +467,11 @@ class HierarchicalDPPSelector:
         return tuple(issues[idx] for idx in order[: max(0, k)])
 
     def _dpp_over(
-        self, items: Sequence[tuple[_T, float, tuple[float, ...]]], k: int
+        self,
+        items: Sequence[tuple[_T, float, tuple[float, ...]]],
+        k: int,
+        *,
+        key: Callable[[_T], str] | None = None,
     ) -> tuple[list[_T], str | None]:
         """Run greedy-MAP DPP over generic (item, quality, embedding) triples."""
         if len(items) < 2:
@@ -484,7 +488,10 @@ class HierarchicalDPPSelector:
                 return [], "degenerate_kernel"
             if float(eig[-1]) / min_eig > _KERNEL_CONDITION_LIMIT:
                 return [], "degenerate_kernel"
-            ids = tuple(str(item_id) for item_id, _, _ in items)
+            ids = tuple(
+                key(item_id) if key is not None else str(item_id)
+                for item_id, _, _ in items
+            )
             chosen = greedy_map(kernel, ids, min(k, len(items)), self.min_gain)
         except Exception:
             return [], "exception"
@@ -500,8 +507,7 @@ class HierarchicalDPPSelector:
     # Flat selection
     # ------------------------------------------------------------------ #
     def _select_flat(self, issues: tuple[Issue, ...], k: int) -> IssueSelectionReport:
-        raw_in = self._final_raw_quality(issues)
-        filtered = self._apply_hard_constraints(issues, raw_in)
+        filtered = self._apply_hard_constraints(issues)
         prefilter_total = len(filtered)
         if not filtered or k <= 0:
             return self._report((), prefilter_total, 0, None)
@@ -520,7 +526,7 @@ class HierarchicalDPPSelector:
 
             qvals = self._theta_qualities(capped_raw)
             items = [(iss, q, iss.embedding) for iss, q in zip(capped, qvals)]
-            chosen, fallback = self._dpp_over(items, k)
+            chosen, fallback = self._dpp_over(items, k, key=lambda iss: iss.issue_id)
             if fallback is not None:
                 selected = self._quality_ordered(capped, k)
                 return self._report(selected, prefilter_total, prefilter_retained, fallback)
@@ -583,8 +589,7 @@ class HierarchicalDPPSelector:
     def _select_hierarchical(
         self, issues: tuple[Issue, ...], k_tasks: int, k_mechanisms_per_task: int
     ) -> IssueSelectionReport:
-        raw_in = self._final_raw_quality(issues)
-        filtered = self._apply_hard_constraints(issues, raw_in)
+        filtered = self._apply_hard_constraints(issues)
         prefilter_total = len(filtered)
         if not filtered or k_tasks <= 0 or k_mechanisms_per_task <= 0:
             return self._report((), prefilter_total, 0, None)

@@ -95,7 +95,14 @@ def test_dpp_theta_shifts_quality_diversity_balance() -> None:
     low_theta = HierarchicalDPPSelector(theta=0.0).select(issues, k=2)
     high_theta = HierarchicalDPPSelector(theta=0.9).select(issues, k=2)
 
-    assert _ids(low_theta) != _ids(high_theta)
+    low_ids = _ids(low_theta)
+    high_ids = _ids(high_theta)
+
+    # High theta must select both near-duplicates; low theta must spread.
+    assert {"a", "b"} <= high_ids
+    assert "c" in low_ids
+    # Direction: the near-duplicate family count increases with theta.
+    assert len({"a", "b"} & high_ids) > len({"a", "b"} & low_ids)
 
 
 def test_dpp_is_deterministic() -> None:
@@ -118,6 +125,38 @@ def test_dpp_full_id_tie_break_is_ascending() -> None:
     selected = greedy_map(kernel, ("c", "a", "b"), k=2, min_gain=1e-12)
 
     assert selected == (1, 2)
+
+
+def test_flat_dpp_tie_break_uses_issue_id() -> None:
+    """The flat-DPP selector ties on ``issue_id``, not the dataclass repr."""
+    a = _issue("a", severity=0.5, embedding=(1.0, 0.0), writable=("wa",))
+    a_bang = _issue("a!", severity=0.5, embedding=(1.0, 0.0), writable=("wb",))
+    c = _issue("c", severity=0.5, embedding=(1.0, 0.0), writable=("wc",))
+
+    selector = HierarchicalDPPSelector()
+    selected = selector.select((a, a_bang, c), k=2)
+
+    assert [i.issue_id for i in selected.items] == ["a", "a!"]
+
+
+def test_greedy_map_caps_k_to_ids_length() -> None:
+    """A request for more items than exist is capped, not an IndexError."""
+    kernel = np.eye(2)
+    selected = greedy_map(kernel, ("a", "b"), k=10, min_gain=1e-12)
+
+    assert selected == (0, 1)
+
+
+def test_empty_writeset_does_not_misalign_hard_constraints() -> None:
+    """An empty-write-set issue must not shift the raw-quality index alignment."""
+    empty = _issue("e", severity=0.0, writable=())
+    high = _issue("a", severity=0.9, writable=("w",))
+    low = _issue("b", severity=0.1, writable=("w",))
+
+    selector = HierarchicalDPPSelector(mode="severity_rank")
+    report = selector.select((empty, high, low), k=2)
+
+    assert _ids(report) == {"a"}
 
 
 def test_no_silent_fallback_on_incompatible_embeddings() -> None:
