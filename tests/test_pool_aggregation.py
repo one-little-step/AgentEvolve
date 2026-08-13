@@ -95,3 +95,19 @@ def test_mean_score_per_task_skips_cells_without_rollouts() -> None:
     assert set(means) == {"task-a"}, (
         "an unevaluated cell leaked into aggregation as if it were evidence"
     )
+
+
+def test_mean_weighted_score_per_task_uses_whole_task_ids() -> None:
+    """Weighted per-task aggregation must not merge tasks sharing a prefix."""
+    entry = _entry()
+    entry.cell("task-a", "cluster-1").add(1.0, _prov("task-a", "cluster-1"))
+    entry.cell("task-b", "cluster-1").add(0.0, _prov("task-b", "cluster-1"))
+
+    means = entry.mean_weighted_score_per_task()
+
+    assert set(means) == {"task-a", "task-b"}, (
+        "weighted aggregation collapsed distinct task IDs; got keys: "
+        f"{sorted(means)}"
+    )
+    assert means["task-a"] == pytest.approx(1.0)
+    assert means["task-b"] == pytest.approx(0.0)

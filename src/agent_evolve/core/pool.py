@@ -38,9 +38,12 @@ Design
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, AbstractSet, Iterable, Mapping, Sequence
 
 from agent_evolve.core.contracts import EvolutionCandidate
+
+if TYPE_CHECKING:
+    from agent_evolve.core.config import ResolvedConfig
 
 
 # ---------------------------------------------------------------------- #
@@ -58,7 +61,9 @@ class ScoreProvenance:
     judge_model_id: str
     blame_confidence: float
     blame_stability: float
-    artifact_versions: Mapping[str, str]
+    severity: float = 1.0
+    confidence: float = 1.0
+    artifact_versions: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.task_id:
@@ -73,6 +78,10 @@ class ScoreProvenance:
             raise ValueError("blame_confidence must be in [0, 1]")
         if not (0.0 <= self.blame_stability <= 1.0):
             raise ValueError("blame_stability must be in [0, 1]")
+        if not (0.0 <= self.severity <= 1.0):
+            raise ValueError("severity must be in [0, 1]")
+        if not (0.0 <= self.confidence <= 1.0):
+            raise ValueError("confidence must be in [0, 1]")
         # Freeze artifact_versions.
         object.__setattr__(self, "artifact_versions", dict(self.artifact_versions))
 
@@ -109,6 +118,34 @@ class ScoreCell:
         if not self.scores:
             return 0.0
         return max(self.scores)
+
+    @property
+    def severity(self) -> float:
+        """Cell-level severity: mean severity across rollouts.
+
+        ``severity`` is a property of the (task, mechanism) pair, so it is
+        expected to be constant within a cell; the mean is a defensive summary.
+        """
+        if not self.provenance:
+            return 0.0
+        return sum(p.severity for p in self.provenance) / len(self.provenance)
+
+    @property
+    def confidence(self) -> float:
+        """Cell-level confidence: mean confidence across rollouts."""
+        if not self.provenance:
+            return 0.0
+        return sum(p.confidence for p in self.provenance) / len(self.provenance)
+
+    def weighted_score(self) -> float:
+        """Weighted cell value = mean score * severity * confidence.
+
+        Per docs/architecture/selection-algorithms.md, the Pareto and parent
+        objectives use ``score * severity * confidence`` rather than the raw
+        mean. A cell with no rollouts yields 0.0 and is never treated as
+        evidence.
+        """
+        return self.mean * self.severity * self.confidence
 
 
 # ---------------------------------------------------------------------- #
@@ -158,6 +195,20 @@ class PoolEntry:
             by_task.setdefault(task_id, []).append(cell.mean)
         return {t: sum(v) / len(v) for t, v in by_task.items() if v}
 
+    def mean_weighted_score_per_task(self) -> Mapping[str, float]:
+        """Mean weighted score across mechanisms, per task.
+
+        Mirrors :meth:`mean_score_per_task` but uses the weighted cell value
+        (``score * severity * confidence``) as the per-cell objective. The
+        grouping key is the complete ``task_id``.
+        """
+        by_task: dict[str, list[float]] = {}
+        for (task_id, _cluster_id), cell in self.score_tensor.items():
+            if cell.rollout_count == 0:
+                continue
+            by_task.setdefault(task_id, []).append(cell.weighted_score())
+        return {t: sum(v) / len(v) for t, v in by_task.items() if v}
+
 
 # ---------------------------------------------------------------------- #
 # Pool
@@ -172,6 +223,7 @@ class PersistentPool:
     """
 
     min_comparable_rollouts: int = 2
+    epsilon: float = 1e-9
     _entries: dict[str, PoolEntry] = field(default_factory=dict)
     _insertion_order: list[str] = field(default_factory=list)
     _base_id: str = ""
@@ -179,6 +231,8 @@ class PersistentPool:
     def __post_init__(self) -> None:
         if self.min_comparable_rollouts < 1:
             raise ValueError("min_comparable_rollouts must be >= 1")
+        if self.epsilon < 0.0:
+            raise ValueError("epsilon must be >= 0")
 
     # ------------------------------------------------------------------ #
     # Write
@@ -249,35 +303,71 @@ class PersistentPool:
     # ------------------------------------------------------------------ #
     # Pareto
     # ------------------------------------------------------------------ #
-    def _compatible_keys(self, a: PoolEntry, b: PoolEntry) -> tuple[tuple[str, str], ...]:
-        """Return the (task, mechanism) keys both entries share with enough rollouts."""
-        out: list[tuple[str, str]] = []
-        keys_a = {k: v for k, v in a.score_tensor.items() if v.rollout_count >= self.min_comparable_rollouts}
-        keys_b = {k: v for k, v in b.score_tensor.items() if v.rollout_count >= self.min_comparable_rollouts}
-        for k in keys_a.keys() & keys_b.keys():
-            out.append(k)
-        # Sort for determinism.
-        return tuple(sorted(out))
+    def comparable_cells(self, a_id: str, b_id: str) -> tuple[tuple[str, str], ...]:
+        """Return the (task, mechanism) keys both entries share with enough rollouts.
 
-    def dominates(self, a_id: str, b_id: str) -> bool:
-        """True iff a Pareto-dominates b on their compatible key overlap.
-
-        Per the architecture: candidates are only comparable on cells where
-        both have enough rollout evidence (``min_comparable_rollouts``). If
-        the overlap is empty, neither dominates.
+        Comparability requires the same complete ``task_id`` and
+        ``mechanism_cluster_id`` (exact full string), and at least
+        ``min_comparable_rollouts`` rollouts on both sides. Cells present for
+        only one candidate, or below the rollout floor, are excluded — never
+        zero-filled.
         """
         a = self.get(a_id)
         b = self.get(b_id)
-        keys = self._compatible_keys(a, b)
+        keys_a = {k for k, v in a.score_tensor.items() if v.rollout_count >= self.min_comparable_rollouts}
+        keys_b = {k for k, v in b.score_tensor.items() if v.rollout_count >= self.min_comparable_rollouts}
+        # Sort for determinism.
+        return tuple(sorted(keys_a & keys_b))
+
+    def is_comparable(self, a_id: str, b_id: str) -> bool:
+        """True iff the two candidates share at least one comparable cell."""
+        return bool(self.comparable_cells(a_id, b_id))
+
+    def comparison_exclusions(self, a_id: str, b_id: str) -> Mapping[tuple[str, str], str]:
+        """Map each non-comparable (task, mechanism) cell to its exclusion reason.
+
+        Reasons cover cells missing for one candidate and cells that fall below
+        ``min_comparable_rollouts`` on either side.
+        """
+        a = self.get(a_id)
+        b = self.get(b_id)
+        reasons: dict[tuple[str, str], str] = {}
+        all_keys = set(a.score_tensor) | set(b.score_tensor)
+        for k in sorted(all_keys):
+            ca = a.score_tensor.get(k)
+            cb = b.score_tensor.get(k)
+            if ca is None or cb is None:
+                missing = a_id if ca is None else b_id
+                reasons[k] = f"missing for {missing}"
+            elif (
+                ca.rollout_count < self.min_comparable_rollouts
+                or cb.rollout_count < self.min_comparable_rollouts
+            ):
+                reasons[k] = (
+                    f"insufficient rollouts (min {self.min_comparable_rollouts})"
+                )
+        return reasons
+
+    def dominates(self, a_id: str, b_id: str) -> bool:
+        """True iff a Pareto-dominates b on their comparable key overlap.
+
+        Per docs/architecture/selection-algorithms.md, dominance is evaluated on
+        the weighted cell value ``score * severity * confidence`` using
+        comparable cells only, with an ``epsilon`` tolerance. If the overlap is
+        empty, neither dominates.
+        """
+        a = self.get(a_id)
+        b = self.get(b_id)
+        keys = self.comparable_cells(a_id, b_id)
         if not keys:
             return False
         a_strictly_better = False
         for k in keys:
-            ca = a.score_tensor[k]
-            cb = b.score_tensor[k]
-            if ca.mean < cb.mean:
+            wa = a.score_tensor[k].weighted_score()
+            wb = b.score_tensor[k].weighted_score()
+            if wa < wb - self.epsilon:
                 return False
-            if ca.mean > cb.mean:
+            if wa > wb + self.epsilon:
                 a_strictly_better = True
         return a_strictly_better
 
@@ -296,6 +386,121 @@ class PersistentPool:
             if not dominated:
                 out.append(cand)
         return tuple(out)
+
+    # ------------------------------------------------------------------ #
+    # Parent sampling
+    # ------------------------------------------------------------------ #
+    def parent_frequencies(self) -> Mapping[str, float]:
+        """Per-candidate parent frequency for seeded parent sampling.
+
+        Per docs/architecture/selection-algorithms.md::
+
+            frequency(c) = sum over winning (t, m) of severity * confidence
+
+        A candidate wins ``(t, m)`` when it holds the strict maximum comparable
+        weighted score for that cell; ties award all tied winners. Returns a
+        mapping over every candidate in insertion order (zero for non-winners).
+        """
+        # Group the weighted scores of every comparable cell across candidates.
+        winners: dict[tuple[str, str], list[str]] = {}
+        all_cells = {
+            k
+            for e in self.all_entries()
+            for k, v in e.score_tensor.items()
+            if v.rollout_count >= self.min_comparable_rollouts
+        }
+        for k in sorted(all_cells):
+            scored: dict[str, float] = {}
+            for e in self.all_entries():
+                cell = e.score_tensor.get(k)
+                if cell is not None and cell.rollout_count >= self.min_comparable_rollouts:
+                    scored[e.candidate_id] = cell.weighted_score()
+            if not scored:
+                continue
+            best = max(scored.values())
+            winners[k] = [
+                cid for cid, w in scored.items() if abs(w - best) <= self.epsilon
+            ]
+
+        freq = {cid: 0.0 for cid in self.candidate_ids()}
+        for k, winning_ids in winners.items():
+            for cid in winning_ids:
+                cell = self.get(cid).score_tensor[k]
+                freq[cid] += cell.severity * cell.confidence
+        return freq
+
+    # ------------------------------------------------------------------ #
+    # Champion selection
+    # ------------------------------------------------------------------ #
+    def _observed_cells(self) -> set[tuple[str, str]]:
+        """Union of every evaluated (task, mechanism) cell across the pool."""
+        return {
+            k
+            for e in self.all_entries()
+            for k, v in e.score_tensor.items()
+            if v.rollout_count >= 1
+        }
+
+    def _champion_outcome(self, entry: PoolEntry) -> float:
+        """Outcome = mean of the candidate's per-task mean weighted scores."""
+        per_task = entry.mean_weighted_score_per_task()
+        if not per_task:
+            return 0.0
+        return sum(per_task.values()) / len(per_task)
+
+    def _champion_coverage(self, entry: PoolEntry, total_cells: set[tuple[str, str]]) -> float:
+        """ProcessCoverage = fraction of evaluated cells vs total observed."""
+        if not total_cells:
+            return 0.0
+        evaluated = {k for k, v in entry.score_tensor.items() if v.rollout_count >= 1}
+        return len(evaluated & total_cells) / len(total_cells)
+
+    def select_champion(
+        self,
+        protected_floor_violations: AbstractSet[str] = frozenset(),
+        config: ResolvedConfig | None = None,
+    ) -> PoolEntry:
+        """Select the champion by the mandated aggregate.
+
+        Per docs/architecture/selection-algorithms.md::
+
+            aggregate(c) = alpha*Outcome(c) + beta*ProcessCoverage(c)
+                         + gamma*Stability(c) - delta*RegressionRisk(c)
+
+        Defaults: ``alpha=0.55``, ``beta=0.20``, ``gamma=0.15``, ``delta=0.10``
+        (or ``config.champion_*`` when supplied). Stability defaults to 1.0
+        (single-source) and RegressionRisk to 0.0. Candidates in
+        ``protected_floor_violations`` are disqualified before ranking. Ties
+        break deterministically by ascending ``candidate_id``.
+        """
+        alpha = config.champion_alpha if config is not None else 0.55
+        beta = config.champion_beta if config is not None else 0.20
+        gamma = config.champion_gamma if config is not None else 0.15
+        delta = config.champion_delta if config is not None else 0.10
+
+        total_cells = self._observed_cells()
+        scored: list[tuple[float, str, PoolEntry]] = []
+        for entry in self.all_entries():
+            if entry.candidate_id in protected_floor_violations:
+                continue
+            outcome = self._champion_outcome(entry)
+            coverage = self._champion_coverage(entry, total_cells)
+            stability = 1.0
+            regression_risk = 0.0
+            aggregate = (
+                alpha * outcome
+                + beta * coverage
+                + gamma * stability
+                - delta * regression_risk
+            )
+            scored.append((aggregate, entry.candidate_id, entry))
+
+        if not scored:
+            raise ValueError("no eligible candidates for champion selection")
+
+        # Highest aggregate, then ascending candidate_id for determinism.
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return scored[0][2]
 
     # ------------------------------------------------------------------ #
     # Prune (ablation only; never used for elite-only retention)

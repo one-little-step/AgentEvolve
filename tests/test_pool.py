@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from agent_evolve.core.config import resolve_profile
 from agent_evolve.core.contracts import EvolutionCandidate
 from agent_evolve.core.pool import (
     PersistentPool,
@@ -21,7 +22,14 @@ def _candidate(cid: str, version: str | None = None, parents: tuple[str, ...] = 
     )
 
 
-def _prov(task: str, mech: str, rollout: int = 0, score: float = 0.5) -> tuple[float, ScoreProvenance]:
+def _prov(
+    task: str,
+    mech: str,
+    rollout: int = 0,
+    score: float = 0.5,
+    severity: float = 1.0,
+    confidence: float = 1.0,
+) -> tuple[float, ScoreProvenance]:
     return score, ScoreProvenance(
         task_id=task,
         mechanism_cluster_id=mech,
@@ -31,6 +39,8 @@ def _prov(task: str, mech: str, rollout: int = 0, score: float = 0.5) -> tuple[f
         judge_model_id="fake-judge",
         blame_confidence=0.8,
         blame_stability=0.7,
+        severity=severity,
+        confidence=confidence,
         artifact_versions={},
     )
 
@@ -319,3 +329,187 @@ def test_mean_score_per_task_aggregates_across_mechanisms():
     e.cell("A", "c1").add(0.6, _prov("A", "c1")[1])
     means = e.mean_score_per_task()
     assert means["A"] == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------- #
+# Weighted score (score * severity * confidence)
+# ---------------------------------------------------------------------- #
+def test_weighted_score_multiplies_severity_and_confidence():
+    c = ScoreCell()
+    c.add(0.8, _prov("t", "c0", score=0.8, severity=0.5, confidence=0.5)[1])
+    assert c.severity == pytest.approx(0.5)
+    assert c.confidence == pytest.approx(0.5)
+    assert c.weighted_score() == pytest.approx(0.2)
+
+
+def test_weighted_score_defaults_severity_confidence_to_one():
+    c = ScoreCell()
+    c.add(0.7, _prov("t", "c0", score=0.7)[1])
+    assert c.weighted_score() == pytest.approx(0.7)
+
+
+# ---------------------------------------------------------------------- #
+# Weighted Pareto
+# ---------------------------------------------------------------------- #
+def _populated_weighted_pool() -> PersistentPool:
+    p = PersistentPool(min_comparable_rollouts=2)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("candidate-high-weighted"))
+    p.add_candidate(_candidate("candidate-low-weighted"))
+    for r in range(2):
+        p.record_score(
+            "candidate-low-weighted",
+            *_prov("t", "c0", rollout=r, score=0.9, severity=0.1, confidence=0.1),
+        )
+        p.record_score(
+            "candidate-high-weighted",
+            *_prov("t", "c0", rollout=r, score=0.5, severity=1.0, confidence=1.0),
+        )
+        p.record_score(
+            "base",
+            *_prov("t", "c0", rollout=r, score=0.4, severity=0.5, confidence=0.5),
+        )
+    return p
+
+
+def test_pareto_uses_score_times_severity_times_confidence():
+    pool = _populated_weighted_pool()
+    # weighted: high-weighted = 0.5, low-weighted = 0.009, base = 0.1
+    assert pool.dominates("candidate-high-weighted", "candidate-low-weighted")
+    assert not pool.dominates("candidate-low-weighted", "candidate-high-weighted")
+
+
+# ---------------------------------------------------------------------- #
+# Comparability predicate and exclusion reasons
+# ---------------------------------------------------------------------- #
+def test_is_comparable_true_when_overlap_meets_floor():
+    p = PersistentPool(min_comparable_rollouts=2)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("c1"))
+    for r in range(2):
+        p.record_score("base", *_prov("t", "c0", rollout=r, score=0.5))
+        p.record_score("c1", *_prov("t", "c0", rollout=r, score=0.5))
+    assert p.is_comparable("base", "c1")
+    assert p.comparable_cells("base", "c1") == (("t", "c0"),)
+
+
+def test_is_comparable_false_when_no_overlap():
+    p = PersistentPool(min_comparable_rollouts=1)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("c1"))
+    p.record_score("base", *_prov("A", "c0", rollout=0, score=0.5))
+    p.record_score("c1", *_prov("B", "c0", rollout=0, score=0.5))
+    assert not p.is_comparable("base", "c1")
+
+
+def test_comparison_exclusions_reports_missing_and_low_rollout_cells():
+    p = PersistentPool(min_comparable_rollouts=2)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("c1"))
+    for r in range(2):
+        p.record_score("base", *_prov("t", "c0", rollout=r, score=0.5))
+    p.record_score("c1", *_prov("t", "c1", rollout=0, score=0.5))
+    exclusions = p.comparison_exclusions("base", "c1")
+    assert ("t", "c0") in exclusions  # missing for c1
+    assert ("t", "c1") in exclusions  # insufficient rollouts
+    assert "missing" in exclusions[("t", "c0")]
+
+
+# ---------------------------------------------------------------------- #
+# Parent frequencies
+# ---------------------------------------------------------------------- #
+def test_parent_frequency_awards_all_tied_winners():
+    p = PersistentPool(min_comparable_rollouts=2)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("candidate-a"))
+    p.add_candidate(_candidate("candidate-b"))
+    for r in range(2):
+        p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.6))
+        p.record_score("candidate-b", *_prov("t", "c0", rollout=r, score=0.6))
+        p.record_score("base", *_prov("t", "c0", rollout=r, score=0.2))
+    frequencies = p.parent_frequencies()
+    assert frequencies["candidate-a"] == frequencies["candidate-b"]
+    assert frequencies["candidate-a"] > 0.0
+    assert frequencies["base"] == 0.0
+
+
+def test_parent_frequencies_sum_severity_times_confidence():
+    p = PersistentPool(min_comparable_rollouts=2)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("winner"))
+    for r in range(2):
+        p.record_score(
+            "winner", *_prov("t", "c0", rollout=r, score=0.9, severity=0.5, confidence=0.5)
+        )
+        p.record_score(
+            "base", *_prov("t", "c0", rollout=r, score=0.1, severity=0.5, confidence=0.5)
+        )
+    freq = p.parent_frequencies()
+    assert freq["winner"] == pytest.approx(0.25)
+    assert freq["base"] == 0.0
+
+
+# ---------------------------------------------------------------------- #
+# Champion selection
+# ---------------------------------------------------------------------- #
+def test_select_champion_highest_aggregate():
+    p = PersistentPool(min_comparable_rollouts=2)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("candidate-a"))
+    p.add_candidate(_candidate("candidate-b"))
+    for r in range(2):
+        p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.9))
+        p.record_score("candidate-b", *_prov("t", "c0", rollout=r, score=0.3))
+        p.record_score("base", *_prov("t", "c0", rollout=r, score=0.5))
+    champ = p.select_champion()
+    assert champ.candidate_id == "candidate-a"
+
+
+def test_protected_floor_disqualifies_champion_despite_high_aggregate():
+    p = PersistentPool(min_comparable_rollouts=2)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("candidate-a"))
+    p.add_candidate(_candidate("candidate-b"))
+    for r in range(2):
+        p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.9))
+        p.record_score("candidate-b", *_prov("t", "c0", rollout=r, score=0.3))
+        p.record_score("base", *_prov("t", "c0", rollout=r, score=0.1))
+    champ = p.select_champion(protected_floor_violations={"candidate-a"})
+    assert champ.candidate_id == "candidate-b"
+
+
+def test_select_champion_deterministic_tiebreak_by_id():
+    p = PersistentPool(min_comparable_rollouts=2)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("candidate-b"))
+    p.add_candidate(_candidate("candidate-a"))
+    for r in range(2):
+        p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.6))
+        p.record_score("candidate-b", *_prov("t", "c0", rollout=r, score=0.6))
+        p.record_score("base", *_prov("t", "c0", rollout=r, score=0.1))
+    champ = p.select_champion()
+    assert champ.candidate_id == "candidate-a"
+
+
+def test_select_champion_uses_config_weights():
+    p = PersistentPool(min_comparable_rollouts=2)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("candidate-a"))
+    p.add_candidate(_candidate("candidate-b"))
+    # candidate-a: better outcome, half coverage; candidate-b: full coverage.
+    for r in range(2):
+        p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.9))
+        p.record_score("candidate-b", *_prov("t", "c0", rollout=r, score=0.5))
+        p.record_score("candidate-b", *_prov("t", "c1", rollout=r, score=0.5))
+        p.record_score("base", *_prov("t", "c0", rollout=r, score=0.1))
+    # Default weights favor outcome -> candidate-a.
+    assert p.select_champion().candidate_id == "candidate-a"
+    # Coverage-heavy weights flip the result to candidate-b.
+    config = resolve_profile(
+        "minimal",
+        champion_alpha=0.1,
+        champion_beta=0.9,
+        champion_gamma=0.0,
+        champion_delta=0.0,
+    )
+    assert p.select_champion(config=config).candidate_id == "candidate-b"
