@@ -90,6 +90,13 @@ def test_overrides_apply_to_resolved_config() -> None:
     assert config.dpp_theta == 0.5
 
 
+def test_overrides_reject_structural_fields() -> None:
+    with pytest.raises(ValueError):
+        resolve_profile("minimal", features=FeatureGates(parallel_execution=True))
+    with pytest.raises(ValueError):
+        resolve_profile("minimal", profile_name="full_ablation")
+
+
 def test_embedding_defaults_when_environ_absent() -> None:
     config = resolve_profile("minimal", environ={})
     assert config.embedding.url == "http://localhost:11434"

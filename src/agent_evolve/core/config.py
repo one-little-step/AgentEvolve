@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from agent_evolve.core.errors import BudgetExceededError
@@ -64,7 +64,9 @@ class BudgetUsage:
         for field, increment in increments.items():
             if increment < 0:
                 raise ValueError("budget increments must be non-negative")
-            limit = getattr(limits, limit_fields.get(field, ""), None)
+            if field not in limit_fields:
+                continue
+            limit = getattr(limits, limit_fields[field])
             if limit is not None and getattr(self, field) + increment > limit:
                 raise BudgetExceededError(f"{field} budget exceeded")
         for field, increment in increments.items():
@@ -212,7 +214,26 @@ _PROFILES: dict[str, dict] = {
     },
 }
 
-_VALID_OVERRIDES = {f.name for f in fields(ResolvedConfig)}
+_VALID_OVERRIDES = {
+    "dpp_max_items",
+    "dpp_theta",
+    "dpp_score_floor",
+    "dpp_min_gain",
+    "entropy_refresh_mode",
+    "entropy_score_floor",
+    "entropy_recombination_score_threshold",
+    "entropy_frontier_weight",
+    "entropy_min_comparable_candidates",
+    "entropy_min_rollouts_per_candidate",
+    "cluster_similarity_threshold",
+    "max_clusters_per_task",
+    "generalization_probe_mode",
+    "probe_budget_fraction",
+    "champion_alpha",
+    "champion_beta",
+    "champion_gamma",
+    "champion_delta",
+}
 
 
 def resolve_profile(
