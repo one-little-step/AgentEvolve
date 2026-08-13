@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_evolve.core.blame import BlameGraph, BlameNode, CausalAnalysis
+from agent_evolve.core.blame import BlameGraph, BlameNode, CausalAnalysis, CausalFinding
 from agent_evolve.core.clustering import (
     ClusterRegistry,
     LexicalEmbedder,
@@ -20,6 +20,30 @@ def _analysis(mechanism: str, actor: str = "a", artifacts=()) -> CausalAnalysis:
             nodes=(BlameNode(actor_id=actor, blame=0.5, artifacts=tuple(artifacts)),)
         ),
     )
+
+
+def finding(text: str) -> CausalFinding:
+    return CausalFinding(
+        verdict_id=f"v-{text}",
+        candidate_id="cand-1",
+        task_id="task-a",
+        trace_id="trace-1",
+        status="observed",
+        mechanism_description=text,
+        mechanism_cluster_id="c",
+        severity=0.5,
+        confidence=0.5,
+        evidence_refs=(f"{text}-evidence",),
+        rationale="test",
+        blame_graph=BlameGraph(nodes=()),
+    )
+
+
+class UnavailableEmbedder:
+    dim = 64
+
+    def embed(self, text: str) -> tuple[float, ...]:
+        raise RuntimeError("embedding provider unavailable")
 
 
 def test_lexical_embedder_returns_normalized_vector():
@@ -151,3 +175,61 @@ def test_assign_with_minimal_mechanism_text_still_returns():
     c = MechanismClusterer(task_id="t1", embedder=LexicalEmbedder(dim=4))
     a = c.assign(_analysis("alpha"))
     assert a.is_new_cluster
+
+
+def test_same_mechanism_text_in_two_tasks_never_shares_cluster() -> None:
+    registry = ClusterRegistry(embedder_factory=LexicalEmbedder)
+    assert registry.assign("task-a", finding("stale schema")).cluster_id != registry.assign("task-b", finding("stale schema")).cluster_id
+
+
+def test_lexical_fallback_is_recorded_when_provider_unavailable() -> None:
+    assignment = MechanismClusterer(embedder=UnavailableEmbedder()).assign(finding("stale schema"))
+    assert assignment.embedding_fallback_reason == "provider_unavailable"
+
+
+def test_assign_finding_sets_task_id_and_freshness():
+    c = MechanismClusterer(task_id="t1", embedder=LexicalEmbedder())
+    c.begin_iteration(3)
+    a = c.assign_finding(finding("retriever returned stale schema"))
+    assert a.task_id == "t1"
+    assert a.freshness_iteration == 3
+    assert a.is_new_cluster
+
+
+def test_assign_finding_joins_similar_cluster():
+    c = MechanismClusterer(
+        task_id="t1", embedder=LexicalEmbedder(), join_threshold=0.5
+    )
+    c.add_anchor("retriever returned stale schema")
+    a = c.assign_finding(finding("retriever returned stale schema"))
+    assert not a.is_new_cluster
+    assert c.cluster_size(a.cluster_id) == 2
+
+
+def test_cap_forces_join_to_nearest_cluster():
+    c = MechanismClusterer(
+        task_id="t1",
+        embedder=LexicalEmbedder(),
+        join_threshold=0.99,
+        max_clusters_per_task=2,
+    )
+    c.add_anchor("retriever returned stale schema")
+    c.add_anchor("executor crashed on null argument")
+    assert c.cluster_count == 2
+    a = c.assign(_analysis("completely different mechanism text"))
+    assert not a.is_new_cluster
+    assert c.cluster_count == 2
+
+
+def test_max_clusters_per_task_must_be_positive():
+    with pytest.raises(ValueError):
+        MechanismClusterer(
+            task_id="t1", embedder=LexicalEmbedder(), max_clusters_per_task=0
+        )
+
+
+def test_fallback_embedder_still_produces_assignment():
+    c = MechanismClusterer(embedder=UnavailableEmbedder())
+    a = c.assign(_analysis("retriever returned stale schema"))
+    assert a.embedding_fallback_reason == "provider_unavailable"
+    assert a.cluster_id == "c0"
