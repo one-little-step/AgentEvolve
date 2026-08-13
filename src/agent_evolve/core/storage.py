@@ -103,7 +103,7 @@ def _sanitize(value: object, hits: set[str], max_len: int, truncations: list[int
                     f"refusing to persist non-string mapping key of type "
                     f"{type(key).__name__}"
                 )
-            if key.lower() in _DENYLIST_FIELDS:
+            if key.lower() in _DENYLIST_FIELDS or key.lower().startswith("expected_"):
                 raise PersistenceSafetyError(
                     f"refusing to persist denied field {key!r} "
                     "(credential, expected answer, evaluator internal, label, "

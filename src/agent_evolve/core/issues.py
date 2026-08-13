@@ -472,13 +472,19 @@ class HierarchicalDPPSelector:
         k: int,
         *,
         key: Callable[[_T], str] | None = None,
+        sim: np.ndarray | None = None,
     ) -> tuple[list[_T], str | None]:
-        """Run greedy-MAP DPP over generic (item, quality, embedding) triples."""
+        """Run greedy-MAP DPP over generic (item, quality, embedding) triples.
+
+        ``sim`` is an optional caller-supplied similarity matrix over ``items``
+        order; when absent, cosine similarity is derived from embeddings.
+        """
         if len(items) < 2:
             return [], "fewer_than_two_candidates"
-        sim, reason = _similarity_matrix([e for _, _, e in items])
         if sim is None:
-            return [], reason
+            sim, reason = _similarity_matrix([e for _, _, e in items])
+            if sim is None:
+                return [], reason
         try:
             qvals = [q for _, q, _ in items]
             kernel = build_kernel(qvals, lambda i, j: sim[i, j], self.jitter)
@@ -607,7 +613,7 @@ class HierarchicalDPPSelector:
             t: _mean_embedding([filtered[idx].embedding for idx in by_task[t]])
             for t in task_ids
         }
-        chosen_tasks = self._select_level(
+        chosen_tasks, fallback_reason = self._select_level(
             task_ids, task_raw, task_emb, k_tasks, self.task_similarity
         )
 
@@ -625,14 +631,16 @@ class HierarchicalDPPSelector:
                 m: _mean_embedding([filtered[idx].embedding for idx in mech_groups[m]])
                 for m in mech_ids
             }
-            chosen_mechs = self._select_level(
+            chosen_mechs, mech_fallback = self._select_level(
                 mech_ids, mech_raw, mech_emb, k_mechanisms_per_task, self.mechanism_similarity
             )
+            if fallback_reason is None and mech_fallback is not None:
+                fallback_reason = mech_fallback
             for m in chosen_mechs:
                 for idx in sorted(mech_groups[m], key=lambda j: filtered[j].issue_id):
                     out.append(filtered[idx])
 
-        return self._report(tuple(out), prefilter_total, len(filtered), None)
+        return self._report(tuple(out), prefilter_total, len(filtered), fallback_reason)
 
     def _select_level(
         self,
@@ -641,38 +649,38 @@ class HierarchicalDPPSelector:
         embeddings: dict[str, tuple[float, ...]],
         k: int,
         similarity_override: Callable[[str, str], float] | None,
-    ) -> tuple[str, ...]:
+    ) -> tuple[tuple[str, ...], str | None]:
         if k >= len(ids):
-            return tuple(ids)
+            return tuple(ids), None
         if self.mode == "random":
             rng = random.Random(self.seed)
             shuffled = list(ids)
             rng.shuffle(shuffled)
-            return tuple(shuffled[:k])
+            return tuple(shuffled[:k]), None
         if self.mode == "severity_rank":
-            return tuple(sorted(ids, key=lambda i: (-raw[i], i))[:k])
+            return tuple(sorted(ids, key=lambda i: (-raw[i], i))[:k]), None
         if self.mode == "coverage":
-            return self._coverage_level(ids, embeddings, k)
+            return self._coverage_level(ids, embeddings, k), None
 
         # dpp
+        reason: str | None = None
         if similarity_override is not None:
-            ordered = sorted(ids)
-            sim = np.eye(len(ordered))
-            for a in range(len(ordered)):
-                for b in range(a + 1, len(ordered)):
-                    s = min(1.0, max(0.0, similarity_override(ordered[a], ordered[b])))
+            sim = np.eye(len(ids))
+            for a in range(len(ids)):
+                for b in range(a + 1, len(ids)):
+                    s = min(1.0, max(0.0, similarity_override(ids[a], ids[b])))
                     sim[a, b] = sim[b, a] = s
         else:
-            sim, _ = _similarity_matrix([embeddings[i] for i in ids])
+            sim, reason = _similarity_matrix([embeddings[i] for i in ids])
         if sim is None:
-            return tuple(sorted(ids, key=lambda i: (-raw[i], i))[:k])
+            return tuple(sorted(ids, key=lambda i: (-raw[i], i))[:k]), reason
 
         qvals = self._theta_qualities([raw[i] for i in ids])
         items = [(i, q, embeddings[i]) for i, q in zip(ids, qvals)]
-        chosen, fallback = self._dpp_over(items, k)
+        chosen, fallback = self._dpp_over(items, k, sim=sim)
         if fallback is not None:
-            return tuple(sorted(ids, key=lambda i: (-raw[i], i))[:k])
-        return tuple(str(c) for c in chosen)
+            return tuple(sorted(ids, key=lambda i: (-raw[i], i))[:k]), fallback
+        return tuple(str(c) for c in chosen), None
 
     def _coverage_level(
         self, ids: list[str], embeddings: dict[str, tuple[float, ...]], k: int

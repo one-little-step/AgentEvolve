@@ -232,3 +232,36 @@ def test_hierarchical_dpp_selects_within_tasks() -> None:
 
     assert {i.task_id for i in report.items} == {"t0"}
     assert len(report.items) == 2
+
+
+def test_hierarchical_dpp_honors_task_similarity_override() -> None:
+    """An explicit task_similarity override is honored, not silently discarded.
+
+    The override marks ``t_a``/``t_b`` near-duplicate while their embeddings are
+    dissimilar, so DPP must not select both tasks together.
+    """
+    a = _issue("a", task_id="t_a", severity=0.9, embedding=(1.0, 0.0), writable=("wa",))
+    b = _issue("b", task_id="t_b", severity=0.9, embedding=(0.0, 1.0), writable=("wb",))
+    c = _issue("c", task_id="t_c", severity=0.9, embedding=(0.707, 0.707), writable=("wc",))
+
+    def task_sim(x: str, y: str) -> float:
+        if {x, y} == {"t_a", "t_b"}:
+            return 1.0
+        return 0.0
+
+    selector = HierarchicalDPPSelector(task_similarity=task_sim)
+    report = selector.select((a, b, c), k_tasks=2, k_mechanisms_per_task=1)
+
+    assert not {"t_a", "t_b"} <= {i.task_id for i in report.items}
+
+
+def test_hierarchical_dpp_reports_fallback_reason() -> None:
+    """A degenerate hierarchical kernel propagates a concrete fallback_reason."""
+    a = _issue("a", task_id="t_a", severity=0.9, embedding=(1.0, 0.0), writable=("wa",))
+    b = _issue("b", task_id="t_b", severity=0.8, embedding=(0.0, 1.0, 0.0), writable=("wb",))
+    c = _issue("c", task_id="t_c", severity=0.7, embedding=(0.0, 1.0), writable=("wc",))
+
+    selector = HierarchicalDPPSelector()
+    report = selector.select((a, b, c), k_tasks=2, k_mechanisms_per_task=1)
+
+    assert report.fallback_reason == "incompatible_embeddings"
