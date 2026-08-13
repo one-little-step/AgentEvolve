@@ -210,6 +210,30 @@ class PoolEntry:
         return {t: sum(v) / len(v) for t, v in by_task.items() if v}
 
 
+@dataclass(frozen=True, slots=True)
+class ChampionReport:
+    """Structured champion-selection manifest.
+
+    Per ``docs/architecture/selection-algorithms.md:324-338``, the manifest must
+    expose every aggregate component, the coverage figure, the tie-breaker, and
+    the disqualification list. ``entry`` is the winning :class:`PoolEntry`;
+    ``candidate_id`` is exposed as a convenience alias.
+    """
+
+    entry: PoolEntry
+    outcome: float
+    coverage: float
+    stability: float
+    regression_risk: float
+    aggregate: float
+    tie_breaker: str = "ascending_candidate_id"
+    disqualifications: tuple[str, ...] = ()
+
+    @property
+    def candidate_id(self) -> str:
+        return self.entry.candidate_id
+
+
 # ---------------------------------------------------------------------- #
 # Pool
 # ---------------------------------------------------------------------- #
@@ -459,8 +483,10 @@ class PersistentPool:
         self,
         protected_floor_violations: AbstractSet[str] = frozenset(),
         config: ResolvedConfig | None = None,
-    ) -> PoolEntry:
-        """Select the champion by the mandated aggregate.
+        *,
+        min_coverage_fraction: float | None = None,
+    ) -> ChampionReport:
+        """Select the champion and return a structured :class:`ChampionReport`.
 
         Per docs/architecture/selection-algorithms.md::
 
@@ -470,21 +496,33 @@ class PersistentPool:
         Defaults: ``alpha=0.55``, ``beta=0.20``, ``gamma=0.15``, ``delta=0.10``
         (or ``config.champion_*`` when supplied). Stability defaults to 1.0
         (single-source) and RegressionRisk to 0.0. Candidates in
-        ``protected_floor_violations`` are disqualified before ranking. Ties
-        break deterministically by ascending ``candidate_id``.
+        ``protected_floor_violations`` are disqualified before ranking.
+        Candidates whose ProcessCoverage is below ``min_coverage_fraction``
+        (from the explicit argument or ``config.champion_min_coverage_fraction``)
+        are likewise disqualified before ranking. Ties break deterministically
+        by ascending ``candidate_id``; the tie-breaker and the full
+        disqualification list are recorded on the report.
         """
         alpha = config.champion_alpha if config is not None else 0.55
         beta = config.champion_beta if config is not None else 0.20
         gamma = config.champion_gamma if config is not None else 0.15
         delta = config.champion_delta if config is not None else 0.10
+        if min_coverage_fraction is None:
+            min_coverage_fraction = (
+                config.champion_min_coverage_fraction if config is not None else 0.0
+            )
 
         total_cells = self._observed_cells()
-        scored: list[tuple[float, str, PoolEntry]] = []
+        disqualified = set(protected_floor_violations)
+        scored: list[tuple[float, str, PoolEntry, float, float, float, float]] = []
         for entry in self.all_entries():
             if entry.candidate_id in protected_floor_violations:
                 continue
             outcome = self._champion_outcome(entry)
             coverage = self._champion_coverage(entry, total_cells)
+            if coverage < min_coverage_fraction:
+                disqualified.add(entry.candidate_id)
+                continue
             stability = 1.0
             regression_risk = 0.0
             aggregate = (
@@ -493,14 +531,26 @@ class PersistentPool:
                 + gamma * stability
                 - delta * regression_risk
             )
-            scored.append((aggregate, entry.candidate_id, entry))
+            scored.append(
+                (aggregate, entry.candidate_id, entry, outcome, coverage, stability, regression_risk)
+            )
 
         if not scored:
             raise ValueError("no eligible candidates for champion selection")
 
         # Highest aggregate, then ascending candidate_id for determinism.
         scored.sort(key=lambda item: (-item[0], item[1]))
-        return scored[0][2]
+        _, _, entry, outcome, coverage, stability, regression_risk = scored[0]
+        return ChampionReport(
+            entry=entry,
+            outcome=outcome,
+            coverage=coverage,
+            stability=stability,
+            regression_risk=regression_risk,
+            aggregate=scored[0][0],
+            tie_breaker="ascending_candidate_id",
+            disqualifications=tuple(sorted(disqualified)),
+        )
 
     # ------------------------------------------------------------------ #
     # Prune (ablation only; never used for elite-only retention)

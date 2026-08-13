@@ -5,6 +5,7 @@ Governing contract: docs/architecture/selection-algorithms.md:67-280.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from agent_evolve.core.blame import BlameGraph, BlameNode, CausalFinding
 from agent_evolve.core.contracts import ArtifactDescriptor
@@ -13,6 +14,7 @@ from agent_evolve.core.issues import (
     Issue,
     build_issue,
     greedy_map,
+    raw_issue_quality,
 )
 
 
@@ -38,6 +40,7 @@ def _issue(
     task_id: str = "t0",
     mechanism: str = "m0",
     writable: tuple[str, ...] = ("w",),
+    entropy_tier: str = "recombination_target",
 ) -> Issue:
     return Issue(
         issue_id=issue_id,
@@ -53,6 +56,7 @@ def _issue(
         writable_artifact_ids=writable,
         evidence_refs=writable,
         lineage="",
+        entropy_tier=entropy_tier,
     )
 
 
@@ -265,3 +269,76 @@ def test_hierarchical_dpp_reports_fallback_reason() -> None:
     report = selector.select((a, b, c), k_tasks=2, k_mechanisms_per_task=1)
 
     assert report.fallback_reason == "incompatible_embeddings"
+
+
+# ---------------------------------------------------------------------- #
+# Frontier-weight wiring (Phase 4.5)
+# ---------------------------------------------------------------------- #
+_ENTROPY_ONLY = (0.0, 0.0, 1.0, 0.0, 0.0)
+
+
+def test_raw_issue_quality_frontier_tier_scales_entropy() -> None:
+    """frontier_exploration multiplies the entropy component by frontier_weight."""
+    issue = _issue("f")
+    recombination = raw_issue_quality(
+        issue, normalized_entropy=1.0, weights=_ENTROPY_ONLY,
+        entropy_tier="recombination_target",
+    )
+    frontier = raw_issue_quality(
+        issue, normalized_entropy=1.0, weights=_ENTROPY_ONLY,
+        entropy_tier="frontier_exploration",
+    )
+    assert recombination == pytest.approx(1.0)
+    assert frontier == pytest.approx(0.30)
+
+
+def test_raw_issue_quality_skip_tier_contributes_zero_entropy() -> None:
+    issue = _issue("s")
+    value = raw_issue_quality(
+        issue, normalized_entropy=1.0, weights=_ENTROPY_ONLY, entropy_tier="skip"
+    )
+    assert value == pytest.approx(0.0)
+
+
+def test_raw_issue_quality_reads_issue_entropy_tier_when_not_overridden() -> None:
+    frontier_issue = _issue("f", entropy_tier="frontier_exploration")
+    value = raw_issue_quality(
+        frontier_issue, normalized_entropy=1.0, weights=_ENTROPY_ONLY
+    )
+    assert value == pytest.approx(0.30)
+
+
+def test_selector_applies_frontier_weight_to_frontier_issues() -> None:
+    """Frontier entropy is dampened, so a lower-entropy recombination issue wins."""
+    frontier = _issue(
+        "frontier",
+        entropy=1.0,
+        entropy_tier="frontier_exploration",
+        severity=0.0,
+        confidence=0.0,
+        embedding=(1.0, 0.0, 0.0),
+        writable=("wf",),
+    )
+    recomb_mid = _issue(
+        "recomb-mid",
+        entropy=0.5,
+        entropy_tier="recombination_target",
+        severity=0.0,
+        confidence=0.0,
+        embedding=(0.0, 1.0, 0.0),
+        writable=("wr",),
+    )
+    recomb_low = _issue(
+        "recomb-low",
+        entropy=0.0,
+        entropy_tier="recombination_target",
+        severity=0.0,
+        confidence=0.0,
+        embedding=(0.0, 0.0, 1.0),
+        writable=("wl",),
+    )
+
+    weighted = HierarchicalDPPSelector(frontier_weight=0.30, weights=_ENTROPY_ONLY)
+    selected = weighted.select((frontier, recomb_mid, recomb_low), k=1)
+
+    assert selected.items == (recomb_mid,)

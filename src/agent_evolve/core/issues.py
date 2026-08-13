@@ -70,6 +70,7 @@ class Issue:
     writable_artifact_ids: tuple[str, ...]
     evidence_refs: tuple[str, ...]
     lineage: str = ""
+    entropy_tier: str = "recombination_target"
 
     def __post_init__(self) -> None:
         if not self.issue_id:
@@ -113,21 +114,39 @@ def raw_issue_quality(
     *,
     normalized_entropy: float = 0.0,
     weights: tuple[float, ...] = DEFAULT_QUALITY_WEIGHTS,
+    frontier_weight: float = 0.30,
+    entropy_tier: str | None = None,
 ) -> float:
     """Weighted sum of the five evidence signals.
 
     ``normalized_entropy`` is supplied by the caller because entropy is
     min-max normalized within the candidate set, not per issue.
+
+    ``entropy_tier`` (from the issue or an explicit override) controls how the
+    entropy component is treated per ``selection-algorithms.md:87-95``:
+
+    * ``"frontier_exploration"`` scales the entropy component by
+      ``frontier_weight`` (default 0.30), retaining but dampening frontier
+      signal where no strong solution exists yet.
+    * ``"skip"`` contributes zero entropy (evidence floor unmet).
+    * anything else contributes the entropy component at full weight.
     """
     if len(weights) != 5:
         raise ValueError("weights must have exactly 5 components")
     if not math.isclose(sum(weights), 1.0, abs_tol=1e-9):
         raise ValueError("weights must sum to 1.0")
     w_severity, w_confidence, w_entropy, w_coverage, w_pareto = weights
+    tier = entropy_tier if entropy_tier is not None else issue.entropy_tier
+    if tier == "skip":
+        entropy_term = 0.0
+    else:
+        entropy_term = w_entropy * normalized_entropy
+        if tier == "frontier_exploration":
+            entropy_term *= frontier_weight
     return (
         w_severity * issue.severity
         + w_confidence * issue.confidence
-        + w_entropy * normalized_entropy
+        + entropy_term
         + w_coverage * issue.coverage_need
         + w_pareto * issue.pareto_relevance
     )
@@ -142,6 +161,7 @@ def build_issue(
     pareto_relevance: float = 0.0,
     embedding: tuple[float, ...] = (),
     lineage: str = "",
+    entropy_tier: str = "recombination_target",
 ) -> Issue | None:
     """Build a trace-backed issue from a finding, or reject it with ``None``.
 
@@ -185,6 +205,7 @@ def build_issue(
         writable_artifact_ids=write_set,
         evidence_refs=tuple(getattr(finding, "evidence_refs", ()) or ()),
         lineage=lineage,
+        entropy_tier=entropy_tier,
     )
     raw = raw_issue_quality(issue, normalized_entropy=0.0)
     return replace(issue, raw_quality=raw)
@@ -336,6 +357,7 @@ class HierarchicalDPPSelector:
         weights: tuple[float, ...] = DEFAULT_QUALITY_WEIGHTS,
         jitter: float = DEFAULT_JITTER,
         max_per_mechanism: int | None = None,
+        frontier_weight: float = 0.30,
     ) -> None:
         if mode not in ("dpp", "severity_rank", "coverage", "random"):
             raise ValueError(f"unknown mode: {mode!r}")
@@ -355,6 +377,8 @@ class HierarchicalDPPSelector:
             raise ValueError("jitter must be >= 0")
         if max_per_mechanism is not None and max_per_mechanism < 1:
             raise ValueError("max_per_mechanism must be a positive integer or None")
+        if not (0.0 <= frontier_weight <= 1.0):
+            raise ValueError("frontier_weight must be in [0, 1]")
 
         self.mode = mode
         self.theta = float(theta)
@@ -367,6 +391,7 @@ class HierarchicalDPPSelector:
         self.weights = tuple(weights)
         self.jitter = float(jitter)
         self.max_per_mechanism = max_per_mechanism
+        self.frontier_weight = float(frontier_weight)
 
     # ------------------------------------------------------------------ #
     # Public entry point
@@ -423,7 +448,13 @@ class HierarchicalDPPSelector:
         span = hi - lo
         normalized = [(e - lo) / span if span > 0.0 else 0.0 for e in entropies]
         return [
-            raw_issue_quality(i, normalized_entropy=n, weights=self.weights)
+            raw_issue_quality(
+                i,
+                normalized_entropy=n,
+                weights=self.weights,
+                frontier_weight=self.frontier_weight,
+                entropy_tier=i.entropy_tier,
+            )
             for i, n in zip(issues, normalized)
         ]
 

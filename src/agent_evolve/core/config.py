@@ -86,6 +86,7 @@ _FLOAT_UNIT_FIELDS = (
     "champion_beta",
     "champion_gamma",
     "champion_delta",
+    "champion_min_coverage_fraction",
 )
 
 _POSITIVE_INT_FIELDS = (
@@ -120,6 +121,7 @@ class ResolvedConfig:
     champion_beta: float = 0.20
     champion_gamma: float = 0.15
     champion_delta: float = 0.10
+    champion_min_coverage_fraction: float = 0.0
     seed: int = 0
     deferred_features: tuple[str, ...] = ()
 
@@ -187,6 +189,7 @@ class ResolvedConfig:
             "champion_beta": self.champion_beta,
             "champion_gamma": self.champion_gamma,
             "champion_delta": self.champion_delta,
+            "champion_min_coverage_fraction": self.champion_min_coverage_fraction,
             "seed": self.seed,
             "deferred_features": list(self.deferred_features),
         }
@@ -233,6 +236,7 @@ _VALID_OVERRIDES = {
     "champion_beta",
     "champion_gamma",
     "champion_delta",
+    "champion_min_coverage_fraction",
 }
 
 

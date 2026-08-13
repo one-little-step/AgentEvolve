@@ -6,6 +6,7 @@ import pytest
 from agent_evolve.core.config import resolve_profile
 from agent_evolve.core.contracts import EvolutionCandidate
 from agent_evolve.core.pool import (
+    ChampionReport,
     PersistentPool,
     PoolEntry,
     ScoreCell,
@@ -513,3 +514,97 @@ def test_select_champion_uses_config_weights():
         champion_delta=0.0,
     )
     assert p.select_champion(config=config).candidate_id == "candidate-b"
+
+
+# ---------------------------------------------------------------------- #
+# ChampionReport (Phase 4.5)
+# ---------------------------------------------------------------------- #
+def test_select_champion_returns_champion_report():
+    p = PersistentPool(min_comparable_rollouts=2)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("candidate-a"))
+    for r in range(2):
+        p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.9))
+        p.record_score("base", *_prov("t", "c0", rollout=r, score=0.5))
+    report = p.select_champion()
+    assert isinstance(report, ChampionReport)
+    assert report.candidate_id == "candidate-a"
+
+
+def test_champion_report_exposes_every_component():
+    p = PersistentPool(min_comparable_rollouts=2)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("candidate-a"))
+    for r in range(2):
+        p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.9))
+        p.record_score("base", *_prov("t", "c0", rollout=r, score=0.5))
+    report = p.select_champion()
+    assert report.outcome == pytest.approx(0.9)
+    assert report.coverage == pytest.approx(1.0)
+    assert report.stability == pytest.approx(1.0)
+    assert report.regression_risk == pytest.approx(0.0)
+    # alpha*0.9 + beta*1.0 + gamma*1.0 - delta*0.0
+    assert report.aggregate == pytest.approx(0.55 * 0.9 + 0.20 + 0.15)
+    assert report.tie_breaker == "ascending_candidate_id"
+
+
+def test_champion_report_tie_breaker_is_recorded():
+    p = PersistentPool(min_comparable_rollouts=2)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("candidate-b"))
+    p.add_candidate(_candidate("candidate-a"))
+    for r in range(2):
+        p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.6))
+        p.record_score("candidate-b", *_prov("t", "c0", rollout=r, score=0.6))
+        p.record_score("base", *_prov("t", "c0", rollout=r, score=0.1))
+    report = p.select_champion()
+    assert report.candidate_id == "candidate-a"
+    assert report.tie_breaker == "ascending_candidate_id"
+
+
+def test_select_champion_min_coverage_fraction_disqualifies():
+    p = PersistentPool(min_comparable_rollouts=2)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("candidate-a"))
+    p.add_candidate(_candidate("candidate-b"))
+    for r in range(2):
+        # candidate-a: high outcome but only 1 of 3 observed cells evaluated.
+        p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.9))
+        # candidate-b: full coverage, moderate outcome.
+        p.record_score("candidate-b", *_prov("t", "c0", rollout=r, score=0.5))
+        p.record_score("candidate-b", *_prov("t", "c1", rollout=r, score=0.5))
+        p.record_score("candidate-b", *_prov("t", "c2", rollout=r, score=0.5))
+        # base: full coverage, low outcome.
+        p.record_score("base", *_prov("t", "c0", rollout=r, score=0.1))
+        p.record_score("base", *_prov("t", "c1", rollout=r, score=0.1))
+        p.record_score("base", *_prov("t", "c2", rollout=r, score=0.1))
+    # Without a coverage gate, candidate-a (high outcome) wins.
+    assert p.select_champion().candidate_id == "candidate-a"
+    # With the gate, candidate-a's 1/3 coverage disqualifies it -> candidate-b.
+    config = resolve_profile("minimal", champion_min_coverage_fraction=0.5)
+    report = p.select_champion(config=config)
+    assert report.candidate_id == "candidate-b"
+
+
+def test_champion_report_records_disqualifications():
+    p = PersistentPool(min_comparable_rollouts=2)
+    p.add_base(_candidate("base"))
+    p.add_candidate(_candidate("candidate-a"))
+    p.add_candidate(_candidate("candidate-b"))
+    for r in range(2):
+        # candidate-a: high outcome but partial coverage (coverage-disqualified).
+        p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.9))
+        # candidate-b: full coverage but protected-floor violator.
+        p.record_score("candidate-b", *_prov("t", "c0", rollout=r, score=0.5))
+        p.record_score("candidate-b", *_prov("t", "c1", rollout=r, score=0.5))
+        p.record_score("candidate-b", *_prov("t", "c2", rollout=r, score=0.5))
+        # base: full coverage, low outcome.
+        p.record_score("base", *_prov("t", "c0", rollout=r, score=0.1))
+        p.record_score("base", *_prov("t", "c1", rollout=r, score=0.1))
+        p.record_score("base", *_prov("t", "c2", rollout=r, score=0.1))
+    config = resolve_profile("minimal", champion_min_coverage_fraction=0.5)
+    report = p.select_champion(
+        config=config, protected_floor_violations={"candidate-b"}
+    )
+    assert report.disqualifications == ("candidate-a", "candidate-b")
+    assert report.candidate_id == "base"
