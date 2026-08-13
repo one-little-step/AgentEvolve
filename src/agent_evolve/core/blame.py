@@ -18,7 +18,9 @@ Design rules (from docs/architecture/target-rho-parallel-gepa.md):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Literal, Mapping, Sequence
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def _check_unit_interval(name: str, value: float) -> float:
@@ -140,6 +142,60 @@ class CausalAnalysis:
     @property
     def actor_ids(self) -> tuple[str, ...]:
         return tuple(n.actor_id for n in self.blame_graph.nodes)
+
+
+class CausalFinding(BaseModel):
+    """A trace-backed causal finding with a validated status.
+
+    Unlike :class:`CausalAnalysis` (a plain data record), this model enforces
+    the data contract for analyzer+judge findings (docs/architecture/
+    data-contracts.md:81-104). ``observed`` findings must carry non-empty
+    mechanism attribution and trace-backed evidence references; other statuses
+    may leave the trace-specific fields unset. A graph node without trace
+    evidence is never synthesized.
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    verdict_id: str = Field(default="", min_length=1)
+    candidate_id: str = Field(default="", min_length=1)
+    task_id: str = Field(default="", min_length=1)
+    trace_id: str = Field(default="", min_length=1)
+    status: Literal["observed", "uncertain", "insufficient_evidence", "malformed"]
+    mechanism_description: str | None = None
+    mechanism_cluster_id: str | None = None
+    severity: float | None = None
+    confidence: float | None = None
+    blame_graph: BlameGraph = Field(default_factory=lambda: BlameGraph(nodes=()))
+    evidence_refs: tuple[str, ...] = ()
+    rationale: str = Field(default="", min_length=1)
+    counterfactual_notes: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate(self) -> "CausalFinding":
+        for name in ("severity", "confidence"):
+            value = getattr(self, name)
+            if value is not None and not (0.0 <= value <= 1.0):
+                raise ValueError(f"{name} must be in [0, 1]")
+        if any(not ref.strip() for ref in self.evidence_refs):
+            raise ValueError("evidence_refs contains blank IDs")
+        if self.status == "observed":
+            missing: list[str] = []
+            if not self.mechanism_description:
+                missing.append("mechanism_description")
+            if not self.mechanism_cluster_id:
+                missing.append("mechanism_cluster_id")
+            if self.severity is None:
+                missing.append("severity")
+            if self.confidence is None:
+                missing.append("confidence")
+            if not self.evidence_refs:
+                missing.append("evidence_refs")
+            if missing:
+                raise ValueError(
+                    f"status=observed requires: {', '.join(missing)}"
+                )
+        return self
 
 
 def empty_analysis() -> CausalAnalysis:
