@@ -6,8 +6,10 @@ Task-local incremental clusters assign ``mechanism_cluster_id``, which is the
 cross-candidate alignment key.
 
 Clusters are stable inside an outer iteration. New observations may join an
-existing cluster; cluster create/merge/split occurs at refresh barriers. Track
-cluster freshness and reduce entropy weight when evidence is stale.
+existing cluster; cluster creation is eager (each assignment either joins an
+existing cluster or spawns a new one immediately). Automatic merge/split and
+barrier-deferred creation are future work. Track cluster freshness and reduce
+entropy weight when evidence is stale.
 
 Implementation note
 -------------------
@@ -55,6 +57,15 @@ class MechanismEmbedder(Protocol):
     dim: int
 
     def embed(self, text: str) -> tuple[float, ...]: ...
+
+
+class EmbeddingProviderUnavailable(RuntimeError):
+    """Raised by an embedder when its backing provider is unreachable.
+
+    The clusterer catches only this sentinel to trigger the lexical fallback;
+    any other exception (e.g. a ``TypeError`` or ``ValueError`` from an
+    embedder bug) propagates to the caller.
+    """
 
 
 class LexicalEmbedder:
@@ -133,8 +144,8 @@ class MechanismClusterer:
     new cluster.
     """
 
+    task_id: str
     embedder: MechanismEmbedder
-    task_id: str = "default"
     join_threshold: float = 0.75
     max_clusters_per_task: int = 12
     _clusters: dict[str, _Cluster] = field(default_factory=dict)
@@ -231,7 +242,7 @@ class MechanismClusterer:
         """Embed text, falling back to a lexical embedder on provider failure."""
         try:
             return list(self.embedder.embed(text)), None
-        except Exception:
+        except EmbeddingProviderUnavailable:
             if self._fallback_embedder is None:
                 self._fallback_embedder = LexicalEmbedder()
             return list(self._fallback_embedder.embed(text)), "provider_unavailable"

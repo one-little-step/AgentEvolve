@@ -6,6 +6,7 @@ import pytest
 from agent_evolve.core.blame import BlameGraph, BlameNode, CausalAnalysis, CausalFinding
 from agent_evolve.core.clustering import (
     ClusterRegistry,
+    EmbeddingProviderUnavailable,
     LexicalEmbedder,
     MechanismClusterer,
 )
@@ -43,7 +44,7 @@ class UnavailableEmbedder:
     dim = 64
 
     def embed(self, text: str) -> tuple[float, ...]:
-        raise RuntimeError("embedding provider unavailable")
+        raise EmbeddingProviderUnavailable("embedding provider unavailable")
 
 
 def test_lexical_embedder_returns_normalized_vector():
@@ -182,8 +183,27 @@ def test_same_mechanism_text_in_two_tasks_never_shares_cluster() -> None:
     assert registry.assign("task-a", finding("stale schema")).cluster_id != registry.assign("task-b", finding("stale schema")).cluster_id
 
 
+def test_clusterer_positional_signature_order():
+    c = MechanismClusterer("t1", LexicalEmbedder())
+    assert c.task_id == "t1"
+
+
+def test_clusterer_propagates_non_provider_errors():
+    class BrokenEmbedder:
+        dim = 64
+
+        def embed(self, text: str) -> tuple[float, ...]:
+            raise TypeError("not a provider outage")
+
+    c = MechanismClusterer(task_id="t1", embedder=BrokenEmbedder())
+    with pytest.raises(TypeError):
+        c.assign(_analysis("retriever returned stale schema"))
+
+
 def test_lexical_fallback_is_recorded_when_provider_unavailable() -> None:
-    assignment = MechanismClusterer(embedder=UnavailableEmbedder()).assign(finding("stale schema"))
+    assignment = MechanismClusterer(
+        task_id="task-a", embedder=UnavailableEmbedder()
+    ).assign(finding("stale schema"))
     assert assignment.embedding_fallback_reason == "provider_unavailable"
 
 
@@ -229,7 +249,7 @@ def test_max_clusters_per_task_must_be_positive():
 
 
 def test_fallback_embedder_still_produces_assignment():
-    c = MechanismClusterer(embedder=UnavailableEmbedder())
+    c = MechanismClusterer(task_id="task-a", embedder=UnavailableEmbedder())
     a = c.assign(_analysis("retriever returned stale schema"))
     assert a.embedding_fallback_reason == "provider_unavailable"
     assert a.cluster_id == "c0"
