@@ -209,3 +209,9 @@ def test_sanitize_does_not_mutate_input() -> None:
 def test_storage_backend_protocol_is_structural(tmp_path: Path) -> None:
     store = JSONFileStorage(tmp_path)
     assert isinstance(store, StorageBackend)
+
+
+def test_storage_rejects_non_string_keys(tmp_path: Path) -> None:
+    store = JSONFileStorage(tmp_path)
+    with pytest.raises(PersistenceSafetyError):
+        store.write_record("attempts", "attempt-1", {"a": 1, 2: 3})

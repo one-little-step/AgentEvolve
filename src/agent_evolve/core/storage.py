@@ -98,7 +98,12 @@ def _sanitize(value: object, hits: set[str], max_len: int, truncations: list[int
     if isinstance(value, Mapping):
         result: dict[object, object] = {}
         for key, item in value.items():
-            if isinstance(key, str) and key.lower() in _DENYLIST_FIELDS:
+            if not isinstance(key, str):
+                raise PersistenceSafetyError(
+                    f"refusing to persist non-string mapping key of type "
+                    f"{type(key).__name__}"
+                )
+            if key.lower() in _DENYLIST_FIELDS:
                 raise PersistenceSafetyError(
                     f"refusing to persist denied field {key!r} "
                     "(credential, expected answer, evaluator internal, label, "
