@@ -40,7 +40,10 @@ def test_b1_retains_all_initial_candidates_while_b0_discards_non_winners(
 ) -> None:
     outcome = run_fixed_budget_comparison(seed=7, storage_root=tmp_path)
     assert outcome.b0_retained_candidate_count == 1
+    assert outcome.b1_retained_candidate_count == 3
+    assert outcome.b1_frontier_size == 2
     assert outcome.b1_retained_candidate_count > 1
+    assert outcome.b1_retained_candidate_count >= outcome.b1_frontier_size
     assert outcome.storage_records_are_redacted is True
 
 

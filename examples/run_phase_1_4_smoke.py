@@ -222,6 +222,7 @@ def run_fixed_budget_comparison(seed: int, storage_root: Path) -> ComparisonOutc
     ranked = sorted(means.items(), key=lambda item: (-item[1], item[0]))
     best_candidate_id = ranked[0][0]
     b0_best_score = means[best_candidate_id]
+    b0_retained_candidate_count = len(ranked[:1])
 
     # ---- B1: persistent pool keeps base + every candidate ----
     base_candidate = harness[0][0]
@@ -248,6 +249,7 @@ def run_fixed_budget_comparison(seed: int, storage_root: Path) -> ComparisonOutc
 
     frontier = pool.pareto_frontier()
     b1_frontier_size = len(frontier)
+    b1_retained_candidate_count = len(pool)
 
     # ---- Persist redacted evidence and verify no evaluator token leaked ----
     storage = JSONFileStorage(Path(storage_root))
@@ -290,8 +292,8 @@ def run_fixed_budget_comparison(seed: int, storage_root: Path) -> ComparisonOutc
     comparison_coverage = 1.0
 
     return ComparisonOutcome(
-        b0_retained_candidate_count=1,
-        b1_retained_candidate_count=b1_frontier_size,
+        b0_retained_candidate_count=b0_retained_candidate_count,
+        b1_retained_candidate_count=b1_retained_candidate_count,
         b0_best_score=b0_best_score,
         b1_frontier_size=b1_frontier_size,
         comparison_coverage=comparison_coverage,
