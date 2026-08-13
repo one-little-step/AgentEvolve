@@ -5,12 +5,12 @@ Per docs/architecture/target-rho-parallel-gepa.md:
     For comparable candidates:
 
         H(t,m) = Var({Q(h_i, t, m)})
-                 * max(max_i Q(h_i, t, m), epsilon_floor)
+                 * max(max_i Q(h_i, t, m), score_floor)
 
-    The score floor retains frontier-exploration signal where candidates differ
-    but no strong solution exists yet. Entropy cannot drive selection until at
-    least three comparable candidates and two rollouts per candidate support
-    the cell.
+    The score floor (``score_floor``, default 0.15 = GEPA_ENTROPY_SCORE_FLOOR)
+    retains frontier-exploration signal where candidates differ but no strong
+    solution exists yet. Entropy cannot drive selection until at least three
+    comparable candidates and two rollouts per candidate support the cell.
 
     Use a max-heap for incremental entropy priority. Use hierarchical DPP:
     task selection first, then mechanism selection within tasks. Selection
@@ -104,7 +104,6 @@ class EntropyTracker:
     before entropy drives selection. Below that floor, entropy weight is 0.
     """
 
-    epsilon_floor: float = 0.05
     score_floor: float = 0.15
     recombination_score_threshold: float = 0.30
     frontier_weight: float = 0.30
@@ -115,9 +114,18 @@ class EntropyTracker:
     _heap_seq: int = 0  # tiebreaker for stable heap ordering
     _heap_dirty: bool = False
 
-    def __post_init__(self) -> None:
-        if not (0.0 <= self.epsilon_floor <= 1.0):
+    @property
+    def epsilon_floor(self) -> float:
+        """Deprecated alias for ``score_floor`` (single entropy floor source)."""
+        return self.score_floor
+
+    @epsilon_floor.setter
+    def epsilon_floor(self, value: float) -> None:
+        if not (0.0 <= value <= 1.0):
             raise ValueError("epsilon_floor must be in [0, 1]")
+        self.score_floor = value
+
+    def __post_init__(self) -> None:
         if not (0.0 <= self.score_floor <= 1.0):
             raise ValueError("score_floor must be in [0, 1]")
         if not (0.0 <= self.recombination_score_threshold <= 1.0):
@@ -200,7 +208,7 @@ class EntropyTracker:
             return 0.0
         var = _variance(all_scores)
         max_score = max(all_scores)
-        return var * max(max_score, self.epsilon_floor)
+        return var * max(max_score, self.score_floor)
 
     def entropy(self, task_id: str, mechanism_cluster_id: str) -> float | None:
         """Population-variance entropy with the score floor, or None below the
