@@ -153,14 +153,23 @@ class CausalFinding(BaseModel):
     mechanism attribution and trace-backed evidence references; other statuses
     may leave the trace-specific fields unset. A graph node without trace
     evidence is never synthesized.
+
+    ``verdict_id``, ``candidate_id``, ``task_id``, ``trace_id``, and
+    ``rationale`` are genuinely required (no defaults): an omitted field does
+    not silently fall back to an empty string.
+
+    For ``status == "observed"``, every artifact ID referenced by any
+    :class:`BlameNode.artifacts` in ``blame_graph`` must be present in
+    ``evidence_refs`` (the trace-backed reference set). A node attributing an
+    artifact with no evidence reference is invalid and raises ``ValidationError``.
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    verdict_id: str = Field(default="", min_length=1)
-    candidate_id: str = Field(default="", min_length=1)
-    task_id: str = Field(default="", min_length=1)
-    trace_id: str = Field(default="", min_length=1)
+    verdict_id: str = Field(min_length=1)
+    candidate_id: str = Field(min_length=1)
+    task_id: str = Field(min_length=1)
+    trace_id: str = Field(min_length=1)
     status: Literal["observed", "uncertain", "insufficient_evidence", "malformed"]
     mechanism_description: str | None = None
     mechanism_cluster_id: str | None = None
@@ -168,7 +177,7 @@ class CausalFinding(BaseModel):
     confidence: float | None = None
     blame_graph: BlameGraph = Field(default_factory=lambda: BlameGraph(nodes=()))
     evidence_refs: tuple[str, ...] = ()
-    rationale: str = Field(default="", min_length=1)
+    rationale: str = Field(min_length=1)
     counterfactual_notes: tuple[str, ...] = ()
 
     @model_validator(mode="after")
@@ -194,6 +203,17 @@ class CausalFinding(BaseModel):
             if missing:
                 raise ValueError(
                     f"status=observed requires: {', '.join(missing)}"
+                )
+            referenced = {
+                aid
+                for node in self.blame_graph.nodes
+                for aid in node.artifacts
+            }
+            unbacked = sorted(referenced - set(self.evidence_refs))
+            if unbacked:
+                raise ValueError(
+                    "status=observed blame_graph references artifacts without "
+                    f"trace evidence: {', '.join(unbacked)}"
                 )
         return self
 

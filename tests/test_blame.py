@@ -199,11 +199,51 @@ def _observed_finding(**overrides) -> CausalFinding:
 
 def test_observed_finding_requires_trace_backed_evidence() -> None:
     with pytest.raises(ValidationError, match="evidence_refs"):
-        CausalFinding(status="observed", mechanism_description="bad retrieval", evidence_refs=())
+        _observed_finding(evidence_refs=())
+
+
+def test_observed_finding_requires_all_ids() -> None:
+    with pytest.raises(ValidationError):
+        CausalFinding(
+            status="observed",
+            mechanism_description="x",
+            mechanism_cluster_id="c",
+            severity=0.5,
+            confidence=0.5,
+            evidence_refs=("e",),
+        )
+
+
+def test_observed_finding_rejects_blame_artifact_without_evidence() -> None:
+    with pytest.raises(ValidationError, match="evidence|trace"):
+        CausalFinding(
+            verdict_id="v",
+            candidate_id="c",
+            task_id="t",
+            trace_id="tr",
+            status="observed",
+            mechanism_description="x",
+            mechanism_cluster_id="c",
+            severity=0.5,
+            confidence=0.5,
+            blame_graph=BlameGraph(
+                nodes=(_node("retriever", 0.5, artifacts=["skills/retrieval"]),)
+            ),
+            evidence_refs=("e",),
+            rationale="x",
+        )
 
 
 def test_insufficient_evidence_is_not_coerced_to_blame() -> None:
-    finding = CausalFinding(status="insufficient_evidence", rationale="trace lacks causal link")
+    finding = CausalFinding(
+        verdict_id="v",
+        candidate_id="c",
+        task_id="t",
+        trace_id="tr",
+        status="insufficient_evidence",
+        rationale="trace lacks causal link",
+        evidence_refs=(),
+    )
     assert finding.mechanism_cluster_id is None
 
 
