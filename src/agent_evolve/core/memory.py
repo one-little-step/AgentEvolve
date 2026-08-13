@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Iterable, Mapping, Sequence
 
+from pydantic import ValidationError
+
 from agent_evolve.core.contracts import MemoryRecord, RedactionReport
 from agent_evolve.core.storage import JSONFileStorage
 
@@ -245,7 +247,8 @@ class EditMemory:
 
     storage: JSONFileStorage | None = None
     retry_budget: RetryBudget = field(default_factory=RetryBudget)
-    max_records: int | None = None
+    max_history_records: int | None = None
+    max_records: int | None = field(default=None, repr=False)
     _attempts: list[EditAttempt] = field(default_factory=list)
     _by_id: dict[str, EditAttempt] = field(default_factory=dict)
     _by_artifact: dict[str, list[str]] = field(default_factory=dict)
@@ -255,8 +258,19 @@ class EditMemory:
     _records_by_issue: dict[str, list[str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.max_records is not None and self.max_records <= 0:
-            raise ValueError("max_records must be > 0 or None")
+        if self.max_records is not None:
+            if (
+                self.max_history_records is not None
+                and self.max_history_records != self.max_records
+            ):
+                raise ValueError(
+                    "specify either max_history_records or the deprecated "
+                    "max_records alias, not both with different values"
+                )
+            self.max_history_records = self.max_records
+        self.max_records = None
+        if self.max_history_records is not None and self.max_history_records <= 0:
+            raise ValueError("max_history_records must be > 0 or None")
 
     # ------------------------------------------------------------------ #
     # Write
@@ -264,16 +278,16 @@ class EditMemory:
     def record(self, attempt: EditAttempt, artifact_group: str, lineage: str) -> None:
         if attempt.attempt_id in self._by_id:
             raise ValueError(f"duplicate attempt_id: {attempt.attempt_id!r}")
+        # Persist first so a fail-closed PersistenceSafetyError leaves no
+        # half-committed in-memory state behind.
+        if self.storage is not None:
+            self.append(_attempt_to_memory_record(attempt))
         self._attempts.append(attempt)
         self._by_id[attempt.attempt_id] = attempt
         for aid in attempt.artifact_ids:
             self._by_artifact.setdefault(aid, []).append(attempt.attempt_id)
         self._by_issue.setdefault(attempt.issue_id, []).append(attempt.attempt_id)
-        # Account for the retry budget.
         self.retry_budget.record_attempt(attempt.issue_id, artifact_group, lineage)
-        # Persist a sanitized, reference-based memory record when backed.
-        if self.storage is not None:
-            self.append(_attempt_to_memory_record(attempt))
 
     def _require_storage(self) -> JSONFileStorage:
         if self.storage is None:
@@ -283,14 +297,30 @@ class EditMemory:
         return self.storage
 
     def append(self, memory_record: MemoryRecord) -> None:
-        """Sanitize, persist, and index an append-only memory record."""
+        """Sanitize, persist, and index an append-only memory record.
+
+        The indexed record's ``redaction_report`` reflects the sanitization
+        actually applied by the storage backend, not a fabricated empty report.
+        """
         storage = self._require_storage()
-        storage.write_record(
+        if memory_record.memory_record_id in self._by_record_id:
+            raise ValueError(
+                f"duplicate memory_record_id: {memory_record.memory_record_id!r}"
+            )
+        redacted = storage.write_record(
             "memory",
             memory_record.memory_record_id,
             memory_record.model_dump(mode="json"),
         )
-        self._index_memory_record(memory_record)
+        record = memory_record.model_copy(
+            update={
+                "redaction_report": RedactionReport(
+                    rule_hits=redacted.rule_hits,
+                    truncations=redacted.truncations,
+                )
+            }
+        )
+        self._index_memory_record(record)
 
     def append_payload(self, payload: Mapping[str, object]) -> None:
         """Recursively sanitize ``payload`` and persist it under ``memory``.
@@ -298,7 +328,20 @@ class EditMemory:
         Raises :class:`PersistenceSafetyError` when the storage sanitizer
         rejects prohibited content. Any supplied ``memory_record_id`` is used
         as the record ID; otherwise a fresh ID is generated.
+
+        When ``payload`` is a full :class:`MemoryRecord`, it is indexed (with
+        its real redaction report) and subject to the ``max_history_records``
+        bound, exactly like :meth:`append`. Otherwise the sanitized payload is
+        persisted but not indexed.
         """
+        try:
+            record = MemoryRecord.model_validate(payload)
+        except ValidationError:
+            self._append_raw_payload(payload)
+        else:
+            self.append(record)
+
+    def _append_raw_payload(self, payload: Mapping[str, object]) -> None:
         storage = self._require_storage()
         record_id = str(payload.get("memory_record_id") or uuid.uuid4().hex)
         storage.write_record("memory", record_id, payload)
@@ -312,9 +355,9 @@ class EditMemory:
         self._enforce_bound()
 
     def _enforce_bound(self) -> None:
-        if self.max_records is None:
+        if self.max_history_records is None:
             return
-        while len(self._records) > self.max_records:
+        while len(self._records) > self.max_history_records:
             oldest = self._records.pop(0)
             self._by_record_id.pop(oldest.memory_record_id, None)
             ids = self._records_by_issue.get(oldest.issue_fingerprint, [])
