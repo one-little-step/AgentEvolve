@@ -96,6 +96,43 @@ credentials, expected answers, evaluator internals, labels, regexes, raw model
 payloads, and raw unapproved trace bodies. Blob writes precede metadata writes;
 the metadata transaction commits last.
 
+## Research Storage Exception (Approved)
+
+For Phase 1-4 research runs using single-threaded execution and deterministic
+fake adapters, `JSONFileStorage` is approved as a substitute for the SQLite WAL
+mandate in `docs/architecture/storage-and-transactions.md`. This is an approved,
+bounded exception, not a replacement for the production storage architecture.
+
+Justification:
+
+- Phase 1-4 runs are single-threaded; WAL concurrency is unused.
+- Runs are short-lived and reproducible; crash recovery is not needed to test
+  H1-H5.
+- The research contribution is the selection and editing algorithms, not
+  storage durability.
+
+The exception applies only when `parallel_execution` is disabled, all runs are
+single-threaded, no concurrent writers exist, and the `StorageBackend` protocol
+is satisfied. It is revoked when Phase 5 begins; SQLite WAL or an equivalent
+transactional backend is then required.
+
+The research backend preserves recursive fail-closed redaction, budget tracking
+by cost category, profile resolution, manifest-safe feature-gate serialization,
+opaque full-string IDs, and temp-write-then-rename atomicity for each individual
+record.
+
+It does not provide cross-record transactions, recovery, content-addressed
+blobs, orphan cleanup, or durable leases. `research_parallel` is resolved and
+validated as a profile but its `parallel_execution` feature remains inactive;
+the JSON backend rejects any active parallel-execution configuration.
+
+Production upgrade work remains required before parallel execution or a
+production deployment: SQLite WAL with `journal_mode=WAL`, `synchronous=FULL`,
+and `foreign_keys=ON`; content-addressed blob staging; `BEGIN IMMEDIATE`
+barrier commits; interrupted-transaction recovery; orphan cleanup; and durable
+lease management. `StorageBackend` preserves this as a backend substitution,
+not a core redesign.
+
 ## Required TDD Evidence Before Phase-3 Unlock
 
 Tests are written before each implementation unit and must prove:

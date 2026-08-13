@@ -1,4 +1,10 @@
-# Step-2 Config And Transactional Storage Foundation Implementation Plan
+# Superseded: Step-2 Config And Transactional Storage Foundation Implementation Plan
+
+> Superseded by the approved Phase 1-4 research storage exception in
+> `docs/superpowers/specs/2026-08-12-architecture-enforcement-design.md` and
+> the design in `docs/superpowers/specs/2026-08-12-phase-1-4-research-core-design.md`.
+> Do not execute this SQLite/WAL plan for the current research path. SQLite WAL
+> remains required when Phase 5 parallel execution begins.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
