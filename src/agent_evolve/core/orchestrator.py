@@ -25,15 +25,24 @@ how many iterations to run.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import random
 from typing import Iterable, Mapping, Sequence
 
 from agent_evolve.core.analyzer import AnalyzerJudge, FakeAnalyzerJudge
-from agent_evolve.core.blame import CausalAnalysis, empty_analysis
+from agent_evolve.core.blame import (
+    BlameGraph,
+    BlameNode,
+    CausalAnalysis,
+    CausalFinding,
+    empty_analysis,
+)
 from agent_evolve.core.clustering import (
     ClusterRegistry,
     LexicalEmbedder,
     MechanismClusterer,
+    MechanismEmbedder,
 )
+from agent_evolve.core.config import ResolvedConfig
 from agent_evolve.core.contracts import (
     ArtifactEdit,
     CandidateWorkspace,
@@ -56,6 +65,7 @@ from agent_evolve.core.editor import (
     decide_acceptance,
     lineage_of,
     record_attempt,
+    repair_once_then_classify,
 )
 from agent_evolve.core.entropy import (
     EntropyTracker,
@@ -63,6 +73,14 @@ from agent_evolve.core.entropy import (
     Issue,
 )
 from agent_evolve.core.fake_editor import FakeEditor
+from agent_evolve.core.issues import (
+    DEFAULT_SCORE_FLOOR as TARGET_SCORE_FLOOR,
+    DEFAULT_THETA as TARGET_THETA,
+    HierarchicalDPPSelector as TargetIssueSelector,
+    Issue as TargetIssue,
+    IssueSelectionReport as TargetIssueSelectionReport,
+    build_issue as build_target_issue,
+)
 from agent_evolve.core.memory import (
     AttemptStatus,
     EditAttempt,
@@ -70,10 +88,12 @@ from agent_evolve.core.memory import (
     make_attempt_id,
 )
 from agent_evolve.core.pool import (
+    ChampionReport,
     PersistentPool,
     PoolEntry,
     ScoreProvenance,
 )
+from agent_evolve.core.storage import StorageBackend
 from agent_evolve.core.parallel import (
     BatchCoordinator,
     PoolSnapshot,
@@ -683,3 +703,665 @@ class Orchestrator:
                 weighted_net_gain=0.0,
             )))
         return results
+
+
+# ====================================================================== #
+# Phase 6: sequential GEPA runner
+#
+# This is the target-correct sequential loop. It deliberately does NOT reuse
+# :class:`Orchestrator` above, which is bound to the legacy ``entropy.Issue``
+# and legacy selector. The runner uses the target modules:
+#
+#   * :mod:`agent_evolve.core.issues`  -- trace-backed Issue + DPP selector
+#   * :mod:`agent_evolve.core.blame`   -- CausalFinding (validated contract)
+#   * :mod:`agent_evolve.core.pool`    -- ChampionReport + parent_frequencies
+#
+# Lifecycle per docs/architecture/orchestration-lifecycle.md:40-66:
+#   observe -> build_issues -> select_issues -> select_parent -> propose_edits
+#   -> validate -> commit_to_pool
+#
+# Merge, parallel batching, RHO proposal generation, tracing, checkpoints, and
+# replay are explicitly out of scope for Phase 6.
+# ====================================================================== #
+_DEFAULT_ISSUE_CONFIDENCE = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class GepaAttemptOutcome:
+    """Terminal result of one sequential GEPA attempt.
+
+    ``status is AttemptStatus.PENDING`` with an empty ``issue_id`` means no
+    evidence-backed work item existed, so no attempt was executed. That is a
+    legitimate terminal state, not a failure.
+    """
+
+    attempt_id: str
+    issue_id: str
+    parent_candidate_id: str
+    result_candidate_id: str | None
+    status: AttemptStatus
+    accepted: bool
+    weighted_net_gain: float
+    reason: str
+    artifact_ids: tuple[str, ...] = ()
+    fallback_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GepaRunResult:
+    """Summary of ``n_attempts`` sequential GEPA attempts."""
+
+    attempts: tuple[GepaAttemptOutcome, ...]
+    champion: ChampionReport | None
+    pool_size: int
+    pareto_frontier: tuple[str, ...]
+
+    @property
+    def attempts_run(self) -> int:
+        return len(self.attempts)
+
+    @property
+    def accepted_count(self) -> int:
+        return sum(1 for a in self.attempts if a.accepted)
+
+    @property
+    def rejected_count(self) -> int:
+        return sum(
+            1
+            for a in self.attempts
+            if not a.accepted and a.status is not AttemptStatus.PENDING
+        )
+
+    @property
+    def no_issue_count(self) -> int:
+        return sum(1 for a in self.attempts if a.status is AttemptStatus.PENDING)
+
+
+@dataclass(slots=True)
+class SequentialGepaRunner:
+    """Deterministic single-threaded GEPA loop over an adapter-backed pool.
+
+    The runner never mutates a parent version: every attempt is applied to an
+    adapter-materialized workspace, and only an accepted attempt is published to
+    the pool. Parent sampling is proportional to
+    :meth:`PersistentPool.parent_frequencies` under a seeded RNG, per
+    ``docs/architecture/selection-algorithms.md:306-315``.
+    """
+
+    adapter: EvolutionAdapter
+    pool: PersistentPool
+    analyzer_judge: AnalyzerJudge
+    editor: Editor
+    embedder: MechanismEmbedder | None = None
+    storage: StorageBackend | None = None
+    config: ResolvedConfig | None = None
+    mechanism_cluster_id: str = "c0"
+    seed: int = 0
+    protected_floors: tuple[ProtectedFloor, ...] = ()
+    net_gain_threshold: float = 0.0
+    _selector: TargetIssueSelector | None = field(default=None, init=False, repr=False)
+    _rng: random.Random | None = field(default=None, init=False, repr=False)
+    _iteration: int = field(default=0, init=False, repr=False)
+    _attempt_seq: int = field(default=0, init=False, repr=False)
+    _probe_seq: int = field(default=0, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.mechanism_cluster_id:
+            raise ValueError("mechanism_cluster_id is required")
+        if isinstance(self.seed, bool) or not isinstance(self.seed, int) or self.seed < 0:
+            raise ValueError("seed must be a non-negative integer")
+        if self.embedder is None:
+            self.embedder = LexicalEmbedder()
+        self._rng = random.Random(self.seed)
+        config = self.config
+        self._selector = TargetIssueSelector(
+            theta=config.dpp_theta if config is not None else TARGET_THETA,
+            score_floor=(
+                config.dpp_score_floor if config is not None else TARGET_SCORE_FLOOR
+            ),
+            max_items=config.dpp_max_items if config is not None else 100,
+            min_gain=config.dpp_min_gain if config is not None else 1e-12,
+            seed=self.seed,
+            frontier_weight=(
+                config.entropy_frontier_weight if config is not None else 0.30
+            ),
+        )
+
+    # ------------------------------------------------------------------ #
+    # Identifiers
+    # ------------------------------------------------------------------ #
+    @property
+    def selector(self) -> TargetIssueSelector:
+        assert self._selector is not None
+        return self._selector
+
+    def _next_attempt_id(self) -> str:
+        attempt_id = make_attempt_id(self._iteration, self._attempt_seq)
+        self._attempt_seq += 1
+        return attempt_id
+
+    def _next_probe_id(self, prefix: str) -> str:
+        self._probe_seq += 1
+        return f"{prefix}-p{self._probe_seq:05d}"
+
+    def _writable_artifact_ids(self, version: str) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                d.artifact_id
+                for d in self.adapter.artifact_inventory(version)
+                if d.writable
+            )
+        )
+
+    # ------------------------------------------------------------------ #
+    # Observation
+    # ------------------------------------------------------------------ #
+    def observe(
+        self, entry: PoolEntry, task: EvolutionTask
+    ) -> tuple[ExecutionTrace, CausalAnalysis]:
+        """Roll a candidate out on one task and analyze the resulting trace.
+
+        The rollout uses a throwaway workspace materialized from the candidate's
+        version so the candidate's own artifacts are never written.
+        """
+        probe_id = self._next_probe_id(f"obs-{entry.candidate_id}")
+        workspace = self.adapter.materialize_candidate(entry.version, probe_id)
+        result = self.adapter.run_full_rollout(workspace, task, probe_id)
+        trace = self.adapter.capture_trace(result)
+        analysis = self.analyzer_judge.analyze(task, trace)
+        return trace, analysis
+
+    # ------------------------------------------------------------------ #
+    # Finding synthesis
+    # ------------------------------------------------------------------ #
+    def finding_from_analysis(
+        self,
+        analysis: CausalAnalysis,
+        *,
+        task: EvolutionTask,
+        candidate_id: str,
+        trace_id: str,
+        verdict_id: str,
+        writable_artifact_ids: Sequence[str],
+    ) -> CausalFinding:
+        """Attribute an analysis to adapter-declared writable artifacts.
+
+        A generic analyzer+judge reports *actors*, not artifacts: the fake
+        analyzer's blame nodes carry ``artifacts=()``. An issue with no writable
+        attribution is rejected before ranking
+        (``selection-algorithms.md:136``), so the runner attributes the
+        adapter's declared writable set for the blamed actors and records each
+        attributed artifact as a trace-backed evidence reference.
+
+        Only sanitized material crosses this boundary: the rationale names the
+        mechanism and the artifacts, never the task's expected contract.
+        """
+        write_set = tuple(sorted(set(writable_artifact_ids)))
+        if not write_set:
+            raise ValueError("writable_artifact_ids must not be empty")
+
+        blamed = tuple(
+            sorted(
+                (n for n in analysis.blame_graph.nodes),
+                key=lambda n: (-n.blame, n.actor_id),
+            )
+        )
+        if blamed:
+            top = blamed[0]
+            nodes = (
+                BlameNode(actor_id=top.actor_id, blame=top.blame, artifacts=write_set),
+            ) + tuple(
+                BlameNode(actor_id=n.actor_id, blame=n.blame, artifacts=())
+                for n in blamed[1:]
+            )
+        else:
+            nodes = (BlameNode(actor_id="agent", blame=1.0, artifacts=write_set),)
+
+        return CausalFinding(
+            verdict_id=verdict_id,
+            candidate_id=candidate_id,
+            task_id=task.task_id,
+            trace_id=trace_id,
+            status="observed",
+            mechanism_description=analysis.mechanism,
+            mechanism_cluster_id=self.mechanism_cluster_id,
+            severity=analysis.severity,
+            confidence=_DEFAULT_ISSUE_CONFIDENCE,
+            blame_graph=BlameGraph(nodes=nodes),
+            evidence_refs=write_set,
+            rationale=(
+                "attributed the adapter-declared writable set for the "
+                f"highest-blame actor on task {task.task_id}"
+            ),
+        )
+
+    # ------------------------------------------------------------------ #
+    # build_issues
+    # ------------------------------------------------------------------ #
+    def build_issues(
+        self, tasks: Sequence[EvolutionTask]
+    ) -> tuple[TargetIssue, ...]:
+        """Build trace-backed issues for every task the base currently fails.
+
+        Returns target :class:`agent_evolve.core.issues.Issue` values. A task the
+        base already satisfies produces no issue, and a finding with no writable
+        attribution is dropped by :func:`build_issue` rather than ranked.
+        """
+        base = self.pool.base
+        inventory = self.adapter.artifact_inventory(base.version)
+        write_set = self._writable_artifact_ids(base.version)
+        out: list[TargetIssue] = []
+        for task in tasks:
+            trace, analysis = self.observe(base, task)
+            if analysis.score >= 1.0:
+                continue
+            finding = self.finding_from_analysis(
+                analysis,
+                task=task,
+                candidate_id=base.candidate_id,
+                trace_id=trace.trace_id,
+                verdict_id=f"{task.task_id}:{self.mechanism_cluster_id}",
+                writable_artifact_ids=write_set,
+            )
+            issue = build_target_issue(
+                finding,
+                inventory,
+                entropy=self._cell_entropy(task.task_id),
+                coverage_need=self._coverage_need(task.task_id),
+                pareto_relevance=self._pareto_relevance(base.candidate_id),
+                embedding=self._embed_finding(finding, task),
+                lineage=base.version,
+                entropy_tier=self._entropy_tier(task.task_id),
+            )
+            if issue is not None:
+                out.append(issue)
+        return tuple(out)
+
+    def _embed_finding(
+        self, finding: CausalFinding, task: EvolutionTask
+    ) -> tuple[float, ...]:
+        """Embed mechanism + task + artifact context.
+
+        The embedded text carries no expected contract: only the mechanism
+        description, the task ID, and the attributed artifact IDs.
+        """
+        parts = [finding.mechanism_description or "", task.task_id]
+        parts.extend(finding.evidence_refs)
+        text = " ".join(part for part in parts if part)
+        embedder = self.embedder
+        assert embedder is not None
+        return tuple(embedder.embed(text))
+
+    def _cell_entropy(self, task_id: str) -> float:
+        """Population variance of comparable scores for this task's cells.
+
+        Evidence floors are enforced by :meth:`_entropy_tier`; this is the raw
+        statistic only.
+        """
+        scores = [
+            cell.mean
+            for entry in self.pool.all_entries()
+            for (t_id, m_id), cell in entry.score_tensor.items()
+            if t_id == task_id
+            and m_id == self.mechanism_cluster_id
+            and cell.rollout_count >= 1
+        ]
+        if len(scores) < 2:
+            return 0.0
+        mean = sum(scores) / len(scores)
+        variance = max(0.0, sum(s * s for s in scores) / len(scores) - mean * mean)
+        floor = (
+            getattr(self.config, "entropy_score_floor", 0.15)
+            if self.config is not None
+            else 0.15
+        )
+        return variance * max(max(scores), floor)
+
+    def _entropy_tier(self, task_id: str) -> str:
+        """Resolve the entropy tier from the evidence floors.
+
+        ``skip`` when the comparable-candidate floor is unmet (a single sample
+        must never contribute a high-variance signal), ``frontier_exploration``
+        when variance is meaningful but the best score is below the
+        recombination threshold, otherwise ``recombination_target``.
+        """
+        min_candidates = (
+            getattr(self.config, "entropy_min_comparable_candidates", 3)
+            if self.config is not None
+            else 3
+        )
+        threshold = (
+            getattr(self.config, "entropy_recombination_score_threshold", 0.30)
+            if self.config is not None
+            else 0.30
+        )
+        scores = [
+            cell.mean
+            for entry in self.pool.all_entries()
+            for (t_id, m_id), cell in entry.score_tensor.items()
+            if t_id == task_id
+            and m_id == self.mechanism_cluster_id
+            and cell.rollout_count >= 1
+        ]
+        if len(scores) < min_candidates:
+            return "skip"
+        if max(scores) < threshold:
+            return "frontier_exploration"
+        return "recombination_target"
+
+    def _coverage_need(self, task_id: str) -> float:
+        """Fraction of pool candidates lacking evidence for this task's cell."""
+        entries = self.pool.all_entries()
+        if not entries:
+            return 0.0
+        evaluated = sum(
+            1
+            for entry in entries
+            if any(
+                t_id == task_id
+                and m_id == self.mechanism_cluster_id
+                and cell.rollout_count >= 1
+                for (t_id, m_id), cell in entry.score_tensor.items()
+            )
+        )
+        return max(0.0, min(1.0, 1.0 - evaluated / len(entries)))
+
+    def _pareto_relevance(self, candidate_id: str) -> float:
+        return 1.0 if candidate_id in self.pool.pareto_frontier() else 0.0
+
+    # ------------------------------------------------------------------ #
+    # select_issues
+    # ------------------------------------------------------------------ #
+    def select_issues(
+        self, issues: Sequence[TargetIssue], k: int = 1
+    ) -> TargetIssueSelectionReport:
+        """Select up to ``k`` issues via the target hierarchical DPP selector."""
+        return self.selector.select(tuple(issues), k=k)
+
+    # ------------------------------------------------------------------ #
+    # select_parent
+    # ------------------------------------------------------------------ #
+    def select_parent(self) -> PoolEntry:
+        """Sample a parent proportional to frequency, else fall back to base.
+
+        ``frequency(c)`` sums ``severity * confidence`` over the cells ``c``
+        wins. A pool with no winning cell (no comparable evidence yet) yields no
+        mass, and the base harness is the only defensible parent.
+        """
+        frequencies = self.pool.parent_frequencies()
+        weighted = [
+            (candidate_id, weight)
+            for candidate_id, weight in sorted(frequencies.items())
+            if weight > 0.0
+        ]
+        if not weighted:
+            return self.pool.base
+        rng = self._rng
+        assert rng is not None
+        total = sum(weight for _, weight in weighted)
+        draw = rng.random() * total  # type: ignore[attr-defined]
+        cumulative = 0.0
+        for candidate_id, weight in weighted:
+            cumulative += weight
+            if draw < cumulative:
+                return self.pool.get(candidate_id)
+        return self.pool.get(weighted[-1][0])
+
+    # ------------------------------------------------------------------ #
+    # propose_edits
+    # ------------------------------------------------------------------ #
+    def propose_edits(
+        self,
+        parent_entry: PoolEntry,
+        issue: TargetIssue,
+        task: EvolutionTask,
+        analysis: CausalAnalysis,
+        attempt_id: str,
+    ) -> tuple[CandidateWorkspace, EditorResponse | None, int]:
+        """Materialize a workspace and obtain a validated editor response.
+
+        Uses the one-correction-attempt repair protocol
+        (``component-contracts.md:72-74``). A response that is still malformed
+        after one correction returns ``None`` so the caller records a
+        non-promotion outcome and discards the workspace.
+        """
+        workspace = self.adapter.materialize_candidate(
+            parent_entry.version, attempt_id
+        )
+        write_set = tuple(issue.writable_artifact_ids)
+        current = self.adapter.read_artifacts(parent_entry.version, write_set)
+        request = EditorRequest(
+            base_workspace=workspace,
+            task=task,
+            analysis=analysis,
+            issue_id=issue.issue_id,
+            write_set=write_set,
+            current_artifacts=dict(current),
+        )
+        repair = repair_once_then_classify(self.editor, request)
+        return workspace, repair.response, repair.correction_requests
+
+    # ------------------------------------------------------------------ #
+    # validate
+    # ------------------------------------------------------------------ #
+    def validate(
+        self,
+        workspace: CandidateWorkspace,
+        origin_task: EvolutionTask,
+        regression_tasks: Sequence[EvolutionTask] = (),
+    ) -> FocusedValidationReport:
+        """Run origin and regression probes against the edited workspace."""
+        planner = ValidationPlanner(
+            origin_task=origin_task,
+            regression_tasks=tuple(regression_tasks),
+        )
+        origin: list[ValidationResult] = []
+        regression: list[ValidationResult] = []
+        for probe in planner.build_probes():
+            probe_id = self._next_probe_id(f"{workspace.attempt_id}-{probe.kind.value}")
+            result = self.adapter.run_full_rollout(workspace, probe.task, probe_id)
+            trace = self.adapter.capture_trace(result)
+            analysis = self.analyzer_judge.analyze(probe.task, trace)
+            outcome = ValidationResult(
+                kind=probe.kind,
+                task_id=probe.task.task_id,
+                score=analysis.score,
+                trace_id=trace.trace_id,
+                passed=analysis.score >= 0.5,
+                mechanism_cluster_id=self.mechanism_cluster_id,
+            )
+            if probe.kind is ValidationKind.REGRESSION:
+                regression.append(outcome)
+            else:
+                origin.append(outcome)
+        return FocusedValidationReport(
+            origin=tuple(origin), worked=(), regression=tuple(regression)
+        )
+
+    # ------------------------------------------------------------------ #
+    # commit_to_pool
+    # ------------------------------------------------------------------ #
+    def commit_to_pool(
+        self,
+        parent_entry: PoolEntry,
+        workspace: CandidateWorkspace,
+        attempt_id: str,
+        report: FocusedValidationReport,
+        analysis: CausalAnalysis,
+    ) -> PoolEntry:
+        """Publish an accepted candidate with its post-edit score evidence."""
+        candidate = EvolutionCandidate(
+            candidate_id=workspace.version,
+            version=workspace.version,
+            artifact_hashes={
+                d.artifact_id: d.version_hash
+                for d in self.adapter.artifact_inventory(workspace.version)
+            },
+            parent_ids=(parent_entry.candidate_id,),
+            ancestor_ids=parent_entry.candidate.ancestor_ids
+            + (parent_entry.candidate_id,),
+            attempt_ids=(attempt_id,),
+        )
+        entry = self.pool.add_candidate(candidate, origin_attempt_ids=(attempt_id,))
+        for result in report.all_results:
+            cell = entry.cell(result.task_id, self.mechanism_cluster_id)
+            self.pool.record_score(
+                entry.candidate_id,
+                result.score,
+                ScoreProvenance(
+                    task_id=result.task_id,
+                    mechanism_cluster_id=self.mechanism_cluster_id,
+                    trace_id=result.trace_id,
+                    rollout_seq=cell.rollout_count,
+                    analyzer_model_id=analysis.analyzer_model_id,
+                    judge_model_id=analysis.judge_model_id,
+                    blame_confidence=min(1.0, analysis.blame_graph.total_blame()),
+                    blame_stability=1.0,
+                    artifact_versions=dict(candidate.artifact_hashes),
+                ),
+            )
+        return entry
+
+    # ------------------------------------------------------------------ #
+    # One attempt
+    # ------------------------------------------------------------------ #
+    def run_attempt(self, tasks: Sequence[EvolutionTask]) -> GepaAttemptOutcome:
+        """Execute one full GEPA attempt over the given task coreset."""
+        self._iteration += 1
+        issues = self.build_issues(tasks)
+        report = self.select_issues(issues, k=1)
+        selected = report.items  # type: ignore[attr-defined]
+        if not selected:
+            return GepaAttemptOutcome(
+                attempt_id=self._next_attempt_id(),
+                issue_id="",
+                parent_candidate_id=self.pool.base.candidate_id,
+                result_candidate_id=None,
+                status=AttemptStatus.PENDING,
+                accepted=False,
+                weighted_net_gain=0.0,
+                reason="no evidence-backed work item available",
+                fallback_reason=report.fallback_reason,  # type: ignore[attr-defined]
+            )
+
+        issue = selected[0]
+        task = self._task_for(issue, tasks)
+        parent = self.select_parent()
+        attempt_id = self._next_attempt_id()
+        _, analysis = self.observe(parent, task)
+
+        workspace, response, corrections = self.propose_edits(
+            parent, issue, task, analysis, attempt_id
+        )
+        if response is None:
+            outcome = GepaAttemptOutcome(
+                attempt_id=attempt_id,
+                issue_id=issue.issue_id,
+                parent_candidate_id=parent.candidate_id,
+                result_candidate_id=None,
+                status=AttemptStatus.REJECTED,
+                accepted=False,
+                weighted_net_gain=0.0,
+                reason="editor response malformed after one correction request",
+                fallback_reason=report.fallback_reason,  # type: ignore[attr-defined]
+            )
+            self._persist_attempt(outcome, corrections)
+            return outcome
+
+        self.adapter.apply_structured_edits(workspace, response.edits)
+        regression_tasks = tuple(t for t in tasks if t.task_id != task.task_id)
+        validation = self.validate(workspace, task, regression_tasks)
+        decision = decide_acceptance(
+            validation,
+            protected_floors=self.protected_floors,
+            net_gain_threshold=self.net_gain_threshold,
+        )
+
+        result_candidate_id: str | None = None
+        if decision.accepted:
+            committed = self.commit_to_pool(
+                parent, workspace, attempt_id, validation, analysis
+            )
+            result_candidate_id = committed.candidate_id
+
+        outcome = GepaAttemptOutcome(
+            attempt_id=attempt_id,
+            issue_id=issue.issue_id,
+            parent_candidate_id=parent.candidate_id,
+            result_candidate_id=result_candidate_id,
+            status=decision.status,
+            accepted=decision.accepted,
+            weighted_net_gain=decision.weighted_net_gain,
+            reason=decision.reason,
+            artifact_ids=tuple(e.artifact_id for e in response.edits),
+            fallback_reason=report.fallback_reason,  # type: ignore[attr-defined]
+        )
+        self._persist_attempt(outcome, corrections)
+        return outcome
+
+    def _task_for(
+        self, issue: TargetIssue, tasks: Sequence[EvolutionTask]
+    ) -> EvolutionTask:
+        task_id = issue.task_id
+        for task in tasks:
+            if task.task_id == task_id:
+                return task
+        raise KeyError(f"selected issue references unknown task: {task_id!r}")
+
+    # ------------------------------------------------------------------ #
+    # Persistence
+    # ------------------------------------------------------------------ #
+    def _persist_attempt(
+        self, outcome: GepaAttemptOutcome, correction_requests: int
+    ) -> None:
+        """Persist a sanitized attempt record when storage is configured.
+
+        Only references and decisions are written. Task inputs, expected
+        contracts, editor payloads, and raw traces never reach storage.
+        """
+        if self.storage is None:
+            return
+        self.storage.write_record(  # type: ignore[attr-defined]
+            "attempts",
+            outcome.attempt_id,
+            {
+                "attempt_id": outcome.attempt_id,
+                "issue_id": outcome.issue_id,
+                "parent_candidate_id": outcome.parent_candidate_id,
+                "result_candidate_id": outcome.result_candidate_id,
+                "status": outcome.status.value,
+                "accepted": outcome.accepted,
+                "weighted_net_gain": outcome.weighted_net_gain,
+                "reason": outcome.reason,
+                "artifact_ids": list(outcome.artifact_ids),
+                "correction_requests": correction_requests,
+                "mechanism_cluster_id": self.mechanism_cluster_id,
+                "selection_fallback_reason": outcome.fallback_reason,
+            },
+        )
+
+    # ------------------------------------------------------------------ #
+    # N attempts
+    # ------------------------------------------------------------------ #
+    def run(
+        self, tasks: Sequence[EvolutionTask], n_attempts: int
+    ) -> GepaRunResult:
+        """Run ``n_attempts`` sequential GEPA attempts and select a champion."""
+        if isinstance(n_attempts, bool) or not isinstance(n_attempts, int):
+            raise ValueError("n_attempts must be a positive integer")
+        if n_attempts < 1:
+            raise ValueError("n_attempts must be a positive integer")
+        if not tasks:
+            raise ValueError("tasks must not be empty")
+
+        outcomes = [self.run_attempt(tasks) for _ in range(n_attempts)]
+        try:
+            champion = self.pool.select_champion(config=self.config)
+        except ValueError:
+            champion = None
+        return GepaRunResult(
+            attempts=tuple(outcomes),
+            champion=champion,
+            pool_size=len(self.pool),
+            pareto_frontier=self.pool.pareto_frontier(),
+        )
