@@ -23,9 +23,15 @@ store any payload whose keys match a denylist (``expected_*``, ``label``,
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Iterable, Mapping, Sequence
+
+from pydantic import ValidationError
+
+from agent_evolve.core.contracts import MemoryRecord, RedactionReport
+from agent_evolve.core.storage import JSONFileStorage
 
 
 # ---------------------------------------------------------------------- #
@@ -189,6 +195,35 @@ class RetryBudget:
 
 
 # ---------------------------------------------------------------------- #
+# Retry state (issue/artifact/lineage scoped)
+# ---------------------------------------------------------------------- #
+@dataclass(slots=True)
+class RetryState:
+    """Scoped retry accounting keyed by (issue, artifacts, lineage).
+
+    Distinct from :class:`RetryBudget`, which is keyed by
+    (issue_id, artifact_group, lineage) and enforces a default maximum of
+    three. ``RetryState`` is the append-only-record counterpart: it stores an
+    explicit per-scope count and lets callers pass the limit per check.
+    """
+
+    attempts_by_scope: dict[tuple[str, tuple[str, ...], str], int] = field(
+        default_factory=dict
+    )
+
+    def record(self, issue: str, artifacts: tuple[str, ...], lineage: str) -> int:
+        key = (issue, artifacts, lineage)
+        n = self.attempts_by_scope.get(key, 0) + 1
+        self.attempts_by_scope[key] = n
+        return n
+
+    def exhausted(
+        self, issue: str, artifacts: tuple[str, ...], lineage: str, limit: int
+    ) -> bool:
+        return self.attempts_by_scope.get((issue, artifacts, lineage), 0) >= limit
+
+
+# ---------------------------------------------------------------------- #
 # Edit memory
 # ---------------------------------------------------------------------- #
 @dataclass(slots=True)
@@ -203,13 +238,39 @@ class EditMemory:
       worked artifact.
 
     Plus a retry budget scoped to (issue, artifact_group, lineage).
+
+    When ``storage`` is set, every persisted object is routed through the
+    storage backend's recursive sanitizer: raw editor/task/evaluator content is
+    never written, and unsafe content fails closed with
+    :class:`PersistenceSafetyError`.
     """
 
+    storage: JSONFileStorage | None = None
     retry_budget: RetryBudget = field(default_factory=RetryBudget)
+    max_history_records: int | None = None
+    max_records: int | None = field(default=None, repr=False)
     _attempts: list[EditAttempt] = field(default_factory=list)
     _by_id: dict[str, EditAttempt] = field(default_factory=dict)
     _by_artifact: dict[str, list[str]] = field(default_factory=dict)
     _by_issue: dict[str, list[str]] = field(default_factory=dict)
+    _records: list[MemoryRecord] = field(default_factory=list)
+    _by_record_id: dict[str, MemoryRecord] = field(default_factory=dict)
+    _records_by_issue: dict[str, list[str]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.max_records is not None:
+            if (
+                self.max_history_records is not None
+                and self.max_history_records != self.max_records
+            ):
+                raise ValueError(
+                    "specify either max_history_records or the deprecated "
+                    "max_records alias, not both with different values"
+                )
+            self.max_history_records = self.max_records
+        self.max_records = None
+        if self.max_history_records is not None and self.max_history_records <= 0:
+            raise ValueError("max_history_records must be > 0 or None")
 
     # ------------------------------------------------------------------ #
     # Write
@@ -217,17 +278,110 @@ class EditMemory:
     def record(self, attempt: EditAttempt, artifact_group: str, lineage: str) -> None:
         if attempt.attempt_id in self._by_id:
             raise ValueError(f"duplicate attempt_id: {attempt.attempt_id!r}")
+        # Persist first so a fail-closed PersistenceSafetyError leaves no
+        # half-committed in-memory state behind.
+        if self.storage is not None:
+            self.append(_attempt_to_memory_record(attempt))
         self._attempts.append(attempt)
         self._by_id[attempt.attempt_id] = attempt
         for aid in attempt.artifact_ids:
             self._by_artifact.setdefault(aid, []).append(attempt.attempt_id)
         self._by_issue.setdefault(attempt.issue_id, []).append(attempt.attempt_id)
-        # Account for the retry budget.
         self.retry_budget.record_attempt(attempt.issue_id, artifact_group, lineage)
+
+    def _require_storage(self) -> JSONFileStorage:
+        if self.storage is None:
+            raise ValueError(
+                "EditMemory has no storage backend; cannot persist memory records"
+            )
+        return self.storage
+
+    def append(self, memory_record: MemoryRecord) -> None:
+        """Sanitize, persist, and index an append-only memory record.
+
+        The indexed record's ``redaction_report`` reflects the sanitization
+        actually applied by the storage backend, not a fabricated empty report.
+        """
+        storage = self._require_storage()
+        if memory_record.memory_record_id in self._by_record_id:
+            raise ValueError(
+                f"duplicate memory_record_id: {memory_record.memory_record_id!r}"
+            )
+        redacted = storage.write_record(
+            "memory",
+            memory_record.memory_record_id,
+            memory_record.model_dump(mode="json"),
+        )
+        record = memory_record.model_copy(
+            update={
+                "redaction_report": RedactionReport(
+                    rule_hits=redacted.rule_hits,
+                    truncations=redacted.truncations,
+                )
+            }
+        )
+        self._index_memory_record(record)
+
+    def append_payload(self, payload: Mapping[str, object]) -> None:
+        """Recursively sanitize ``payload`` and persist it under ``memory``.
+
+        Raises :class:`PersistenceSafetyError` when the storage sanitizer
+        rejects prohibited content. Any supplied ``memory_record_id`` is used
+        as the record ID; otherwise a fresh ID is generated.
+
+        When ``payload`` is a full :class:`MemoryRecord`, it is indexed (with
+        its real redaction report) and subject to the ``max_history_records``
+        bound, exactly like :meth:`append`. Otherwise the sanitized payload is
+        persisted but not indexed.
+        """
+        try:
+            record = MemoryRecord.model_validate(payload)
+        except ValidationError:
+            self._append_raw_payload(payload)
+        else:
+            self.append(record)
+
+    def _append_raw_payload(self, payload: Mapping[str, object]) -> None:
+        storage = self._require_storage()
+        record_id = str(payload.get("memory_record_id") or uuid.uuid4().hex)
+        storage.write_record("memory", record_id, payload)
+
+    def _index_memory_record(self, memory_record: MemoryRecord) -> None:
+        self._records.append(memory_record)
+        self._by_record_id[memory_record.memory_record_id] = memory_record
+        self._records_by_issue.setdefault(
+            memory_record.issue_fingerprint, []
+        ).append(memory_record.memory_record_id)
+        self._enforce_bound()
+
+    def _enforce_bound(self) -> None:
+        if self.max_history_records is None:
+            return
+        while len(self._records) > self.max_history_records:
+            oldest = self._records.pop(0)
+            self._by_record_id.pop(oldest.memory_record_id, None)
+            ids = self._records_by_issue.get(oldest.issue_fingerprint, [])
+            if oldest.memory_record_id in ids:
+                ids.remove(oldest.memory_record_id)
+            if not ids:
+                self._records_by_issue.pop(oldest.issue_fingerprint, None)
 
     # ------------------------------------------------------------------ #
     # Read (RAG-style retrieval)
     # ------------------------------------------------------------------ #
+    def retrieve(
+        self, issue_fingerprint: str, max_records: int = 1
+    ) -> tuple[MemoryRecord, ...]:
+        """Bounded retrieval of memory records for an issue fingerprint.
+
+        Returns up to ``max_records`` matching records, most recent first.
+        """
+        ids = self._records_by_issue.get(issue_fingerprint, ())
+        if max_records <= 0:
+            return ()
+        recent = ids[-max_records:]
+        return tuple(self._by_record_id[i] for i in reversed(recent))
+
     def get(self, attempt_id: str) -> EditAttempt:
         if attempt_id not in self._by_id:
             raise KeyError(attempt_id)
@@ -262,6 +416,34 @@ class EditMemory:
 # ---------------------------------------------------------------------- #
 # Helpers
 # ---------------------------------------------------------------------- #
+_ATTEMPT_STATUS_TO_OUTCOME = {
+    AttemptStatus.ACCEPTED: "accepted",
+    AttemptStatus.REJECTED: "rejected",
+    AttemptStatus.REGRESSION: "rejected",
+    AttemptStatus.EXHAUSTED: "exhausted",
+    AttemptStatus.PENDING: "unavailable",
+}
+
+
+def _attempt_to_memory_record(attempt: EditAttempt) -> MemoryRecord:
+    """Map a sanitized :class:`EditAttempt` to a reference-based MemoryRecord.
+
+    Only sanitized fields are carried forward; raw editor/task/evaluator
+    content never leaves the attempt's sanitized diff/reasoning boundary.
+    """
+    summary = attempt.sanitized_reasoning or attempt.operation
+    return MemoryRecord(
+        memory_record_id=attempt.attempt_id,
+        attempt_id=attempt.attempt_id,
+        artifact_ids=attempt.artifact_ids,
+        issue_fingerprint=attempt.issue_id,
+        outcome=_ATTEMPT_STATUS_TO_OUTCOME[attempt.status],
+        summary=summary,
+        evidence_refs=attempt.evidence_refs,
+        redaction_report=RedactionReport(rule_hits=(), truncations=0),
+    )
+
+
 def make_attempt_id(iteration: int, seq: int) -> str:
     """Deterministic attempt ID for tests and demos."""
     return f"att-i{iteration:03d}-s{seq:04d}"

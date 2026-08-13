@@ -6,8 +6,10 @@ Task-local incremental clusters assign ``mechanism_cluster_id``, which is the
 cross-candidate alignment key.
 
 Clusters are stable inside an outer iteration. New observations may join an
-existing cluster; cluster create/merge/split occurs at refresh barriers. Track
-cluster freshness and reduce entropy weight when evidence is stale.
+existing cluster; cluster creation is eager (each assignment either joins an
+existing cluster or spawns a new one immediately). Automatic merge/split and
+barrier-deferred creation are future work. Track cluster freshness and reduce
+entropy weight when evidence is stale.
 
 Implementation note
 -------------------
@@ -26,7 +28,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Iterable, Protocol, Sequence
 
-from agent_evolve.core.blame import CausalAnalysis
+from agent_evolve.core.blame import CausalAnalysis, CausalFinding
 
 
 def _tokenize(text: str) -> tuple[str, ...]:
@@ -55,6 +57,15 @@ class MechanismEmbedder(Protocol):
     dim: int
 
     def embed(self, text: str) -> tuple[float, ...]: ...
+
+
+class EmbeddingProviderUnavailable(RuntimeError):
+    """Raised by an embedder when its backing provider is unreachable.
+
+    The clusterer catches only this sentinel to trigger the lexical fallback;
+    any other exception (e.g. a ``TypeError`` or ``ValueError`` from an
+    embedder bug) propagates to the caller.
+    """
 
 
 class LexicalEmbedder:
@@ -110,6 +121,9 @@ class ClusterAssignment:
     cluster_id: str
     similarity: float  # in [-1, 1]; cosine to the cluster centroid
     is_new_cluster: bool
+    task_id: str = ""
+    freshness_iteration: int = 0
+    embedding_fallback_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -133,15 +147,23 @@ class MechanismClusterer:
     task_id: str
     embedder: MechanismEmbedder
     join_threshold: float = 0.75
+    max_clusters_per_task: int = 12
     _clusters: dict[str, _Cluster] = field(default_factory=dict)
     _next_id: int = 0
     _current_iter: int = 0
+    _fallback_embedder: LexicalEmbedder | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.join_threshold <= 1.0:
             raise ValueError("join_threshold must be in [0, 1]")
         if not self.task_id:
             raise ValueError("task_id is required")
+        if (
+            isinstance(self.max_clusters_per_task, bool)
+            or not isinstance(self.max_clusters_per_task, int)
+            or self.max_clusters_per_task < 1
+        ):
+            raise ValueError("max_clusters_per_task must be a positive integer")
 
     # ------------------------------------------------------------------ #
     # Iteration barriers
@@ -180,7 +202,7 @@ class MechanismClusterer:
     # ------------------------------------------------------------------ #
     # Incremental assignment
     # ------------------------------------------------------------------ #
-    def assign(self, analysis: CausalAnalysis) -> ClusterAssignment:
+    def assign(self, analysis: CausalAnalysis | CausalFinding) -> ClusterAssignment:
         """Assign one analysis's mechanism to a cluster.
 
         The embedder input is the mechanism string joined with the actor and
@@ -188,7 +210,14 @@ class MechanismClusterer:
         embedding carry "task, phase/tool, artifact, and counterfactual
         context".
         """
+        if isinstance(analysis, CausalFinding):
+            return self.assign_finding(analysis)
         text = self._embed_text(analysis)
+        return self._add(text, force_new=False)
+
+    def assign_finding(self, finding: CausalFinding) -> ClusterAssignment:
+        """Assign a trace-backed :class:`CausalFinding` to a cluster."""
+        text = self._embed_text_finding(finding)
         return self._add(text, force_new=False)
 
     def _embed_text(self, analysis: CausalAnalysis) -> str:
@@ -199,14 +228,39 @@ class MechanismClusterer:
         parts.extend(analysis.counterfactual_evidence)
         return " ".join(parts)
 
+    def _embed_text_finding(self, finding: CausalFinding) -> str:
+        parts: list[str] = []
+        if finding.mechanism_description:
+            parts.append(finding.mechanism_description)
+        for n in finding.blame_graph.nodes:
+            parts.append(n.actor_id)
+            parts.extend(n.artifacts)
+        parts.extend(finding.counterfactual_notes)
+        return " ".join(parts)
+
+    def _embed(self, text: str) -> tuple[list[float], str | None]:
+        """Embed text, falling back to a lexical embedder on provider failure."""
+        try:
+            return list(self.embedder.embed(text)), None
+        except EmbeddingProviderUnavailable:
+            if self._fallback_embedder is None:
+                self._fallback_embedder = LexicalEmbedder()
+            return list(self._fallback_embedder.embed(text)), "provider_unavailable"
+
     def _add(self, text: str, force_new: bool) -> ClusterAssignment:
-        vec = list(self.embedder.embed(text))
+        vec, fallback_reason = self._embed(text)
         if not force_new and self._clusters:
             best_id, best_sim = self._best_match(vec)
-            if best_sim >= self.join_threshold:
+            at_cap = len(self._clusters) >= self.max_clusters_per_task
+            if best_sim >= self.join_threshold or at_cap:
                 self._update_cluster(best_id, vec)
                 return ClusterAssignment(
-                    cluster_id=best_id, similarity=best_sim, is_new_cluster=False
+                    cluster_id=best_id,
+                    similarity=best_sim,
+                    is_new_cluster=False,
+                    task_id=self.task_id,
+                    freshness_iteration=self._current_iter,
+                    embedding_fallback_reason=fallback_reason,
                 )
         # New cluster.
         cluster_id = f"c{self._next_id}"
@@ -218,7 +272,12 @@ class MechanismClusterer:
             last_touched_iter=self._current_iter,
         )
         return ClusterAssignment(
-            cluster_id=cluster_id, similarity=1.0, is_new_cluster=True
+            cluster_id=cluster_id,
+            similarity=1.0,
+            is_new_cluster=True,
+            task_id=self.task_id,
+            freshness_iteration=self._current_iter,
+            embedding_fallback_reason=fallback_reason,
         )
 
     def _best_match(self, vec: list[float]) -> tuple[str, float]:
@@ -282,6 +341,18 @@ class ClusterRegistry:
                 join_threshold=self.join_threshold,
             )
         return self._clusterers[task_id]
+
+    def assign(self, task_id: str, finding: CausalFinding) -> ClusterAssignment:
+        """Assign a finding via the per-task clusterer, namespaced by task."""
+        assignment = self.clusterer_for(task_id).assign_finding(finding)
+        return ClusterAssignment(
+            cluster_id=f"{task_id}:{assignment.cluster_id}",
+            similarity=assignment.similarity,
+            is_new_cluster=assignment.is_new_cluster,
+            task_id=task_id,
+            freshness_iteration=assignment.freshness_iteration,
+            embedding_fallback_reason=assignment.embedding_fallback_reason,
+        )
 
     def begin_iteration(self, iteration: int) -> None:
         for c in self._clusterers.values():

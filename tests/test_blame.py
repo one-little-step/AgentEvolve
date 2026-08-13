@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from agent_evolve.core.blame import (
     BlameEdge,
     BlameGraph,
     BlameNode,
     CausalAnalysis,
+    CausalFinding,
     empty_analysis,
     merge_analyses,
 )
@@ -174,3 +176,102 @@ def test_merge_analyses_unions_edges_and_counterfactuals():
 def test_merge_analyses_rejects_empty():
     with pytest.raises(ValueError):
         merge_analyses([])
+
+
+def _observed_finding(**overrides) -> CausalFinding:
+    kwargs = dict(
+        verdict_id="v-1",
+        candidate_id="c-1",
+        task_id="t-1",
+        trace_id="tr-1",
+        status="observed",
+        mechanism_description="bad retrieval",
+        mechanism_cluster_id="cluster-1",
+        severity=0.8,
+        confidence=0.9,
+        blame_graph=BlameGraph(nodes=()),
+        evidence_refs=("tr-1",),
+        rationale="trace-backed mechanism",
+    )
+    kwargs.update(overrides)
+    return CausalFinding(**kwargs)
+
+
+def test_observed_finding_requires_trace_backed_evidence() -> None:
+    with pytest.raises(ValidationError, match="evidence_refs"):
+        _observed_finding(evidence_refs=())
+
+
+def test_observed_finding_requires_all_ids() -> None:
+    with pytest.raises(ValidationError):
+        CausalFinding(
+            status="observed",
+            mechanism_description="x",
+            mechanism_cluster_id="c",
+            severity=0.5,
+            confidence=0.5,
+            evidence_refs=("e",),
+        )
+
+
+def test_observed_finding_rejects_blame_artifact_without_evidence() -> None:
+    with pytest.raises(ValidationError, match="evidence|trace"):
+        CausalFinding(
+            verdict_id="v",
+            candidate_id="c",
+            task_id="t",
+            trace_id="tr",
+            status="observed",
+            mechanism_description="x",
+            mechanism_cluster_id="c",
+            severity=0.5,
+            confidence=0.5,
+            blame_graph=BlameGraph(
+                nodes=(_node("retriever", 0.5, artifacts=["skills/retrieval"]),)
+            ),
+            evidence_refs=("e",),
+            rationale="x",
+        )
+
+
+def test_insufficient_evidence_is_not_coerced_to_blame() -> None:
+    finding = CausalFinding(
+        verdict_id="v",
+        candidate_id="c",
+        task_id="t",
+        trace_id="tr",
+        status="insufficient_evidence",
+        rationale="trace lacks causal link",
+        evidence_refs=(),
+    )
+    assert finding.mechanism_cluster_id is None
+
+
+def test_observed_finding_requires_mechanism_description() -> None:
+    with pytest.raises(ValidationError, match="mechanism_description"):
+        _observed_finding(mechanism_description="")
+
+
+def test_observed_finding_requires_severity_and_confidence() -> None:
+    with pytest.raises(ValidationError, match="severity"):
+        _observed_finding(severity=None)
+    with pytest.raises(ValidationError, match="confidence"):
+        _observed_finding(confidence=None)
+
+
+def test_finding_rejects_severity_out_of_range() -> None:
+    with pytest.raises(ValidationError, match=r"\[0, 1\]"):
+        _observed_finding(severity=1.5)
+
+
+def test_finding_rejects_blank_evidence_refs() -> None:
+    with pytest.raises(ValidationError, match="evidence_refs"):
+        _observed_finding(evidence_refs=("",))
+
+
+def test_observed_finding_constructs_and_is_frozen() -> None:
+    finding = _observed_finding()
+    assert finding.status == "observed"
+    assert finding.mechanism_cluster_id == "cluster-1"
+    with pytest.raises(Exception):
+        finding.severity = 0.1  # type: ignore[misc]

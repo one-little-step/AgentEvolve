@@ -22,6 +22,12 @@ from agent_evolve.core.contracts import (
     ValidationCase,
     ValidationResult,
 )
+from agent_evolve.core.errors import (
+    BudgetExceededError,
+    EvolutionContractError,
+    PersistenceSafetyError,
+    WriteAuthorizationError,
+)
 
 
 def score_cell_values(**changes: object) -> dict[str, object]:
@@ -72,6 +78,17 @@ def attempt_record_values(**changes: object) -> dict[str, object]:
     }
     values.update(changes)
     return values
+
+
+def test_score_cell_rejects_blank_candidate_id() -> None:
+    with pytest.raises(ValidationError, match="candidate_id"):
+        ScoreCell(**score_cell_values(candidate_id=""))
+
+
+def test_persistence_safety_and_budget_errors_are_typed_contract_errors() -> None:
+    assert issubclass(PersistenceSafetyError, EvolutionContractError)
+    assert issubclass(BudgetExceededError, EvolutionContractError)
+    assert issubclass(WriteAuthorizationError, EvolutionContractError)
 
 
 def test_score_cell_rejects_zero_rollouts() -> None:

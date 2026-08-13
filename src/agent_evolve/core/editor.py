@@ -24,19 +24,21 @@ Per docs/architecture/target-rho-parallel-gepa.md:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Mapping, Protocol, Sequence
+from typing import Mapping, Protocol, Sequence, cast
 
 from agent_evolve.core.blame import CausalAnalysis
 from agent_evolve.core.contracts import (
     ArtifactEdit,
     ArtifactDescriptor,
     CandidateWorkspace,
+    EditPlan,
     EvolutionAdapter,
     EvolutionTask,
     ExecutionTrace,
 )
+from agent_evolve.core.errors import WriteAuthorizationError
 from agent_evolve.core.memory import (
     AttemptStatus,
     EditAttempt,
@@ -63,6 +65,9 @@ class EditorRequest:
     history_refs: tuple[str, ...] = ()
     # Current artifact contents, read by the adapter before the editor runs.
     current_artifacts: Mapping[str, str] = field(default_factory=dict)
+    # When non-empty, this request is a correction request carrying a plain
+    # description of the validation defect in the prior (malformed) response.
+    correction_request: str = ""
 
     def __post_init__(self) -> None:
         if not self.write_set:
@@ -302,6 +307,98 @@ class Editor(Protocol):
     editor_model_id: str
 
     def propose_edit(self, request: EditorRequest) -> EditorResponse: ...
+
+
+# ---------------------------------------------------------------------- #
+# Authorization boundary
+# ---------------------------------------------------------------------- #
+def validate_editor_plan(
+    plan: EditPlan,
+    readable: frozenset[str] = frozenset(),
+    authorized_writes: frozenset[str] = frozenset(),
+) -> EditPlan:
+    """Enforce the editor exchange's read/write authorization boundary.
+
+    The editor may only request inventory-declared readable content and propose
+    edits inside its lease-authorized write set. ``read_requests`` never grants
+    write permission. Any violation raises :class:`WriteAuthorizationError`
+    before workspace mutation.
+    """
+    readable_set = frozenset(readable)
+    authorized_writes_set = frozenset(authorized_writes)
+    if not set(plan.read_requests) <= readable_set:
+        raise WriteAuthorizationError("editor requested a non-readable artifact")
+    if not set(plan.authorized_writes) <= authorized_writes_set:
+        raise WriteAuthorizationError("editor declared an unauthorized write")
+    if any(edit.artifact_id not in authorized_writes_set for edit in plan.edits):
+        raise WriteAuthorizationError("editor edit is outside authorization")
+    return plan
+
+
+# ---------------------------------------------------------------------- #
+# Repair protocol
+# ---------------------------------------------------------------------- #
+@dataclass(frozen=True, slots=True)
+class EditorRepairResult:
+    """Outcome of the one-correction-attempt repair protocol."""
+
+    status: str
+    correction_requests: int
+    response: EditorResponse | None
+
+
+def _response_is_valid(response: object) -> bool:
+    """A response is usable iff it has non-empty edits with non-empty ids."""
+    if not isinstance(response, EditorResponse):
+        return False
+    if not response.edits:
+        return False
+    return all(bool(e.artifact_id) and bool(e.operation) for e in response.edits)
+
+
+def _correction_note(response: object) -> str:
+    """Plain, defect-only description; no expected answers or evaluator internals."""
+    if not isinstance(response, EditorResponse):
+        return "the editor did not return a structured edit response"
+    if not response.edits:
+        return "edits must not be empty"
+    missing: list[str] = []
+    for e in response.edits:
+        if not e.artifact_id:
+            missing.append("an edit is missing artifact_id")
+        if not e.operation:
+            missing.append("an edit is missing operation")
+    return "; ".join(missing) if missing else "edits are malformed"
+
+
+def _propose_safely(editor: Editor, request: EditorRequest) -> object:
+    try:
+        return editor.propose_edit(request)
+    except Exception:
+        return None
+
+
+def repair_once_then_classify(editor: Editor, request: EditorRequest) -> EditorRepairResult:
+    """One-correction-attempt protocol (component-contracts.md:72-74).
+
+    A valid first response returns immediately. A malformed response receives
+    at most one correction request describing the validation defect; repeated
+    malformed output is recorded as a non-promotion outcome and the caller is
+    expected to discard the workspace.
+    """
+    first = _propose_safely(editor, request)
+    if _response_is_valid(first):
+        return EditorRepairResult(
+            status="valid", correction_requests=0, response=cast(EditorResponse, first)
+        )
+
+    correction_request = replace(request, correction_request=_correction_note(first))
+    second = _propose_safely(editor, correction_request)
+    if _response_is_valid(second):
+        return EditorRepairResult(
+            status="valid", correction_requests=1, response=cast(EditorResponse, second)
+        )
+    return EditorRepairResult(status="malformed", correction_requests=1, response=None)
 
 
 # ---------------------------------------------------------------------- #

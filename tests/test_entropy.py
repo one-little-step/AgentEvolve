@@ -42,9 +42,9 @@ def test_entropy_tracker_rejects_invalid_score():
 
 def test_entropy_tracker_rejects_invalid_floor():
     with pytest.raises(ValueError):
-        EntropyTracker(epsilon_floor=-0.1)
+        EntropyTracker(score_floor=-0.1)
     with pytest.raises(ValueError):
-        EntropyTracker(epsilon_floor=1.5)
+        EntropyTracker(score_floor=1.5)
 
 
 def test_entropy_tracker_rejects_invalid_min_candidates():
@@ -90,11 +90,11 @@ def test_entropy_nonzero_when_floor_met():
 
 
 def test_entropy_uses_score_floor_when_max_is_low():
-    """When max score is below epsilon_floor, floor kicks in."""
+    """When max score is below score_floor, floor kicks in."""
     e = EntropyTracker(
         min_comparable_candidates=3,
         min_rollouts_per_candidate=2,
-        epsilon_floor=0.5,
+        score_floor=0.5,
     )
     # All scores well below 0.5 floor.
     for cand in ("h1", "h2", "h3"):
@@ -110,6 +110,30 @@ def test_entropy_uses_score_floor_when_max_is_low():
     var = sum((x - mean) ** 2 for x in scores) / len(scores)
     expected = var * 0.5  # floor used because max=0.02 < 0.5
     assert e_val == pytest.approx(expected, rel=1e-9)
+
+
+def test_entropy_floor_unified_across_heap_and_cell():
+    """Heap, ``entropy()``, and ``cell_entropy`` must share the score_floor.
+
+    With max_score=0.10 (between legacy epsilon_floor=0.05 and contract
+    score_floor=0.15), entropy must use 0.15 -- not 0.10 and not 0.05.
+    """
+    e = EntropyTracker(min_comparable_candidates=3, min_rollouts_per_candidate=2)
+    for cand, s in (("h1", 0.10), ("h2", 0.09), ("h3", 0.08)):
+        e.mark_comparable("t1", "c0", cand)
+        e.record_score("t1", "c0", cand, s)
+        e.record_score("t1", "c0", cand, s)
+    scores = [0.10, 0.10, 0.09, 0.09, 0.08, 0.08]
+    mean = sum(scores) / len(scores)
+    var = sum((x - mean) ** 2 for x in scores) / len(scores)
+    expected = var * 0.15
+
+    assert e.entropy("t1", "c0") == pytest.approx(expected, rel=1e-9)
+    assert e.cell_entropy("t1", "c0") == pytest.approx(expected, rel=1e-9)
+    top = e.top_entropy_cells(1)
+    assert len(top) == 1
+    assert top[0][0] == CellKey(task_id="t1", mechanism_cluster_id="c0")
+    assert top[0][1] == pytest.approx(expected, rel=1e-9)
 
 
 def test_mark_comparable_does_not_double_count():
@@ -140,6 +164,53 @@ def test_refresh_at_barrier_rejects_negative():
     e = EntropyTracker()
     with pytest.raises(ValueError):
         e.refresh_at_barrier(-1)
+
+
+# ---------------------------------------------------------------------- #
+# EntropyTracker — tier classification / population-variance entropy
+# ---------------------------------------------------------------------- #
+def tracker_with_three_candidates_two_rollouts(
+    max_score: float, variance: float
+) -> EntropyTracker:
+    """Three comparable candidates, two rollouts each, max score = ``max_score``.
+
+    Scores are spread below the maximum so the cell has non-zero population
+    variance (meeting the evidence floor for tier classification).
+    """
+    tracker = EntropyTracker()
+    spread = min(max_score, variance)
+    for cand, score in (
+        ("h1", max_score),
+        ("h2", max_score - 0.5 * spread),
+        ("h3", max_score - spread),
+    ):
+        tracker.mark_comparable("task-1", "cluster-1", cand)
+        tracker.record_score("task-1", "cluster-1", cand, score)
+        tracker.record_score("task-1", "cluster-1", cand, score)
+    return tracker
+
+
+def test_entropy_classifies_recombination_target() -> None:
+    tracker = tracker_with_three_candidates_two_rollouts(max_score=0.8, variance=0.2)
+    assert tracker.classify("task-1", "cluster-1") == "recombination_target"
+
+
+def test_entropy_classifies_frontier_exploration() -> None:
+    tracker = tracker_with_three_candidates_two_rollouts(max_score=0.2, variance=0.2)
+    assert tracker.classify("task-1", "cluster-1") == "frontier_exploration"
+
+
+def test_entropy_classifies_skip_when_evidence_is_insufficient() -> None:
+    assert EntropyTracker().classify("task-1", "cluster-1") == "skip"
+
+
+def test_entropy_returns_none_when_evidence_insufficient() -> None:
+    assert EntropyTracker().entropy("task-1", "cluster-1") is None
+
+
+def test_entropy_returns_float_when_floor_met() -> None:
+    tracker = tracker_with_three_candidates_two_rollouts(max_score=0.8, variance=0.2)
+    assert isinstance(tracker.entropy("task-1", "cluster-1"), float)
 
 
 # ---------------------------------------------------------------------- #

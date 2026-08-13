@@ -1,17 +1,60 @@
 """Tests for edit-memory RAG, retry budget, and sanitization."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from agent_evolve.core.contracts import MemoryRecord, RedactionReport
+from agent_evolve.core.errors import PersistenceSafetyError
 from agent_evolve.core.memory import (
     AttemptStatus,
     EditAttempt,
     EditMemory,
     RetryBudget,
+    RetryState,
     artifact_group_of,
     make_attempt_id,
     sanitize_payload,
 )
+from agent_evolve.core.storage import JSONFileStorage
+
+
+def valid_memory_record() -> MemoryRecord:
+    return MemoryRecord(
+        memory_record_id="mem-1",
+        attempt_id="att-1",
+        artifact_ids=("skills/r1",),
+        issue_fingerprint="issue-1",
+        outcome="accepted",
+        summary="fix retrieval",
+        evidence_refs=("trace-1",),
+        redaction_report=RedactionReport(rule_hits=(), truncations=0),
+    )
+
+
+def _memory_record(
+    memory_record_id: str,
+    issue_fingerprint: str = "issue-1",
+    summary: str = "fix retrieval",
+) -> MemoryRecord:
+    return MemoryRecord(
+        memory_record_id=memory_record_id,
+        attempt_id=f"att-{memory_record_id}",
+        artifact_ids=("skills/r1",),
+        issue_fingerprint=issue_fingerprint,
+        outcome="accepted",
+        summary=summary,
+        evidence_refs=("trace-1",),
+        redaction_report=RedactionReport(rule_hits=(), truncations=0),
+    )
+
+
+class _FailingStorage:
+    """Storage backend whose write always fails closed."""
+
+    def write_record(self, record_type: str, record_id: str, payload) -> None:
+        raise PersistenceSafetyError("refusing to persist denied field")
 
 
 def _attempt(
@@ -217,6 +260,78 @@ def test_edit_memory_record_consumes_retry_budget():
     # Third record would still succeed (EditMemory doesn't enforce the budget;
     # the orchestrator does). But the budget count should now be 2, remaining 0.
     assert m.retry_budget.remaining("issue-1", "g", "l") == 0
+
+
+# ---------------------------------------------------------------------- #
+# Storage-backed append-only records
+# ---------------------------------------------------------------------- #
+def test_memory_persists_only_redacted_reference_record(tmp_path: Path) -> None:
+    memory = EditMemory(JSONFileStorage(tmp_path), max_records=2)
+    memory.append(valid_memory_record())
+    assert memory.retrieve(issue_fingerprint="issue-1", max_records=1) == (valid_memory_record(),)
+
+
+def test_memory_rejects_raw_nested_editor_response(tmp_path: Path) -> None:
+    with pytest.raises(PersistenceSafetyError):
+        EditMemory(JSONFileStorage(tmp_path)).append_payload({"editor": {"raw_response": "secret"}})
+
+
+def test_redaction_report_reflects_actual_hits(tmp_path: Path) -> None:
+    memory = EditMemory(JSONFileStorage(tmp_path))
+    memory.append(_memory_record("mem-long", summary="x" * 2500))
+    stored = memory.retrieve(issue_fingerprint="issue-1", max_records=1)
+    assert len(stored) == 1
+    report = stored[0].redaction_report
+    assert "string_bounded" in report.rule_hits
+    assert report.truncations >= 1
+
+
+def test_record_is_atomic_on_persistence_failure() -> None:
+    memory = EditMemory(_FailingStorage(), retry_budget=RetryBudget(max_attempts=2))
+    with pytest.raises(PersistenceSafetyError):
+        memory.record(_attempt(attempt_id="a1"), artifact_group="g", lineage="l")
+    assert len(memory) == 0
+    assert memory.for_issue("issue-1") == ()
+    assert memory.for_artifact("skills/r1") == ()
+    assert memory.retrieve("issue-1", max_records=10) == ()
+    assert memory.retry_budget.remaining("issue-1", "g", "l") == 2
+    assert not memory.retry_budget.is_exhausted("issue-1", "g", "l")
+
+
+def test_append_rejects_duplicate_memory_record_id(tmp_path: Path) -> None:
+    memory = EditMemory(JSONFileStorage(tmp_path))
+    memory.append(_memory_record("mem-1"))
+    with pytest.raises(ValueError):
+        memory.append(_memory_record("mem-1"))
+
+
+def test_max_history_records_bound_honored_by_append(tmp_path: Path) -> None:
+    memory = EditMemory(JSONFileStorage(tmp_path), max_history_records=2)
+    memory.append(_memory_record("mem-1"))
+    memory.append(_memory_record("mem-2"))
+    memory.append(_memory_record("mem-3"))
+    stored = memory.retrieve("issue-1", max_records=10)
+    assert {r.memory_record_id for r in stored} == {"mem-2", "mem-3"}
+
+
+def test_max_history_records_bound_honored_by_append_payload(tmp_path: Path) -> None:
+    memory = EditMemory(JSONFileStorage(tmp_path), max_history_records=2)
+    memory.append_payload(_memory_record("mem-1").model_dump(mode="json"))
+    memory.append_payload(_memory_record("mem-2").model_dump(mode="json"))
+    memory.append_payload(_memory_record("mem-3").model_dump(mode="json"))
+    stored = memory.retrieve("issue-1", max_records=10)
+    assert {r.memory_record_id for r in stored} == {"mem-2", "mem-3"}
+
+
+# ---------------------------------------------------------------------- #
+# RetryState (issue/artifact/lineage scoped)
+# ---------------------------------------------------------------------- #
+def test_retry_state_exhausted_at_limit():
+    s = RetryState()
+    assert not s.exhausted("i", ("a",), "l", 2)
+    s.attempts_by_scope[("i", ("a",), "l")] = 2
+    assert s.exhausted("i", ("a",), "l", 2)
+    assert not s.exhausted("i2", ("a",), "l", 2)
 
 
 # ---------------------------------------------------------------------- #

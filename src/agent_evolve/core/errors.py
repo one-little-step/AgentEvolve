@@ -22,6 +22,14 @@ class AttemptRecordError(EvolutionContractError):
     """Raised when an attempt record has inconsistent terminal state."""
 
 
+class PersistenceSafetyError(EvolutionContractError):
+    """A value cannot be safely persisted after recursive redaction."""
+
+
+class BudgetExceededError(EvolutionContractError):
+    """A requested operation exceeds a resolved experiment budget."""
+
+
 class WriteAuthorizationError(EvolutionContractError):
     """Raised when an edit targets an artifact outside its write authorization."""
 

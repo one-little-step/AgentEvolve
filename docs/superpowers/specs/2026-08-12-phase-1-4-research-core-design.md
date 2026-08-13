@@ -299,3 +299,21 @@ The first research result compares B0 and B1 on a fixed coreset with matched
 rollout budgets and at least three deterministic seeds. It reports held-out
 outcome mean and dispersion, pool size, comparison coverage, accepted/rejected
 attempts, and every budget category. One smoke run is not evidence for H1.
+
+### Phase-Gate Smoke Protocol
+
+`examples/run_phase_1_4_smoke.py` is the phase-gate verification harness. For a
+fixed local task coreset it builds a deterministic base plus two token-injected
+fake candidates (`c1` satisfies task A, `c2` satisfies task B, base satisfies
+neither), then contrasts:
+
+- B0 (best-of-N): evaluate every candidate on every task, retain only the single
+  highest-scoring candidate (`b0_retained == 1`).
+- B1 (persistent pool): retain base plus every candidate, record comparable score
+  evidence under one fixed mechanism cluster id, and derive a Pareto frontier
+  (`b1_retained > 1`).
+
+It persists a redacted manifest, one candidate record per candidate, and one
+score record, then reads them back to confirm the expected-substring tokens
+never reached storage. This is a deterministic offline smoke harness, not an H1
+claim.
