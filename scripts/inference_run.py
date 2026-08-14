@@ -12,13 +12,27 @@ from dotenv import load_dotenv
 from cuga import tracked_tool
 from langchain_core.tools import tool
 
-from agent_evolve.cuga_wrapper import CugaWrapper, MockHarnessRuntime, RuntimeSettings
+from agent_evolve.core.trace import PayloadLevel
+from agent_evolve.cuga_wrapper import (
+    CugaWrapper,
+    MockHarnessRuntime,
+    RuntimeSettings,
+    TraceConfig,
+)
 
 # Experiment configuration. Change these values directly; this runner accepts no CLI arguments.
 USE_MOCK_RUNTIME = False
 TASK_ID = "baseline-demo-001"
 TASK_INPUT = "what tools and skills available to you now?"
 OUTPUT_PATH = Path("data/historical_trajectories/baseline-demo-001.json")
+
+# Causal trace persistence. Hardcoded here rather than exposed as CLI arguments.
+TRACE_CONFIG = TraceConfig(
+    enabled=False,
+    output_root=Path("data/traces"),
+    payload_level=PayloadLevel.CAUSAL_SUFFICIENT,
+    max_observation_bytes=1_048_576,
+)
 
 
 @tool
@@ -43,10 +57,10 @@ HARNESS = {
 
 def main() -> int:
     if USE_MOCK_RUNTIME:
-        wrapper = CugaWrapper(MockHarnessRuntime(), RuntimeSettings(model="mock-model"))
+        wrapper = CugaWrapper(MockHarnessRuntime(), RuntimeSettings(model="mock-model"), trace_config=TRACE_CONFIG)
     else:
         load_dotenv()
-        wrapper = CugaWrapper.from_cuga(RuntimeSettings.from_env())
+        wrapper = CugaWrapper.from_cuga(RuntimeSettings.from_env(), trace_config=TRACE_CONFIG)
     trace = wrapper.run_task(TASK_ID, {**HARNESS, "input": TASK_INPUT})
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(json.dumps(trace, indent=2, sort_keys=True) + "\n")

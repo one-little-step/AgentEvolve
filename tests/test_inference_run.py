@@ -56,8 +56,17 @@ def test_live_inference_loads_dotenv_before_reading_runtime_settings(monkeypatch
 
     monkeypatch.setattr(RUNNER, "load_dotenv", lambda: calls.append("dotenv"))
     monkeypatch.setattr(RUNNER.RuntimeSettings, "from_env", lambda: object())
-    monkeypatch.setattr(RUNNER.CugaWrapper, "from_cuga", lambda settings: StubWrapper())
+    monkeypatch.setattr(RUNNER.CugaWrapper, "from_cuga", lambda settings, trace_config=None: StubWrapper())
     setattr(CONFIG, "USE_MOCK_RUNTIME", False)
 
     assert RUNNER.main() == 0
     assert calls == ["dotenv"]
+
+
+def test_mock_runner_can_enable_trace_output_from_hardcoded_config(tmp_path):
+    setattr(CONFIG, "TRACE_CONFIG", RUNNER.TraceConfig(enabled=True, output_root=tmp_path / "traces"))
+    setattr(CONFIG, "USE_MOCK_RUNTIME", True)
+    setattr(CONFIG, "OUTPUT_PATH", tmp_path / "trace.json")
+
+    assert RUNNER.main() == 0
+    assert list((tmp_path / "traces").iterdir())

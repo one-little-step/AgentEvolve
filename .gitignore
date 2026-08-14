@@ -11,6 +11,7 @@ htmlcov/
 vendor/
 artifacts/
 terminal_output/
+data/traces/
 *.egg-info/
 
 # Reference snapshot: keep only source, never bytecode
