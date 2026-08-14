@@ -893,6 +893,11 @@ class SequentialGepaRunner:
         adapter's declared writable set for the blamed actors and records each
         attributed artifact as a trace-backed evidence reference.
 
+        Synthetic placeholder nodes are forbidden. When the analysis names no
+        blamed actor, absence of evidence is expressed as
+        ``status="insufficient_evidence"`` with an empty blame graph; the caller
+        must not build an issue from it.
+
         Only sanitized material crosses this boundary: the rationale names the
         mechanism and the artifacts, never the task's expected contract.
         """
@@ -906,16 +911,30 @@ class SequentialGepaRunner:
                 key=lambda n: (-n.blame, n.actor_id),
             )
         )
-        if blamed:
-            top = blamed[0]
-            nodes = (
-                BlameNode(actor_id=top.actor_id, blame=top.blame, artifacts=write_set),
-            ) + tuple(
-                BlameNode(actor_id=n.actor_id, blame=n.blame, artifacts=())
-                for n in blamed[1:]
+        if not blamed:
+            return CausalFinding(
+                verdict_id=verdict_id,
+                candidate_id=candidate_id,
+                task_id=task.task_id,
+                trace_id=trace_id,
+                status="insufficient_evidence",
+                mechanism_description=analysis.mechanism,
+                mechanism_cluster_id=self.mechanism_cluster_id,
+                blame_graph=BlameGraph(nodes=()),
+                evidence_refs=(),
+                rationale=(
+                    "no blamed actor in the analysis; artifact attribution is "
+                    f"un-evidenced for task {task.task_id}"
+                ),
             )
-        else:
-            nodes = (BlameNode(actor_id="agent", blame=1.0, artifacts=write_set),)
+
+        top = blamed[0]
+        nodes = (
+            BlameNode(actor_id=top.actor_id, blame=top.blame, artifacts=write_set),
+        ) + tuple(
+            BlameNode(actor_id=n.actor_id, blame=n.blame, artifacts=())
+            for n in blamed[1:]
+        )
 
         return CausalFinding(
             verdict_id=verdict_id,
@@ -963,6 +982,8 @@ class SequentialGepaRunner:
                 verdict_id=f"{task.task_id}:{self.mechanism_cluster_id}",
                 writable_artifact_ids=write_set,
             )
+            if finding.status == "insufficient_evidence":
+                continue
             issue = build_target_issue(
                 finding,
                 inventory,

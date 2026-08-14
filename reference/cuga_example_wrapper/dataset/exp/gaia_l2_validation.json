@@ -1,0 +1,667 @@
+{
+  "name": "gaia-level2-validation",
+  "version": "1.0",
+  "description": "GAIA benchmark level 2 \u2014 validation split (66 tasks)",
+  "queries": [
+    {
+      "id": "gaia-c61d22de",
+      "gaia_task_id": "c61d22de-5f6c-4958-a7f6-5e9707bd3466",
+      "input": {
+        "query": "A paper about AI regulation that was originally submitted to arXiv.org in June 2022 shows a figure with three axes, where each axis has a label word at both ends. Which of these words is used to describe a type of society in a Physics and Society article submitted to arXiv.org on August 11, 2016?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\begalitarian\\b"
+    },
+    {
+      "id": "gaia-17b5a6a3",
+      "gaia_task_id": "17b5a6a3-bc87-42e8-b0fb-6ab0781ef2cc",
+      "input": {
+        "query": "I\u2019m researching species that became invasive after people who kept them as pets released them. There\u2019s a certain species of fish that was popularized as a pet by being the main character of the movie Finding Nemo. According to the USGS, where was this fish found as a nonnative species, before the year 2020? I need the answer formatted as the five-digit zip codes of the places the species was found, separated by commas if there is more than one place."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b34689\\b"
+    },
+    {
+      "id": "gaia-04a04a9b",
+      "gaia_task_id": "04a04a9b-226c-43fd-b319-d5e89743676f",
+      "input": {
+        "query": "If we assume all articles published by Nature in 2020 (articles, only, not book reviews/columns, etc) relied on statistical significance to justify their findings and they on average came to a p-value of 0.04, how many papers would be incorrect as to their claims of statistical significance? Round the value up to the next integer."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b41\\b"
+    },
+    {
+      "id": "gaia-14569e28",
+      "gaia_task_id": "14569e28-c88c-43e4-8c32-097d35b9a67d",
+      "input": {
+        "query": "In Unlambda, what exact charcter or text needs to be added to correct the following code to output \"For penguins\"? If what is needed is a character, answer with the name of the character. If there are different names for the character, use the shortest. The text location is not needed. Code:\n\n`r```````````.F.o.r. .p.e.n.g.u.i.n.si"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bbacktick\\b"
+    },
+    {
+      "id": "gaia-3627a8be",
+      "gaia_task_id": "3627a8be-a77f-41bb-b807-7e1bd4c0ebdf",
+      "input": {
+        "query": "The object in the British Museum's collection with a museum number of 2012,5015.17 is the shell of a particular mollusk species. According to the abstract of a research article published in Science Advances in 2021, beads made from the shells of this species were found that are at least how many thousands of years old?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b142\\b"
+    },
+    {
+      "id": "gaia-7619a514",
+      "gaia_task_id": "7619a514-5fa8-43ef-9143-83b66a43d7a4",
+      "input": {
+        "query": "According to github, when was Regression added to the oldest closed numpy.polynomial issue that has the Regression label in MM/DD/YY?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b04/15/18\\b"
+    },
+    {
+      "id": "gaia-2a649bb1",
+      "gaia_task_id": "2a649bb1-795f-4a01-b3be-9a01868dae73",
+      "input": {
+        "query": "What are the EC numbers of the two most commonly used chemicals for the virus testing method in the paper about SPFMV and SPCSV in the Pearl Of Africa from 2016? Return the semicolon-separated numbers in the order of the alphabetized chemicals."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b3\\.1\\.3\\.1;\\ 1\\.11\\.1\\.7\\b"
+    },
+    {
+      "id": "gaia-87c610df",
+      "gaia_task_id": "87c610df-bef7-4932-b950-1d83ef4e282b",
+      "input": {
+        "query": "In April of 1977, who was the Prime Minister of the first place mentioned by name in the Book of Esther (in the New International Version)?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bMorarji\\ Desai\\b"
+    },
+    {
+      "id": "gaia-624cbf11",
+      "gaia_task_id": "624cbf11-6a41-4692-af9c-36b3e5ca3130",
+      "input": {
+        "query": "What's the last line of the rhyme under the flavor name on the headstone visible in the background of the photo of the oldest flavor's headstone in the Ben & Jerry's online flavor graveyard as of the end of 2022?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bSo\\ we\\ had\\ to\\ let\\ it\\ die\\."
+    },
+    {
+      "id": "gaia-dd3c7503",
+      "gaia_task_id": "dd3c7503-f62a-4bd0-9f67-1b63b94194cc",
+      "input": {
+        "query": "Use density measures from the chemistry materials licensed by Marisa Alviar-Agnew & Henry Agnew under the CK-12 license in LibreText's Introductory Chemistry materials as compiled 08/21/2023.\n\nI have a gallon of honey and a gallon of mayonnaise at 25C. I remove one cup of honey at a time from the gallon of honey. How many times will I need to remove a cup to have the honey weigh less than the mayonaise? Assume the containers themselves weigh the same."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b6\\b"
+    },
+    {
+      "id": "gaia-f0f46385",
+      "gaia_task_id": "f0f46385-fc03-4599-b5d3-f56496c3e69f",
+      "input": {
+        "query": "In terms of geographical distance between capital cities, which 2 countries are the furthest from each other within the ASEAN bloc according to wikipedia? Answer using a comma separated list, ordering the countries by alphabetical order."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bIndonesia,\\ Myanmar\\b"
+    },
+    {
+      "id": "gaia-e4e91f1c",
+      "gaia_task_id": "e4e91f1c-1dcd-439e-9fdd-cb976f5293fd",
+      "input": {
+        "query": "I need to fact-check a citation. This is the citation from the bibliography:\n\nGreetham, David. \"Uncoupled: OR, How I Lost My Author(s).\" Textual Cultures: Texts, Contexts, Interpretation, vol. 3 no. 1, 2008, p. 45-46. Project MUSE, doi:10.2979/tex.2008.3.1.44.\n\nAnd this is the in-line citation:\n\nOur relationship with the authors of the works we read can often be \u201cobscured not by a \"cloak of print\" but by the veil of scribal confusion and mis-transmission\u201d (Greetham 45-46).\n\nDoes the quoted text match what is actually in the article? If Yes, answer Yes, otherwise, give me the word in my citation that does not match with the correct one (without any article)."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bcloak\\b"
+    },
+    {
+      "id": "gaia-56137764",
+      "gaia_task_id": "56137764-b4e0-45b8-9c52-1866420c3df5",
+      "input": {
+        "query": "Which contributor to the version of OpenCV where support was added for the Mask-RCNN model has the same name as a former Chinese head of government when the names are transliterated to the Latin alphabet?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bLi\\ Peng\\b"
+    },
+    {
+      "id": "gaia-8b3379c0",
+      "gaia_task_id": "8b3379c0-0981-4f5b-8407-6444610cb212",
+      "input": {
+        "query": "What is the maximum length in meters of #9 in the first National Geographic short on YouTube that was ever released according to the Monterey Bay Aquarium website? Just give the number."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b1\\.8\\b"
+    },
+    {
+      "id": "gaia-0ff53813",
+      "gaia_task_id": "0ff53813-3367-4f43-bcbd-3fd725c1bf4b",
+      "input": {
+        "query": "What two-word type of model did Manash Pratim Kashyap's and PS Fader's studies in customer retention studies published during 2018-2019 have in common (no punctuation)?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bbeta\\ geometric\\b"
+    },
+    {
+      "id": "gaia-a7feb290",
+      "gaia_task_id": "a7feb290-76bb-4cb7-8800-7edaf7954f2f",
+      "input": {
+        "query": "How many High Energy Physics - Lattice articles listed in January 2020 on Arxiv had ps versions available?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b31\\b"
+    },
+    {
+      "id": "gaia-b4cc024b",
+      "gaia_task_id": "b4cc024b-3f5e-480e-b96a-6656493255b5",
+      "input": {
+        "query": "The photograph in the Whitney Museum of American Art's collection with accession number 2022.128 shows a person holding a book. Which military unit did the author of this book join in 1813? Answer without using articles."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bRussian\\-German\\ Legion\\b"
+    },
+    {
+      "id": "gaia-33d8ea3b",
+      "gaia_task_id": "33d8ea3b-6c6b-4ff1-803d-7e270dea8a57",
+      "input": {
+        "query": "What is the minimum number of page links a person must click on to go from the english Wikipedia page on The Lord of the Rings (the book) to the english Wikipedia page on A Song of Ice and Fire (the book series)? In your count, include each link you would click on to get to the page. Use the pages as they appeared at the end of the day on July 3, 2023."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b2\\b"
+    },
+    {
+      "id": "gaia-e8cb5b03",
+      "gaia_task_id": "e8cb5b03-41e0-4086-99e5-f6806cd97211",
+      "input": {
+        "query": "I went to Virtue restaurant & bar in Chicago for my birthday on March 22, 2021 and the main course I had was delicious!  Unfortunately, when I went back about a month later on April 21, it was no longer on the dinner menu.  Using the Wayback Machine, can you help me figure out which main course was on the dinner menu for Virtue on March 22, 2021 but not April 21, 2021? Answer using the singular form, without articles."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bshrimp\\b"
+    },
+    {
+      "id": "gaia-f46b4380",
+      "gaia_task_id": "f46b4380-207e-4434-820b-f32ce04ae2a4",
+      "input": {
+        "query": "It is 1999. Before you party like it is 1999, please assist me in settling a bet.\n\nFiona Apple and Paula Cole released albums prior to 1999. Of these albums, which didn't receive a letter grade from Robert Christgau? Provide your answer as a comma delimited list of album titles, sorted alphabetically."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bHarbinger,\\ Tidal\\b"
+    },
+    {
+      "id": "gaia-05407167",
+      "gaia_task_id": "05407167-39ec-4d3a-a234-73a9120c325d",
+      "input": {
+        "query": "In the 2018 VSCode blog post on replit.com, what was the command they clicked on in the last video to remove extra lines?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bFormat\\ Document\\b"
+    },
+    {
+      "id": "gaia-b9763138",
+      "gaia_task_id": "b9763138-c053-4832-9f55-86200cb1f99c",
+      "input": {
+        "query": "Compute the check digit the Tropicos ID for the Order Helotiales would have if it were an ISBN-10 number."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b3\\b"
+    },
+    {
+      "id": "gaia-16d825ff",
+      "gaia_task_id": "16d825ff-1623-4176-a5b5-42e0f5c2b0ac",
+      "input": {
+        "query": "What time was the Tri-Rail train that carried the most passengers on May 27, 2019 scheduled to arrive in Pompano Beach? Express your answer in the 12-hour digital clock format without leading zero if any, and include whether it is AM or PM."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b6:41\\ PM\\b"
+    },
+    {
+      "id": "gaia-544b7f0c",
+      "gaia_task_id": "544b7f0c-173a-4377-8d56-57b36eb26ddf",
+      "input": {
+        "query": "In Valentina Re\u2019s contribution to the 2017 book \u201cWorld Building: Transmedia, Fans, Industries\u201d, what horror movie does the author cite as having popularized metalepsis between a dream world and reality? Use the complete name with article if any."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bA\\ Nightmare\\ on\\ Elm\\ Street\\b"
+    },
+    {
+      "id": "gaia-6b078778",
+      "gaia_task_id": "6b078778-0b90-464d-83f6-59511c811b01",
+      "input": {
+        "query": "The Metropolitan Museum of Art has a portrait in its collection with an accession number of 29.100.5. Of the consecrators and co-consecrators of this portrait's subject as a bishop, what is the name of the one who never became pope?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bAlfonso\\ Visconti\\b"
+    },
+    {
+      "id": "gaia-08cae58d",
+      "gaia_task_id": "08cae58d-4084-4616-b6dd-dd6534e4825b",
+      "input": {
+        "query": "According to Google Finance, when was the first year the Apple stock went above $50 (without adjusting for stock split)?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b2018\\b"
+    },
+    {
+      "id": "gaia-2dfc4c37",
+      "gaia_task_id": "2dfc4c37-fec1-4518-84a7-10095d30ad75",
+      "input": {
+        "query": "According to Box Office Mojo's 2020 Worldwide Box Office list, how many of the top 10 highest-grossing worldwide movies are also on the top 10 highest-grossing domestic movies? Your answer should be a numerical integer value."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b6\\b"
+    },
+    {
+      "id": "gaia-9f41b083",
+      "gaia_task_id": "9f41b083-683e-4dcf-9185-ccfeaa88fa45",
+      "input": {
+        "query": "How many pages if the 2023 IPCC report (85 pages version) mentions nuclear energy?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b0\\b"
+    },
+    {
+      "id": "gaia-ecbc4f94",
+      "gaia_task_id": "ecbc4f94-95a3-4cc7-b255-6741a458a625",
+      "input": {
+        "query": "How many images are there in the latest 2022 Lego english wikipedia article?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b13\\b"
+    },
+    {
+      "id": "gaia-71345b0a",
+      "gaia_task_id": "71345b0a-9c7d-4b50-b2bf-937ec5879845",
+      "input": {
+        "query": "On a leap day before the year 2008, a joke was removed from the Wikipedia page for \u201cDragon\u201d. What was the phrase that was removed? Give the phrase as it appeared on the page, but without punctuation."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bHere\\ be\\ dragons\\b"
+    },
+    {
+      "id": "gaia-7b5377b0",
+      "gaia_task_id": "7b5377b0-3f38-4103-8ad2-90fe89864c04",
+      "input": {
+        "query": "Find the value of x to the nearest tenth: Lx = (d/dx * (A * x-squared)) + 4-thousand'n'ninety-7 minus C\nWhere L is the last two digits of the year of the Venezuelan Declaration of Independence,\nA is the number of colors in the TikTok logo as of July 2023, excluding black and white,\nand C is the height of the average woman in the Philippines according to a July 2023 Business Insider article, rounded to the nearest whole centimeter"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b563\\.9\\b"
+    },
+    {
+      "id": "gaia-114d5fd0",
+      "gaia_task_id": "114d5fd0-e2ae-4b6d-a65a-870da2d19c08",
+      "input": {
+        "query": "In the endnote found in the second-to-last paragraph of page 11 of the book with the doi 10.2307/j.ctv9b2xdv, what date in November was the Wikipedia article accessed? Just give the day of the month."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b4\\b"
+    },
+    {
+      "id": "gaia-ad37a656",
+      "gaia_task_id": "ad37a656-079a-49f9-a493-7b739c9167d1",
+      "input": {
+        "query": "On July 15, 2008, Phys.org published an article about a catastrophe. Find the explosive force of this catastrophe according to Encyclopedia Britannica, then find the name of the US nuclear test that had the same yield. Your answer should only be the last word of the name of the test."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bBravo\\b"
+    },
+    {
+      "id": "gaia-f3917a3d",
+      "gaia_task_id": "f3917a3d-1d17-4ee2-90c5-683b072218fe",
+      "input": {
+        "query": "How many edits were made to the Wikipedia page on Antidisestablishmentarianism from its inception until June of 2023?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b2732\\b"
+    },
+    {
+      "id": "gaia-48eb8242",
+      "gaia_task_id": "48eb8242-1099-4c26-95d4-ef22b002457a",
+      "input": {
+        "query": "How many nonindigenous crocodiles were found in Florida from the year 2000 through 2020? You can get the data from the USGS Nonindigenous Aquatic Species database."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b6\\b"
+    },
+    {
+      "id": "gaia-c8b7e059",
+      "gaia_task_id": "c8b7e059-c60d-472e-ad64-3b04ae1166dc",
+      "input": {
+        "query": "The work referenced in footnote 397 of Federico Lauria's 2014 dissertation is also the source for the titles of two paintings in the Smithsonian American Art Museum's collection, as of August 2023. What is the absolute difference between the chapter numbers of the chapters that the titles of these two paintings quote?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b8\\b"
+    },
+    {
+      "id": "gaia-d1af70ea",
+      "gaia_task_id": "d1af70ea-a9a4-421a-b9cc-94b5e02f1788",
+      "input": {
+        "query": "As of the 2020 census, what was the population difference between the largest county seat and smallest county seat, by land area of the county seat, in Washington state? For population figures, please use the official data from data.census.gov. Please report the integer difference."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b736455\\b"
+    },
+    {
+      "id": "gaia-08f3a05f",
+      "gaia_task_id": "08f3a05f-5947-4089-a4c4-d4bcfaa6b7a0",
+      "input": {
+        "query": "Given $x_0 = -5$ and $f(x) = x^3 + 4x^2 - 3x + 8$, what is the smallest $n$ where using Newton's Method $n = n+1$ after rounding to four decimal places?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b2\\b"
+    },
+    {
+      "id": "gaia-ded28325",
+      "gaia_task_id": "ded28325-3447-4c56-860f-e497d6fb3577",
+      "input": {
+        "query": "This is a secret message my friend gave me. It says where we should meet for our picnic on Friday. The only problem is, it\u2019s encrypted in the Caesar cipher, so I can\u2019t read it. Can you tell me what it says? This is the message:\n\nZsmxsm sc sx Zyvilsec Zvkjk."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bPicnic\\ is\\ in\\ Ploybius\\ Plaza\\."
+    },
+    {
+      "id": "gaia-d700d50d",
+      "gaia_task_id": "d700d50d-c707-4dca-90dc-4528cddd0c80",
+      "input": {
+        "query": "Who composed the song that was performed by a rooster and a hamster in separate animated videos at separate tempos with different lyrics? Answer using the format First name Last name."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bRoger\\ Miller\\b"
+    },
+    {
+      "id": "gaia-0a3cd321",
+      "gaia_task_id": "0a3cd321-3e76-4622-911b-0fda2e5d6b1a",
+      "input": {
+        "query": "According to the World Bank, which countries had gross savings of over 35% of GDP for every year in the period 2001-2010? Give your answer as a comma-separated list of countries in alphabetical order. Use the countries most common names in english when answering."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bBrunei,\\ China,\\ Morocco,\\ Singapore\\b"
+    },
+    {
+      "id": "gaia-f2feb6a4",
+      "gaia_task_id": "f2feb6a4-363c-4c09-a804-0db564eafd68",
+      "input": {
+        "query": "I\u2019m thinking about selling my home, so I want to learn more about how homes in my area sold recently. I live in Pearl City, Hawaii, which is on the island of Oahu. I know two homes near me that sold in 2022 were 2072 Akaikai Loop, and 2017 Komo Mai Drive. Find which of those homes sold for more in 2022, and tell me how much it sold for. Don\u2019t put commas or decimal places in the answer."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b900000\\b"
+    },
+    {
+      "id": "gaia-0b260a57",
+      "gaia_task_id": "0b260a57-3f3a-4405-9f29-6d7a1012dbfb",
+      "input": {
+        "query": "On ScienceDirect, what is the difference to 3 decimal places in the sample standard deviations of the number of Reference Works in each Life Science domain compared to Health Sciences as of 2022?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b0\\.269\\b"
+    },
+    {
+      "id": "gaia-ed58682d",
+      "gaia_task_id": "ed58682d-bc52-4baa-9eb0-4eb81e1edacc",
+      "input": {
+        "query": "What is the last word before the second chorus of the King of Pop's fifth single from his sixth studio album?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bstare\\b"
+    },
+    {
+      "id": "gaia-023e9d44",
+      "gaia_task_id": "023e9d44-96ae-4eed-b912-244ee8c3b994",
+      "input": {
+        "query": "It's May 2023, and I'm about to drive across the U.S. from California to Maine. I always recycle my water bottles at the end of a trip, and I drink 5 12-ounce water bottles for every 100 miles I travel, rounded to the nearest 100. Assuming I follow I-40 from Los Angeles to Cincinnati, then take I-90 from Cincinnati to Augusta, how many dollars will I get back according to Wikipedia?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b8\\b"
+    },
+    {
+      "id": "gaia-0e9e85b8",
+      "gaia_task_id": "0e9e85b8-52b9-4de4-b402-5f635ab9631f",
+      "input": {
+        "query": "What is the latest chronological year date written in the image on the webpage found when following the first citation reference link on the latest version of Carl Nebel's Wikipedia page as of August 2023?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b1927\\b"
+    },
+    {
+      "id": "gaia-20194330",
+      "gaia_task_id": "20194330-9976-4043-8632-f8485c6c71b2",
+      "input": {
+        "query": "The YouTube channel Game Grumps began a Let\u2019s Play of the game Sonic the Hedgehog (2006) in the year 2012. Thirty seconds into the first episode, a phrase is shown on the screen in white letters on a red background. How many times does the letter \"E\" appear in this phrase?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b4\\b"
+    },
+    {
+      "id": "gaia-65638e28",
+      "gaia_task_id": "65638e28-7f37-4fa7-b7b9-8c19bb609879",
+      "input": {
+        "query": "The book with the doi 10.1353/book.24372 concerns a certain neurologist. According to chapter 2 of the book, what author influenced this neurologist\u2019s belief in \u201cendopsychic myths\u201d? Give the last name only."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bKleinpaul\\b"
+    },
+    {
+      "id": "gaia-3ff6b7a9",
+      "gaia_task_id": "3ff6b7a9-a5bd-4412-ad92-0cd0d45c0fee",
+      "input": {
+        "query": "The longest-lived vertebrate is named after an island.  According to Wikipedia as of January 1, 2021, what is the 2020 estimated population of that island, to the nearest thousand?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b56000\\b"
+    },
+    {
+      "id": "gaia-708b99c5",
+      "gaia_task_id": "708b99c5-e4a7-49cb-a5cf-933c8d46470d",
+      "input": {
+        "query": "On the DeepFruits fruit detection graph on Connected Papers from 2016, what feature caused the largest bubble to be the size it is?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bCitations\\b"
+    },
+    {
+      "id": "gaia-0a65cb96",
+      "gaia_task_id": "0a65cb96-cb6e-4a6a-8aae-c1084f613456",
+      "input": {
+        "query": "During the first week of August 2015, one of the NASA Astronomy Pictures of the Day shows the lights of a city on the horizon. The namesake of this city also has a landmark building in Chicago named after him. What is the name of the architectural firm that designed this landmark building? Give the first name appearing in the name of the firm as of June 2023."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bHolabird\\b"
+    },
+    {
+      "id": "gaia-65da0822",
+      "gaia_task_id": "65da0822-a48a-4a68-bbad-8ed1b835a834",
+      "input": {
+        "query": "All of the individuals who formally held the position of United States secretary of homeland security prior to April 2019, excluding those who held the position in an acting capacity, have a bachelor's degree. Of the universities that these bachelor's degrees were from, which is the westernmost university and which is the easternmost university? Give them to me as a comma-separated list, I only want the name of the cities where the universities are located, with the westernmost city listed first."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bSanta\\ Clara,\\ Boston\\b"
+    },
+    {
+      "id": "gaia-0bb3b44a",
+      "gaia_task_id": "0bb3b44a-ede5-4db5-a520-4e844b0079c5",
+      "input": {
+        "query": "Consider the following symbols: \ud809\udc1c  \ud809\udc10\ud809\udc1a\n\nThis is a number written using the Mesopotamian/Babylonian number system and represented with Sumerian cuneiform. Convert this number into Arabic numerals as a decimal number."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b536\\b"
+    },
+    {
+      "id": "gaia-73c1b9fe",
+      "gaia_task_id": "73c1b9fe-ee1d-4cf4-96ca-35c08f97b054",
+      "input": {
+        "query": "According to the USGS, in what year was the American Alligator first found west of Texas (not including Texas)?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b1954\\b"
+    },
+    {
+      "id": "gaia-e2d69698",
+      "gaia_task_id": "e2d69698-bc99-4e85-9880-67eaccd66e6c",
+      "input": {
+        "query": "As of August 2023, who is the only winner of the US version of Survivor to be born in the month of May?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\bMichele\\ Fitzgerald\\b"
+    },
+    {
+      "id": "gaia-a56f1527",
+      "gaia_task_id": "a56f1527-3abf-41d6-91f8-7296d6336c3f",
+      "input": {
+        "query": "The cover of the August 2021 issue of Vogue shows a famous landmark in the background behind some trees. How tall is this monument in yards, rounded to the nearest yard? Give the number only."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b185\\b"
+    },
+    {
+      "id": "gaia-42d4198c",
+      "gaia_task_id": "42d4198c-5895-4f0a-b0c0-424a66465d83",
+      "input": {
+        "query": "I'm curious about how much information is available for popular video games before their release. Find the Wikipedia page for the 2019 game that won the British Academy Games Awards. How many revisions did that page have before the month listed as the game's release date on that Wikipedia page (as of the most recent entry from 2022)?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b60\\b"
+    },
+    {
+      "id": "gaia-a26649c6",
+      "gaia_task_id": "a26649c6-1cb2-470a-871e-6910c64c3e53",
+      "input": {
+        "query": "What is the absolute difference in tens of thousands between the population of chinstrap penguins on the Wikipedia page for penguin species populations as of the end of 2018 and the population recorded in the Nature.com \"global population assessment of the Chinstrap penguin\" article from 2020, assuming two penguins per breeding pair?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b116\\b"
+    },
+    {
+      "id": "gaia-d5141ca5",
+      "gaia_task_id": "d5141ca5-e7a0-469f-bf3e-e773507c86e2",
+      "input": {
+        "query": "When was a picture of St. Thomas Aquinas first added to the Wikipedia page on the Principle of double effect? Answer using the format DD/MM/YYYY."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b19/02/2009\\b"
+    },
+    {
+      "id": "gaia-1dcc160f",
+      "gaia_task_id": "1dcc160f-c187-48c2-b68e-319bd4354f3d",
+      "input": {
+        "query": "According to Openreview.net, at the NeurIPS 2022 Conference, how many papers by an author named Yuri were accepted with a \"certain\" recommendation?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b3\\b"
+    },
+    {
+      "id": "gaia-e0c10771",
+      "gaia_task_id": "e0c10771-d627-4fd7-9694-05348e54ee36",
+      "input": {
+        "query": "Take the gender split from the 2011 Bulgarian census about those who have completed tertiary education. Subtract the smaller number from the larger number, then return the difference in thousands of women. So if there were 30.1 thousand more men, you'd give \"30.1\""
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b234\\.9\\b"
+    },
+    {
+      "id": "gaia-e29834fd",
+      "gaia_task_id": "e29834fd-413a-455c-a33e-c3915b07401c",
+      "input": {
+        "query": "I'd like to learn more about some popular reality television competition shows. As of the end of the 44th season of the American version of Survivor, how many more unique winners have there been compared to the number of winners of American Idol?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b21\\b"
+    },
+    {
+      "id": "gaia-08c0b6e9",
+      "gaia_task_id": "08c0b6e9-1b43-4c2e-ae55-4e3fce2c2715",
+      "input": {
+        "query": "In the film Goldfinger, what color was the object that James Bond concealed himself and his companion Pussy Galore at the end of the film? If there are multiple colors, put them in a comma-separated list in alphabetical order."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\borange,\\ white\\b"
+    },
+    {
+      "id": "gaia-db4fd70a",
+      "gaia_task_id": "db4fd70a-2d37-40ea-873f-9433dc5e301f",
+      "input": {
+        "query": "As of May 2023, how many stops are between South Station and Windsor Gardens on MBTA\u2019s Franklin-Foxboro line (not included)?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b10\\b"
+    },
+    {
+      "id": "gaia-853c8244",
+      "gaia_task_id": "853c8244-429e-46ca-89f2-addf40dfb2bd",
+      "input": {
+        "query": "In the 2015 Metropolitan Museum of Art exhibition titled after the Chinese zodiac animal of 2015, how many of the \"twelve animals of the Chinese zodiac\" have a hand visible?"
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b11\\b"
+    },
+    {
+      "id": "gaia-7a4a336d",
+      "gaia_task_id": "7a4a336d-dcfa-45a0-b014-824c7619e8de",
+      "input": {
+        "query": "At the two-minute mark in the YouTube video uploaded by the channel \u201cGameGrumps\u201d on May 14, 2017 as part of their playthrough of the game Mario Kart 8 Deluxe, the shows\u2019 hosts are competing on one of the game\u2019s racetracks. What was the world record time for that track in the game\u2019s 150cc mode as of June 7, 2023? Express your answer in minutes and seconds, rounding the seconds to the nearest hundredth, e.g. 1:01.001."
+      },
+      "category": "gaia-level-2",
+      "difficulty": "medium",
+      "regex": "(?i)\\b1:41\\.614\\b"
+    }
+  ]
+}

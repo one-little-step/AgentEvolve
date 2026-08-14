@@ -1,0 +1,20 @@
+# Copy/merge this into the CUGA configuration directory if your installed
+# CUGA version requires a local settings.openai.toml.
+#
+# CUGA's current documentation supports an OpenAI-compatible base URL through
+# the OpenAI model configuration. The wrapper also sets OPENAI_BASE_URL.
+
+[skills]
+enabled = true
+root = "cuga"
+
+[advanced_features]
+enable_shell_tool = true
+sandbox_mode = "native"
+mode = "api"
+
+[policy]
+enabled = true
+
+[observability]
+openlit = false

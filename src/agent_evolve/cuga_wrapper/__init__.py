@@ -3,13 +3,33 @@
 The wrapper owns no evolution policy. A verified CUGA SDK integration supplies a
 runtime implementation; ``InMemoryRuntime`` keeps the collection path runnable
 and deterministic until that dependency is available.
+
+CUGA is never imported at module import time. All CUGA imports are deferred into
+``CugaSdkRuntime`` methods so the environment (``.env``, ``DYNACONF_*``,
+``AGENT_SETTING_CONFIG``, ``SKILLS_ROOT``) is fully resolved before the SDK reads
+its configuration.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 import asyncio
 import os
+import re
+from pathlib import Path
 from typing import Callable, Mapping, Protocol
+
+from dotenv import load_dotenv
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DOTENV_PATH = PROJECT_ROOT / ".env"
+DEFAULT_SKILLS_ROOT = PROJECT_ROOT / ".cuga" / "skills"
+DEFAULT_WORKSPACE_ROOT = PROJECT_ROOT / "data" / "workspaces"
+
+DEFAULT_SPECIAL_INSTRUCTIONS = (
+    "You are an autonomous agent. Solve the user's task carefully and accurately. "
+    "Use the available tools when they are useful. Do not claim to have performed "
+    "an action or accessed information unless you actually did so."
+)
 
 
 class CugaRuntime(Protocol):
@@ -22,6 +42,156 @@ class CugaRuntime(Protocol):
     def update_artifact(self, artifact_id: str, content: str) -> None: ...
 
 
+def normalize_cuga_configuration_directory() -> None:
+    """Treat a blank optional CUGA configuration directory as unset.
+
+    CUGA reads ``CUGA_CONFIGURATIONS_DIR`` with ``os.environ.get``, so an empty
+    string resolves model files as relative paths and breaks the SDK import.
+    """
+    value = os.getenv("CUGA_CONFIGURATIONS_DIR")
+    if value is not None and not value.strip():
+        os.environ.pop("CUGA_CONFIGURATIONS_DIR", None)
+
+
+def resolve_skills_root() -> str:
+    """Resolve the CUGA skills root, mapping ``cuga`` to the project's directory."""
+    skills_root = os.getenv("SKILLS_ROOT", "cuga")
+    if skills_root == "cuga":
+        skills_root = str(DEFAULT_SKILLS_ROOT)
+    path = Path(skills_root).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return str(path)
+
+
+def prepare_cuga_environment() -> None:
+    """Load ``.env`` and normalize optional CUGA variables before SDK import."""
+    load_dotenv(DOTENV_PATH)
+    normalize_cuga_configuration_directory()
+
+
+def _require_autonomous_mode() -> None:
+    """Fail fast when CUGA autonomous mode is not enabled."""
+    from cuga.config import settings
+
+    if not settings.advanced_features.force_autonomous_mode:
+        raise RuntimeError(
+            "CUGA autonomous mode is disabled. "
+            "Set DYNACONF_ADVANCED_FEATURES__FORCE_AUTONOMOUS_MODE=true."
+        )
+
+
+def _construct_agent(
+    harness_config: Mapping[str, object],
+    default_tools: list,
+    default_instructions: str | None,
+    workspace_dir: str | None = None,
+) -> object:
+    """Build a CUGA agent using only the verified constructor surface."""
+    from cuga import CugaAgent
+
+    instructions = harness_config.get("instructions")
+    config_tools = harness_config.get("tools")
+    has_skills = bool(harness_config.get("skills"))
+    has_policies = bool(harness_config.get("policies"))
+    return CugaAgent(
+        tools=config_tools if isinstance(config_tools, list) and config_tools else default_tools,
+        special_instructions=str(instructions) if instructions else default_instructions,
+        enable_knowledge=True,
+        enable_skills=has_skills,
+        skills_folder=workspace_dir if has_skills else None,
+        cuga_folder=workspace_dir if has_policies else None,
+        auto_load_policies=has_policies,
+    )
+
+
+def _safe_segment(name: str) -> str:
+    """Sanitize a harness artifact name into a single safe path segment."""
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", name.strip())
+    sanitized = re.sub(r"\.{2,}", "_", sanitized)
+    return sanitized or "artifact"
+
+
+def _derive_description(body: str) -> str:
+    """Derive a short skill/policy description from the first body line."""
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:120]
+    return "Harness artifact"
+
+
+def materialize_harness(
+    harness_config: Mapping[str, object],
+    workspace_dir: Path | str,
+) -> str | None:
+    """Write harness skills/policies/memory into a fresh CUGA-style workspace.
+
+    Returns the workspace directory when any editable artifact is present,
+    otherwise ``None``.
+    """
+    skills = harness_config.get("skills") or {}
+    policies = harness_config.get("policies") or {}
+    memory = harness_config.get("memory") or {}
+    has_editable = bool(skills) or bool(policies) or bool(memory)
+    if not has_editable:
+        return None
+
+    workspace = Path(workspace_dir)
+
+    if isinstance(skills, Mapping):
+        for name, body in skills.items():
+            segment = _safe_segment(str(name))
+            skill_dir = workspace / "skills" / segment
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            (skill_dir / "SKILL.md").write_text(
+                f"---\nname: {segment}\ndescription: {_derive_description(str(body))}\n---\n{body}\n",
+                encoding="utf-8",
+            )
+
+    if isinstance(policies, Mapping):
+        policy_dir = workspace / "playbooks"
+        policy_dir.mkdir(parents=True, exist_ok=True)
+        for name, content in policies.items():
+            segment = _safe_segment(str(name))
+            (policy_dir / f"{segment}.md").write_text(
+                f"---\nname: {segment}\nid: playbook_{segment}\ntriggers:\n  always: true\n---\n{content}\n",
+                encoding="utf-8",
+            )
+
+    if isinstance(memory, Mapping):
+        memory_dir = workspace / "memory"
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        for key, value in memory.items():
+            segment = _safe_segment(str(key))
+            (memory_dir / f"{segment}.md").write_text(f"# {key}\n\n{value}\n", encoding="utf-8")
+
+    return str(workspace)
+
+
+def _memory_doc_paths(
+    harness_config: Mapping[str, object],
+    workspace_dir: str | None,
+) -> list[str]:
+    memory = harness_config.get("memory") or {}
+    if not workspace_dir or not isinstance(memory, Mapping) or not memory:
+        return []
+    return [
+        str(Path(workspace_dir) / "memory" / f"{_safe_segment(str(key))}.md")
+        for key in memory
+    ]
+
+
+async def _execute(agent: object, message: str, memory_docs: list[str]) -> object:
+    """Ingest any memory documents, then invoke the agent once."""
+    knowledge = getattr(agent, "knowledge", None)
+    for doc in memory_docs:
+        if knowledge is None:
+            break
+        await knowledge.ingest(doc)
+    return await agent.invoke(message, track_tool_calls=True)
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeSettings:
     """Connection settings kept configurable outside versioned source."""
@@ -32,13 +202,13 @@ class RuntimeSettings:
 
     @classmethod
     def from_env(cls) -> "RuntimeSettings":
-        model = os.environ.get("LITELLM_MODEL")
+        model = os.environ.get("CUGA_MODEL") or os.environ.get("LITELLM_MODEL")
         if not model:
-            raise RuntimeError("LITELLM_MODEL is required for a live inference run")
+            raise RuntimeError("CUGA_MODEL or LITELLM_MODEL is required for a live inference run")
         return cls(
             model=model,
-            base_url=os.environ.get("LITELLM_BASE_URL"),
-            api_key=os.environ.get("LITELLM_API_KEY"),
+            base_url=os.environ.get("CUGA_BASE_URL") or os.environ.get("LITELLM_BASE_URL"),
+            api_key=os.environ.get("CUGA_API_KEY") or os.environ.get("LITELLM_API_KEY"),
         )
 
     def public_config(self) -> dict[str, str | None]:
@@ -46,8 +216,8 @@ class RuntimeSettings:
         return {"model": self.model, "base_url": self.base_url}
 
     def configure_cuga_environment(self) -> None:
-        """Map the project's LiteLLM settings onto CUGA's documented OpenAI mode."""
-        os.environ["AGENT_SETTING_CONFIG"] = "settings.openai.toml"
+        """Map the project's model settings onto CUGA's documented OpenAI mode."""
+        os.environ["AGENT_SETTING_CONFIG"] = os.getenv("AGENT_SETTING_CONFIG", "settings.openai.toml")
         # CUGA's OpenAI integration adds its own ``openai/`` platform prefix.
         model_name = self.model.removeprefix("openai/")
         os.environ["MODEL_NAME"] = model_name
@@ -214,37 +384,43 @@ class CugaSdkRuntime:
 
     def __init__(
         self,
-        agent_factory: Callable[[Mapping[str, object]], object],
+        agent_factory: Callable[..., object],
         artifacts: Mapping[str, str] | None = None,
+        workspace_root: Path | str | None = None,
     ) -> None:
         self._agent_factory = agent_factory
         self._artifacts = dict(artifacts or {})
+        self._workspace_root = Path(workspace_root) if workspace_root is not None else DEFAULT_WORKSPACE_ROOT
 
     @classmethod
     def from_settings(cls, settings: RuntimeSettings) -> "CugaSdkRuntime":
         settings.configure_cuga_environment()
+        os.environ["SKILLS_ROOT"] = resolve_skills_root()
+        _require_autonomous_mode()
 
-        def build_agent(harness_config: Mapping[str, object]) -> object:
-            from cuga import CugaAgent
+        from agent_evolve.cuga_wrapper.tools import build_tools
 
-            instructions = harness_config.get("instructions")
-            tools = harness_config.get("tools")
-            return CugaAgent(
-                tools=tools if isinstance(tools, list) else None,
-                special_instructions=str(instructions) if instructions else None,
-                auto_load_policies=False,
-                filesystem_sync=False,
-                enable_knowledge=False,
-                enable_skills=False,
-            )
+        default_tools = build_tools()
+
+        def build_agent(
+            harness_config: Mapping[str, object],
+            workspace_dir: str | None = None,
+        ) -> object:
+            return _construct_agent(harness_config, default_tools, DEFAULT_SPECIAL_INSTRUCTIONS, workspace_dir)
 
         return cls(build_agent)
 
     def run_task(self, task_id: str, harness_config: Mapping[str, object]) -> dict[str, object]:
-        config = {key: harness_config[key] for key in ("instructions", "tools") if key in harness_config}
-        agent = self._agent_factory(config)
+        workspace_dir = materialize_harness(harness_config, self._workspace_root / task_id)
+        config = {
+            key: harness_config[key]
+            for key in ("instructions", "tools", "skills", "memory", "policies")
+            if key in harness_config
+        }
+        agent = self._agent_factory(config, workspace_dir)
         message = str(harness_config["input"])
-        result = asyncio.run(agent.invoke(message, track_tool_calls=True))
+        memory_docs = _memory_doc_paths(harness_config, workspace_dir)
+        result = asyncio.run(_execute(agent, message, memory_docs))
         asyncio.run(agent.aclose())
         tool_calls = list(getattr(result, "tool_calls", ()) or ())
         events = [
@@ -256,7 +432,11 @@ class CugaSdkRuntime:
             for index, tool_call in enumerate(tool_calls)
         ]
         error = getattr(result, "error", None)
-        metadata = _artifact_metadata(harness_config, available={"instructions", "tools"})
+        available = {"instructions", "tools"}
+        for field_name in ("skills", "memory", "policies"):
+            if harness_config.get(field_name):
+                available.add(field_name)
+        metadata = _artifact_metadata(harness_config, available=available)
         return {
             "task_id": task_id,
             "status": "error" if error else "success",

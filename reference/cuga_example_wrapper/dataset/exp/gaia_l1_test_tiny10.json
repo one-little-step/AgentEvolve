@@ -1,0 +1,107 @@
+{
+  "name": "gaia-level1-test",
+  "version": "1.0",
+  "description": "GAIA benchmark level 1 \u2014 test split (10 tasks)",
+  "queries": [
+    {
+      "id": "gaia-6af95c8f",
+      "gaia_task_id": "6af95c8f-8cbf-4c12-b02c-f9a23cc1ecb9",
+      "input": {
+        "query": "Here's a fun riddle that I'd like you to try.\n\nAn adventurer exploring an ancient tomb came across a horde of gold coins, all neatly stacked in columns. As he reached to scoop them into his backpack, a mysterious voice filled the room. \"You have fallen for my trap adventurer,\" the voice began, and suddenly the doorway to the chamber was sealed by a heavy rolling disk of stone. The adventurer tried to move the stone disk but was unable to budge the heavy stone. Trapped, he was startled when the voice again spoke. \n\n\"If you solve my riddle, I will reward you with a portion of my riches, but if you are not clever, you will never leave this treasure chamber. Before you are 200 gold coins. I pose a challenge to you, adventurer. Within these stacks of coins, all but 30 are face-up. You must divide the coins into two piles, one is yours, and one is mine. You may place as many coins as you like in either pile. You may flip any coins over, but you may not balance any coins on their edges. For every face-down coin in your pile, you will be rewarded with two gold coins. But be warned, if both piles do not contain the same number of face-down coins, the door will remain sealed for all eternity!\"\n\nThe adventurer smiled, as this would be an easy task. All he had to do was flip over every coin so it was face down, and he would win the entire treasure! As he moved to the columns of coins, however, the light suddenly faded, and he was left in total darkness. The adventurer reached forward and picked up one of the coins, and was shocked when he realized that both sides felt almost the same. Without the light, he was unable to determine which side of the coin was heads and which side was tails. He carefully replaced the coin in its original orientation and tried to think of a way to solve the puzzle. Finally, out of desperation, the adventurer removed 30 coins to create his pile. He then carefully flipped over each coin in his pile, so its orientation was inverted from its original state.\n\n\"I've finished,\" he said, and the lights returned. Looking at the two piles, he noticed that the larger pile contained 14 face-down coins.\n\nWhat was the outcome for the adventurer? If he failed the challenge, please respond with \"The adventurer died.\" Otherwise, please provide the number of coins the adventurer won at the conclusion of the riddle. If the adventurer won any coins, provide your response as the number of coins, with no other text."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-7b10295b",
+      "gaia_task_id": "7b10295b-5287-41d7-897c-663fe194c04d",
+      "input": {
+        "query": "If you use some of the letters in the given Letter Bank to spell out the sentence \"I am a penguin halfway to the moon\", which of the remaining unused letters would have to be changed to spell out, \"The moon is made of cheese\"? Return a comma-separated alphabetized list.\nLetter Bank: {OAMFETIMPECRFSHTDNIWANEPNOFAAIYOOMGUTNAHHLNEHCME}"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-cf0682db",
+      "gaia_task_id": "cf0682db-1e31-4a36-913f-aedd501e44d1",
+      "input": {
+        "query": "A data annotator stayed up too late creating test questions to check that a system was working properly and submitted several questions with mathematical errors. On nights when they created 15 test questions, they made 1 error. On nights when they created fewer than 15 questions, they also corrected 3 errors. On nights they created 20 questions, they made 0 errors. On nights when they created 25 or more, they made 4 errors. Over the course of five nights, the worker produced a total of 6 errors. When asked how many nights they created 15 questions, they gave three possible numbers as responses. What are the three numbers, presented in the format x, y, z in ascending order?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-07ed8ebc",
+      "gaia_task_id": "07ed8ebc-535a-4c2f-9677-3e434a08f7fd",
+      "input": {
+        "query": "Please solve the following crossword:\n\n|1|2|3|4|5|\n|6| | | | |\n|7| | | | |\n|8| | | | |\n|X|9| | | |\n\nI have indicated by numbers where the hints start, so you should replace numbers and spaces by the answers.\nAnd X denotes a black square that isn\u2019t to fill.\n\nACROSS\n- 1 Wooden strips on a bed frame\n- 6 _ Minhaj, Peabody-winning comedian for \"Patriot Act\"\n- 7 Japanese city of 2.6+ million\n- 8 Stopwatch, e.g.\n- 9 Pain in the neck\n\nDOWN\n- 1 Quick drink of whiskey\n- 2 Eye procedure\n- 3 \"Same here,\" in a three-word phrase\n- 4 Already occupied, as a seat\n- 5 Sarcastically critical commentary. Answer by concatenating the characters you choose to fill the crossword, in row-major order."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-fcf5b93d",
+      "gaia_task_id": "fcf5b93d-27fd-4637-ac5d-fad4e445ca94",
+      "input": {
+        "query": "I wanted to make another batch of cherry melomel. I remember liking the last recipe I tried, but I can't remember it off the top of my head. It was from the Reddit, r/mead. I remember that the user who made it had a really distinct name, I think it was StormBeforeDawn. Could you please look up the recipe for me? I'm not sure if it has been changed, so please make sure that the recipe you review wasn't updated after July 14, 2022. That's the last time I tried the recipe.\n\nWhat I want to know is how many cherries I'm supposed to use. I'm making a 10-gallon batch in two 5-gallon carboys. Please just respond with the integer number of pounds of whole cherries with pits that are supposed to be used for a 10-gallon batch."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-fece4d7a",
+      "gaia_task_id": "fece4d7a-4093-47b8-b58c-68ec591ec4c8",
+      "input": {
+        "query": "Verify each of the following ISBN 13 numbers:\n\n1. 9783518188156\n2. 9788476540746\n3. 9788415091004\n4. 9788256014590\n5. 9782046407331\n\nIf any are invalid, correct them by changing the final digit. Then, return the list, comma separated, in the same order as in the question."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-fa7bc619",
+      "gaia_task_id": "fa7bc619-bf17-4ef7-be80-c0e32144140f",
+      "input": {
+        "query": "A porterhouse by any other name is centered around a letter. What does Three Dog Night think about the first natural number that starts with that letter? Give the first line from the lyrics that references it."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-8e41f740",
+      "gaia_task_id": "8e41f740-f193-4540-a7b1-62e0f4b804a0",
+      "input": {
+        "query": "Bob has genome type Aa, and Linda has genome type Aa. Assuming that a child of theirs also has a child with someone who also has genome type Aa, what is the probability that Bob and Linda's grandchild will have Genome type Aa? Write the answer as a percentage, rounding to the nearest integer if necessary."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-6e343c42",
+      "gaia_task_id": "6e343c42-7f09-4df5-aab9-22c0293c2d30",
+      "input": {
+        "query": "Find the Fall/Winter 2019 issue of \u201cThe Lamp-Post of the Southern California C.S. Lewis Society.\u201d In the article that begins on the 46th page, what does the author state that both Lewis and Jung believe was the originator of archetypes?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-7556cbdb",
+      "gaia_task_id": "7556cbdb-c736-4efa-b3ef-2ebc2c8f4da3",
+      "input": {
+        "query": "An array of candy is set out to choose from including gumballs, candy corn, gumdrops, banana taffy, chocolate chips, and gummy bears. There is one bag of each type of candy. The gumballs come in red, orange, yellow, green, blue, and brown. The candy corn is yellow, white, and orange. The gumdrops are red, green, purple, yellow, and orange. The banana taffy is yellow. The chocolate chips are brown and white. The gummy bears are red, green, yellow, and orange. Five people pass through and each selects one bag. The first selects one with only primary colors. The second selects one with no primary colors. The third selects one with all the primary colors. The fourth selects one that has neither the most nor the least colors of the remaining bags. The fifth selects the one with their favorite color, green. A second bag of the candy the first person chose is added to the remaining bag of candy. Which two candies are in the remaining bag after the addition? Give me them in a comma separated list, in alphabetical order"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from agent_evolve.cuga_wrapper import (
     CugaSdkRuntime,
     CugaWrapper,
@@ -38,6 +40,9 @@ def test_wrapper_reads_and_updates_opaque_artifacts():
 
 
 def test_runtime_settings_load_litellm_environment_without_exposing_api_key(monkeypatch):
+    monkeypatch.delenv("CUGA_MODEL", raising=False)
+    monkeypatch.delenv("CUGA_BASE_URL", raising=False)
+    monkeypatch.delenv("CUGA_API_KEY", raising=False)
     monkeypatch.setenv("LITELLM_BASE_URL", "http://localhost:4000")
     monkeypatch.setenv("LITELLM_MODEL", "test/model")
     monkeypatch.setenv("LITELLM_API_KEY", "secret")
@@ -81,7 +86,7 @@ def test_cuga_sdk_runtime_captures_invoke_result_as_json_trace():
         async def aclose(self):
             return None
 
-    runtime = CugaSdkRuntime(agent_factory=lambda _: FakeAgent())
+    runtime = CugaSdkRuntime(agent_factory=lambda config, workspace_dir=None: FakeAgent())
 
     trace = runtime.run_task("task-1", {"input": "What is 2 + 2?"})
 
@@ -113,7 +118,7 @@ def test_cuga_sdk_runtime_does_not_relabel_opaque_artifacts_as_instructions():
         async def aclose(self):
             return None
 
-    runtime = CugaSdkRuntime(agent_factory=lambda config: received_configs.append(config) or FakeAgent())
+    runtime = CugaSdkRuntime(agent_factory=lambda config, workspace_dir=None: received_configs.append(config) or FakeAgent())
 
     runtime.run_task("task-1", {"input": "answer"})
 
@@ -169,8 +174,8 @@ def test_mock_harness_runtime_exposes_configured_memory_to_recall_tasks():
     assert trace["events"][-2] == {"event_id": "task-1:memory:capital", "kind": "memory_recalled"}
 
 
-def test_cuga_sdk_runtime_passes_only_verified_surfaces_to_agent():
-    received_configs = []
+def test_cuga_sdk_runtime_materializes_full_harness_and_reports_active(tmp_path):
+    received = []
 
     class FakeResult:
         answer = "done"
@@ -185,22 +190,39 @@ def test_cuga_sdk_runtime_passes_only_verified_surfaces_to_agent():
             return None
 
     tool = object()
-    runtime = CugaSdkRuntime(agent_factory=lambda config: received_configs.append(config) or FakeAgent())
+    runtime = CugaSdkRuntime(
+        agent_factory=lambda config, workspace_dir=None: received.append((config, workspace_dir)) or FakeAgent(),
+        workspace_root=tmp_path,
+    )
 
     trace = runtime.run_task(
         "task-1",
         {
             "version": "b1-v2",
             "instructions": "Use exact language.",
-            "skills": {"retrieval": "unverified"},
-            "memory": {"fact": "unverified"},
+            "skills": {"retrieval": "Use the catalog."},
+            "memory": {"fact": "known"},
             "tools": [tool],
-            "policies": {"style": "unverified"},
+            "policies": {"style": "concise"},
             "input": "answer",
         },
     )
 
-    assert received_configs == [{"instructions": "Use exact language.", "tools": [tool]}]
+    config, workspace_dir = received[0]
+    assert config == {
+        "instructions": "Use exact language.",
+        "tools": [tool],
+        "skills": {"retrieval": "Use the catalog."},
+        "memory": {"fact": "known"},
+        "policies": {"style": "concise"},
+    }
+    assert workspace_dir is not None
+    assert (Path(workspace_dir) / "skills" / "retrieval" / "SKILL.md").exists()
+    assert (Path(workspace_dir) / "playbooks" / "style.md").exists()
+    assert (Path(workspace_dir) / "memory" / "fact.md").exists()
     assert trace["active_artifacts"]["instructions"] == ["instructions"]
     assert trace["active_artifacts"]["tools"] == ["tool-0"]
-    assert trace["unavailable_artifacts"] == {"skills": ["retrieval"], "memory": ["fact"], "policies": ["style"]}
+    assert trace["active_artifacts"]["skills"] == ["retrieval"]
+    assert trace["active_artifacts"]["memory"] == ["fact"]
+    assert trace["active_artifacts"]["policies"] == ["style"]
+    assert trace["unavailable_artifacts"] == {}

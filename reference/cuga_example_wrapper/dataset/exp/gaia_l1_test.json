@@ -1,0 +1,687 @@
+{
+  "name": "gaia-level1-test",
+  "version": "1.0",
+  "description": "GAIA benchmark level 1 \u2014 test split (68 tasks)",
+  "queries": [
+    {
+      "id": "gaia-6af95c8f",
+      "gaia_task_id": "6af95c8f-8cbf-4c12-b02c-f9a23cc1ecb9",
+      "input": {
+        "query": "Here's a fun riddle that I'd like you to try.\n\nAn adventurer exploring an ancient tomb came across a horde of gold coins, all neatly stacked in columns. As he reached to scoop them into his backpack, a mysterious voice filled the room. \"You have fallen for my trap adventurer,\" the voice began, and suddenly the doorway to the chamber was sealed by a heavy rolling disk of stone. The adventurer tried to move the stone disk but was unable to budge the heavy stone. Trapped, he was startled when the voice again spoke. \n\n\"If you solve my riddle, I will reward you with a portion of my riches, but if you are not clever, you will never leave this treasure chamber. Before you are 200 gold coins. I pose a challenge to you, adventurer. Within these stacks of coins, all but 30 are face-up. You must divide the coins into two piles, one is yours, and one is mine. You may place as many coins as you like in either pile. You may flip any coins over, but you may not balance any coins on their edges. For every face-down coin in your pile, you will be rewarded with two gold coins. But be warned, if both piles do not contain the same number of face-down coins, the door will remain sealed for all eternity!\"\n\nThe adventurer smiled, as this would be an easy task. All he had to do was flip over every coin so it was face down, and he would win the entire treasure! As he moved to the columns of coins, however, the light suddenly faded, and he was left in total darkness. The adventurer reached forward and picked up one of the coins, and was shocked when he realized that both sides felt almost the same. Without the light, he was unable to determine which side of the coin was heads and which side was tails. He carefully replaced the coin in its original orientation and tried to think of a way to solve the puzzle. Finally, out of desperation, the adventurer removed 30 coins to create his pile. He then carefully flipped over each coin in his pile, so its orientation was inverted from its original state.\n\n\"I've finished,\" he said, and the lights returned. Looking at the two piles, he noticed that the larger pile contained 14 face-down coins.\n\nWhat was the outcome for the adventurer? If he failed the challenge, please respond with \"The adventurer died.\" Otherwise, please provide the number of coins the adventurer won at the conclusion of the riddle. If the adventurer won any coins, provide your response as the number of coins, with no other text."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-7b10295b",
+      "gaia_task_id": "7b10295b-5287-41d7-897c-663fe194c04d",
+      "input": {
+        "query": "If you use some of the letters in the given Letter Bank to spell out the sentence \"I am a penguin halfway to the moon\", which of the remaining unused letters would have to be changed to spell out, \"The moon is made of cheese\"? Return a comma-separated alphabetized list.\nLetter Bank: {OAMFETIMPECRFSHTDNIWANEPNOFAAIYOOMGUTNAHHLNEHCME}"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-cf0682db",
+      "gaia_task_id": "cf0682db-1e31-4a36-913f-aedd501e44d1",
+      "input": {
+        "query": "A data annotator stayed up too late creating test questions to check that a system was working properly and submitted several questions with mathematical errors. On nights when they created 15 test questions, they made 1 error. On nights when they created fewer than 15 questions, they also corrected 3 errors. On nights they created 20 questions, they made 0 errors. On nights when they created 25 or more, they made 4 errors. Over the course of five nights, the worker produced a total of 6 errors. When asked how many nights they created 15 questions, they gave three possible numbers as responses. What are the three numbers, presented in the format x, y, z in ascending order?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-07ed8ebc",
+      "gaia_task_id": "07ed8ebc-535a-4c2f-9677-3e434a08f7fd",
+      "input": {
+        "query": "Please solve the following crossword:\n\n|1|2|3|4|5|\n|6| | | | |\n|7| | | | |\n|8| | | | |\n|X|9| | | |\n\nI have indicated by numbers where the hints start, so you should replace numbers and spaces by the answers.\nAnd X denotes a black square that isn\u2019t to fill.\n\nACROSS\n- 1 Wooden strips on a bed frame\n- 6 _ Minhaj, Peabody-winning comedian for \"Patriot Act\"\n- 7 Japanese city of 2.6+ million\n- 8 Stopwatch, e.g.\n- 9 Pain in the neck\n\nDOWN\n- 1 Quick drink of whiskey\n- 2 Eye procedure\n- 3 \"Same here,\" in a three-word phrase\n- 4 Already occupied, as a seat\n- 5 Sarcastically critical commentary. Answer by concatenating the characters you choose to fill the crossword, in row-major order."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-fcf5b93d",
+      "gaia_task_id": "fcf5b93d-27fd-4637-ac5d-fad4e445ca94",
+      "input": {
+        "query": "I wanted to make another batch of cherry melomel. I remember liking the last recipe I tried, but I can't remember it off the top of my head. It was from the Reddit, r/mead. I remember that the user who made it had a really distinct name, I think it was StormBeforeDawn. Could you please look up the recipe for me? I'm not sure if it has been changed, so please make sure that the recipe you review wasn't updated after July 14, 2022. That's the last time I tried the recipe.\n\nWhat I want to know is how many cherries I'm supposed to use. I'm making a 10-gallon batch in two 5-gallon carboys. Please just respond with the integer number of pounds of whole cherries with pits that are supposed to be used for a 10-gallon batch."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-fece4d7a",
+      "gaia_task_id": "fece4d7a-4093-47b8-b58c-68ec591ec4c8",
+      "input": {
+        "query": "Verify each of the following ISBN 13 numbers:\n\n1. 9783518188156\n2. 9788476540746\n3. 9788415091004\n4. 9788256014590\n5. 9782046407331\n\nIf any are invalid, correct them by changing the final digit. Then, return the list, comma separated, in the same order as in the question."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-fa7bc619",
+      "gaia_task_id": "fa7bc619-bf17-4ef7-be80-c0e32144140f",
+      "input": {
+        "query": "A porterhouse by any other name is centered around a letter. What does Three Dog Night think about the first natural number that starts with that letter? Give the first line from the lyrics that references it."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-8e41f740",
+      "gaia_task_id": "8e41f740-f193-4540-a7b1-62e0f4b804a0",
+      "input": {
+        "query": "Bob has genome type Aa, and Linda has genome type Aa. Assuming that a child of theirs also has a child with someone who also has genome type Aa, what is the probability that Bob and Linda's grandchild will have Genome type Aa? Write the answer as a percentage, rounding to the nearest integer if necessary."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-6e343c42",
+      "gaia_task_id": "6e343c42-7f09-4df5-aab9-22c0293c2d30",
+      "input": {
+        "query": "Find the Fall/Winter 2019 issue of \u201cThe Lamp-Post of the Southern California C.S. Lewis Society.\u201d In the article that begins on the 46th page, what does the author state that both Lewis and Jung believe was the originator of archetypes?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-7556cbdb",
+      "gaia_task_id": "7556cbdb-c736-4efa-b3ef-2ebc2c8f4da3",
+      "input": {
+        "query": "An array of candy is set out to choose from including gumballs, candy corn, gumdrops, banana taffy, chocolate chips, and gummy bears. There is one bag of each type of candy. The gumballs come in red, orange, yellow, green, blue, and brown. The candy corn is yellow, white, and orange. The gumdrops are red, green, purple, yellow, and orange. The banana taffy is yellow. The chocolate chips are brown and white. The gummy bears are red, green, yellow, and orange. Five people pass through and each selects one bag. The first selects one with only primary colors. The second selects one with no primary colors. The third selects one with all the primary colors. The fourth selects one that has neither the most nor the least colors of the remaining bags. The fifth selects the one with their favorite color, green. A second bag of the candy the first person chose is added to the remaining bag of candy. Which two candies are in the remaining bag after the addition? Give me them in a comma separated list, in alphabetical order"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-5b5e7996",
+      "gaia_task_id": "5b5e7996-4de6-46c4-8be2-0943417886e5",
+      "input": {
+        "query": "In the year 2020, where were koi fish found in the watershed with the id 02040203? Give only the name of the pond, lake, or stream where the fish were found, and not the name of the city or county."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-6f7d28c6",
+      "gaia_task_id": "6f7d28c6-6a8c-44b2-8ea9-0988c1096a2a",
+      "input": {
+        "query": "In Sonia Sanchez\u2019s poem \u201cfather\u2019s voice\u201d, what primary colour is evoked by the imagery in the beginning of the tenth stanza? Answer with a capitalized word."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-07d803c0",
+      "gaia_task_id": "07d803c0-7975-4da2-a62b-c8abafcdad9d",
+      "input": {
+        "query": "According to Papers with Code, what was the name of the first model to go beyond 70% of accuracy on ImageNet ?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-5e76cfc3",
+      "gaia_task_id": "5e76cfc3-f33d-4416-b8ae-3ef292830207",
+      "input": {
+        "query": "What is the dimension of the boundary of the tame twindragon rounded to two decimal places?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-2102c078",
+      "gaia_task_id": "2102c078-d0f8-4a66-91d7-caca752bf55b",
+      "input": {
+        "query": "What is the ISSN of the journal that included G. Scott's potato article that mentioned both a fast food restaurant and a Chinese politician in the title in a 2012 issue?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-269f42c1",
+      "gaia_task_id": "269f42c1-d767-4426-baf3-0d91c4423177",
+      "input": {
+        "query": "VNV Nation has a song that shares its title with the nickname of Louis XV. What album was it released with?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-3157eb2e",
+      "gaia_task_id": "3157eb2e-2b7c-48ae-8676-437c64d813d5",
+      "input": {
+        "query": "If I combine a Beatle's first name and a type of beer, in what category and year of Nobel Prize do I have a winner? Answer using the format CATEGORY, YEAR."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-c1e3311d",
+      "gaia_task_id": "c1e3311d-5112-4690-bcdc-7da181657835",
+      "input": {
+        "query": "In the version of NumPy where the numpy.msort function was deprecated, which attribute was added to the numpy.polynomial package's polynomial classes?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-55aeb0ce",
+      "gaia_task_id": "55aeb0ce-9170-4959-befb-59f6116887a4",
+      "input": {
+        "query": "A word meaning dramatic or theatrical forms a species of duck when appended with two letters and then duplicated. What is that word?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-2baa3989",
+      "gaia_task_id": "2baa3989-5618-4f3b-9449-8b18e3e59281",
+      "input": {
+        "query": "As of August 2023, how many in-text citations on the West African Vodun Wikipedia page reference a source that was cited using Scopus?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-198f2b40",
+      "gaia_task_id": "198f2b40-958b-497b-a685-15fdc0587481",
+      "input": {
+        "query": "In scikit-learn 1.2.2, how many different losses were supported by SGDClassifier?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-543eadae",
+      "gaia_task_id": "543eadae-e80a-44ba-b98d-6e8c4040dae8",
+      "input": {
+        "query": "The subject of John Warham's PhD thesis was a particular genus. As of 2022, one species in this genus is extinct. Of the reference authors cited on the last 2022 version of the Wikipedia page for this extinct species, which one has initials that are a palindrome? Answer using the format First Name Initial. Last Name"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-97f452b6",
+      "gaia_task_id": "97f452b6-f144-4224-bfe4-b6a8e0bbce6a",
+      "input": {
+        "query": "One of the songs on the VNV Nation album Futureperfect has a non-English title. The title references another piece of music. Who composed it? Answer using the format First name Last name."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-e196e50c",
+      "gaia_task_id": "e196e50c-09fb-4a3a-81a9-c81ef41b0708",
+      "input": {
+        "query": "Suppose a dog can split into two dogs to make two slightly smaller dogs 75% the weight of the original dog.\n\nI have a 180-pound dog and I define a teacup dog as a dog under 4 pounds. The dog splits itself. Then, the resulting dogs split themselves. The splitting repeats until all the resulting dogs are teacup dogs. How many teacup dogs will there be?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-4d8fc0e1",
+      "gaia_task_id": "4d8fc0e1-69c0-4fa9-9db1-05935ec5633e",
+      "input": {
+        "query": "An American actor who started his career in the 1950s shares a birthday with the Russian poet Boris Pasternak and a last name with a famous 19th Century German composer. In what city was his father born? Just provide the city name."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-df30cd5b",
+      "gaia_task_id": "df30cd5b-cce6-475d-907d-69927f32d006",
+      "input": {
+        "query": "On the Statista chart of U.S. retail egg prices in 1995-2022, what was the price to two decimals in the highest two years that had the same price?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-60fbc5a3",
+      "gaia_task_id": "60fbc5a3-2805-4ad4-8eef-b58843b5053b",
+      "input": {
+        "query": "According to the International Journal of Food Properties volume 22(1), which tested cooking method takes the shorter amount of time to effectively remove the substance that the authors used to test T-cell immune response in Current Zoology's volume 63(5) article on dwarf hamsters?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-9845712b",
+      "gaia_task_id": "9845712b-bb09-45f8-a0a4-df29b7093877",
+      "input": {
+        "query": "What animal is associated with the first linked onomatopoeia on the wikipedia page about them from 27 October 2020? Answer in the singular form without articles."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-8770c47d",
+      "gaia_task_id": "8770c47d-56ad-42cf-b0a6-7e48d0d19019",
+      "input": {
+        "query": "According to https://www.fao.org/3/ca8753en/ca8753en.pdf, how many more millions of hectares of forest in Brazil than in Canada in 2020?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-67592f4a",
+      "gaia_task_id": "67592f4a-f0ce-4d1f-be02-fde74748926f",
+      "input": {
+        "query": "Back when Coppedge first filed suit against Jet Propulsion Laboratory, the Glendale News-Press published a story about it on March 20th. According to the version of this story available on the LA Times' website on June 8th, 2023, what was the twitter handle of the reporter who wrote the piece? Include the @ sign before it."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-68d05bcc",
+      "gaia_task_id": "68d05bcc-e6cd-43f1-8e9e-e73d507cd02f",
+      "input": {
+        "query": "Part of the Fc\u7eacRs R-mediated phagocytosis pathway in the organismal immune system involves agglutination. What compound mediates this process, giving the name as it appears in the title of its Wikipedia article?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-91d929df",
+      "gaia_task_id": "91d929df-7666-4eed-894c-1bafe5b2e883",
+      "input": {
+        "query": "Who was quoted in the image on the Neilsen website case study about Tiktok from between 2020 and 2022?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-e013fc18",
+      "gaia_task_id": "e013fc18-abfc-4101-9acc-6273112517f6",
+      "input": {
+        "query": "Given $f(x) = x^3 - 5x^2 + 2x, x_0 = 1$ what is the smallest $n$ where Newton's Method results in a root approximation that has a 25 digit denominator when the fraction is fully reduced?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-220a2b08",
+      "gaia_task_id": "220a2b08-ffdc-4665-af4e-025670f5408b",
+      "input": {
+        "query": "According to english wikipedia, how many studio albums did Linkin Park release until 2022? "
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-3c5f0280",
+      "gaia_task_id": "3c5f0280-b1a3-43cf-817e-c3fa0016b1e2",
+      "input": {
+        "query": "In the first RSAI journal issue from the month that oganesson was officially named, what was the email given to contact the female author of the second article?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-a15f8d90",
+      "gaia_task_id": "a15f8d90-115d-4376-98b3-c866be21ef8f",
+      "input": {
+        "query": "As of 2022, in the city with a commercial airport people can fly to, a pine tree that only grows in two locations, and a zoo, what endangered alligator species can be found in the part of the zoo With alligators? Answer using singular form."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-adbc62c6",
+      "gaia_task_id": "adbc62c6-dc67-4bd8-a245-e1ed36b0d733",
+      "input": {
+        "query": "In what directory could the public find the free Penguin Project dating software for Mac as of 1997?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-66bd1b1c",
+      "gaia_task_id": "66bd1b1c-443b-4b4e-a108-0fa06527dd62",
+      "input": {
+        "query": "If you translate the scientific name of the Black rhinoceros and then sum the number of horns referenced in total, how many horns do you get?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-302a5b22",
+      "gaia_task_id": "302a5b22-7599-4f9d-966b-445db74a0533",
+      "input": {
+        "query": "What is the text between the opening curly brace and the first comma of the BIBTEX of the PhilPapers.org article on African philosophy aesthetics from 2006 by Jane Duran?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-beeee382",
+      "gaia_task_id": "beeee382-3b29-4be2-b6c7-e54e3543c93f",
+      "input": {
+        "query": "How many descendants of Keturah are named in 1 Chronicles 1:32? If there is a discrepancy between different translations, use the New International Version."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-8488761b",
+      "gaia_task_id": "8488761b-6d5a-4be0-86d6-5cf8d6c13efe",
+      "input": {
+        "query": "On DrugBank, what is the brand name of the topical use antivaricose cardiovascular vasoprotective that appears twice at that level in the ATC classification tree?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-1dd3f5f0",
+      "gaia_task_id": "1dd3f5f0-a467-4336-b1e1-78ea886a2244",
+      "input": {
+        "query": "As of the end of July 2023, how many other rail lines did Amtrak\u2019s Adirondack line provide connections to? Count only commuter/heavy rail lines that share a station with the Adirondack, not subway or light rail lines."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-cadc593c",
+      "gaia_task_id": "cadc593c-ebde-43ec-afa6-a8a4e95c0e38",
+      "input": {
+        "query": "Find the essay that begins on page 32 of Volume 8, Issue 8 of the Russell Sage Foundation Journal of the Social Sciences. What two-word term do the authors use beginning on page 34 that describes how peoples\u2019 actions are influenced by the actions of people they come into contact with?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-b78952b8",
+      "gaia_task_id": "b78952b8-af19-4ffa-9275-cfa41a255b8a",
+      "input": {
+        "query": "Sum the coefficients of the cubic term of the indefinite integrals of the following equations:\n\n95x^3-3x^2-19x-1\n13x^2-5^x-38\n-19x^5+x^4+2x^3-3x^2-5^x+10\nx^3+5x^2\n\u2212102x^5-x^4-12x^2-4x"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-01af5e27",
+      "gaia_task_id": "01af5e27-e389-4c69-a133-412e16532b67",
+      "input": {
+        "query": "What is the atomic number of the element mentioned in the first line of Nikki Giovanni\u2019s poem \u201cThe Laws of Motion\u201d?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-314b3c26",
+      "gaia_task_id": "314b3c26-3e8d-4f8c-a9aa-c77275072e0b",
+      "input": {
+        "query": "Pick a random integer. Now, count the letters that make up that number to give you a new number. Repeat this process until you repeat the same number twice. What is your number? Express it as a numerical character."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-27ee81e0",
+      "gaia_task_id": "27ee81e0-9f94-4b2d-8ab5-3c7033fcefca",
+      "input": {
+        "query": "According to a paper written by Ari Allyn-Feuer and Ted Sanders that was submitted to arxiv.org on 5 June 2023, what is the exact probability that artificial general intelligence will exist by 2043? Your answer should be rounded up to the nearest integer percentage."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-8f515e77",
+      "gaia_task_id": "8f515e77-1b54-4183-bd5d-3c5f71674931",
+      "input": {
+        "query": "What was the first video game in which the voice actor who said the line, \"You always sense a disturbance in the Force,\" voiced any role in the same franchise?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-bdb2f8ff",
+      "gaia_task_id": "bdb2f8ff-83a3-4288-a019-68c7968198f6",
+      "input": {
+        "query": "According to english wikipedia, and until 2023, how many US presidents were born in a state that was part of the confederacy at the time of the birth?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-22f61d58",
+      "gaia_task_id": "22f61d58-b420-4afb-a641-39ef09c65603",
+      "input": {
+        "query": "In the longest season of the Writing Excuses podcast prior to 2020, what was the off-topic question asked in the earliest microcasting episode?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-b01a3c5f",
+      "gaia_task_id": "b01a3c5f-56ce-4fee-bc15-afd2047bc976",
+      "input": {
+        "query": "Reverse this ascii picture so that the fish is facing the opposite direction:\n>>$()>. Return the characters (without quotes) in a comma separated list."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-f2ea141f",
+      "gaia_task_id": "f2ea141f-073c-4a86-af4c-fd1f2e7903fc",
+      "input": {
+        "query": "How many guanine nucleotides are found in the Ad_ITR primer?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-2131de62",
+      "gaia_task_id": "2131de62-c9b7-4f08-a28f-ccbd9e4809f3",
+      "input": {
+        "query": "In the video located at https://www.youtube.com/watch?v=X-AjhXhk19U, what character is playing the violin throughout the video?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-f08e2efd",
+      "gaia_task_id": "f08e2efd-1885-4437-8c88-90a20558ad1d",
+      "input": {
+        "query": "At the beginning of glycolysis, glucose is converted to glucose-6-phosphate. At the end of glycolysis, what atoms are connected directly to that 6th C atom? Return the elemental symbols in alphabetical order comma separated, don't deduplicate."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-c9adfc66",
+      "gaia_task_id": "c9adfc66-ee9e-437a-aa54-e76ab00d9a4a",
+      "input": {
+        "query": "What was the first name cited in the introduction of the bioRxiv paper on which Fabien L. Condamine and David Peris collaborated before June 2023?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-7cf5f072",
+      "gaia_task_id": "7cf5f072-4c37-4ccb-8c4e-a8f66fcdd9e1",
+      "input": {
+        "query": "The Smithsonian Institution contains a photograph with the catalog ID number of 177827. What year was the species of shark depicted in the photograph first scientifically described?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-f9f97b63",
+      "gaia_task_id": "f9f97b63-52e5-482f-beb8-c0f3cfac163e",
+      "input": {
+        "query": "In the 2021 Annual Report from the meal kit company originally funded by Rocket Internet, which supervisory board member (name only) had an M in Diversity, no marketing experience, and an exec position? Just give the last name."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-52fcc23e",
+      "gaia_task_id": "52fcc23e-4e68-43da-9410-f8f33632006f",
+      "input": {
+        "query": "I have a fun card game that we can play together! Here are the rules: I'll draw a certain number of cards and then arrange them in a certain order in a stack, face down. After I do that, I'll describe a series of steps, and your job will be to keep track of the cards and answer a question about the final ordering.\n\nOkay, from top to bottom, here's the starting layout:\n\n2 of clubs\n3 of hearts\nKing of spades\nQueen of hearts\nJack of clubs\nAce of diamonds\n\nNow, here are the steps I'm taking to jumble up the stack.\n\nI take the top three cards and place them at the bottom of the stack.\nI take the top card and place it under the second card.\nI take the top two cards and place them under the third card.\nI take the bottom card and place it on top of the stack.\nI take the top two cards and place them under the third card.\nI take the top four cards and place them on the bottom of the stack.\nI take the bottom card and place it on the top of the stack.\nI take the top two cards and place them on the bottom of the stack.\nI take the bottom card and place it on the top of the stack.\n\n\nWhat is the top card on the stack? If the card's name contains a digit, write the digit in plain text when answering, e.g. 'six of spades' instead of '6 of spades'."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-4dccff35",
+      "gaia_task_id": "4dccff35-158b-4647-8ad0-b7432112077d",
+      "input": {
+        "query": "What is the Wikispecies Subordo as of 2022 for the genus studied in the article about Food For Everyone from one of the authors of the importance of genetic tools when studying the distribution of rare and elusive species illustrated by the Kam dwarf hamster?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-0a5a5fd6",
+      "gaia_task_id": "0a5a5fd6-97b7-4cce-ad9f-bdaaee042bec",
+      "input": {
+        "query": "Who directed the 1994 movie that shares a name with the unique vertex of the capsid in the abstract of the paper \"Distinct DNA Exit and Packaging Portals...\" on PLOS Biology?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-ebfd308e",
+      "gaia_task_id": "ebfd308e-59c1-4389-8812-7ea4cda7f4bc",
+      "input": {
+        "query": "A paperweight production factory has a series of goals that are A through H as listed below.\n\nObtain raw materials.\nFind investors.\nBrainstorm new paperweights.\nOptimize production efficiency.\nOpen additional plants.\nUpgrade old machinery.\nDo performance reviews.\nHire more workers.\n\nThe goals have a hierarchy of importance. Opening additional plants is more important than obtaining raw materials and brainstorming new paperweights, upgrading old machinery is more important than one other goal only, and the manager thinks that optimizing production efficiency is less important than brainstorming new paperweights but more important than obtaining raw materials but has the order backwards. Hiring new workers is more important than three other goals, doing performance reviews is more important than hiring new workers but less important than optimizing production efficiency, and finding investors is less important than obtaining raw materials. What is the second most important goal (return it exactly as given in the question)?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-2648baca",
+      "gaia_task_id": "2648baca-4e35-4353-8772-4da848c8440e",
+      "input": {
+        "query": "In the AVS article from Sallander in 2001, how many more dog questions were there than owner questions in the first table?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-e8719a2f",
+      "gaia_task_id": "e8719a2f-6bbd-40b6-95b5-7706f7a6445a",
+      "input": {
+        "query": "According to the US Bureau of Reclamation glossary, what does the acronym that shares its name with a book of the New Testament stand for?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-4c386922",
+      "gaia_task_id": "4c386922-5c65-4f33-86d5-107a97ad6654",
+      "input": {
+        "query": "In the abstract of the Lithuanian Bulvi\u0173 rinka 2009 metais - Ingrida Luko\u0161iut\u0117, how many times does the author mention the year that the book \"The Propitious Esculent\" was published?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-b74aa3b0",
+      "gaia_task_id": "b74aa3b0-16a7-4a79-a8df-0cbdcf1d2eb8",
+      "input": {
+        "query": "How many more references in the latest 2022 wikipedia article on chocolate vs. the latest from 2021?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-b9c62d30",
+      "gaia_task_id": "b9c62d30-86f8-4b36-80b6-afb34852cea6",
+      "input": {
+        "query": "According to Federal Reserve Economic Data (FRED) from the St. Louis Fed, prior to 2021-09, what was the most recent 3-month period where the percent change at an annual rate for the seasonally adjusted Median Consumer Price Index was over 5% for each month? Give your answer in the format YYYY-MM, YYYY-MM, where the starting month of the period comes before the ending month."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-70e0a9c6",
+      "gaia_task_id": "70e0a9c6-24bf-48ed-afa1-f0d0eaaa0209",
+      "input": {
+        "query": "As of July 2023, what is the fourth letter of the administrative district Szyman\u00f3wek lies in?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    },
+    {
+      "id": "gaia-de21a804",
+      "gaia_task_id": "de21a804-9b9e-40b6-aede-392e3360b147",
+      "input": {
+        "query": "What fingerprint has the third highest agriculture and biology weight on the Research@WUR Wageningen University & Research page for the 2009 paper from Gildemacher, Kaguongo, and Woldegiorgis?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\?"
+    }
+  ]
+}

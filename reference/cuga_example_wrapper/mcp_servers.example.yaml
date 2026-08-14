@@ -1,0 +1,14 @@
+# Optional.
+# CUGA's MCP guide uses MCP_SERVERS_FILE to point to this registry.
+#
+# Uncomment/configure a server you actually have installed.
+#
+# mcpServers:
+#   filesystem:
+#     command: npx
+#     args:
+#       - "-y"
+#       - "@modelcontextprotocol/server-filesystem"
+#       - "./workspace"
+#     transport: stdio
+#     description: Local filesystem operations

@@ -1,0 +1,17 @@
+{
+  "name": "gaia-level1-validation",
+  "version": "1.0",
+  "description": "GAIA benchmark level 1 \u2014 validation split (5 tasks)",
+  "queries": [
+    {
+      "id": "gaia-tool-check-1",
+      "gaia_task_id": "tool-check-1",
+      "input": {
+        "query": "what tools do you have? Can you verify all your tools via a real invocation of each of those  and report whether each is working properly?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\b17\\b"
+    }
+  ]
+}

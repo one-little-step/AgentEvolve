@@ -1,0 +1,351 @@
+(cuga-complete-wrapper) saptarshi@Saptarshis-MacBook-Pro cuga_complete_wrapper % uv run dataset/batch_run_cuga.py
+========================================================================
+[EXPERIMENT] /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/exp/gaia_l1_validation.json
+[RUN]        /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/cuga_runs/gaia_l1_validation__baseline__20260813_035541
+[ABLATION]   baseline
+[MODEL]      openai/azure/gpt-5.6-luna
+[WORKERS]    10
+[TIMEOUT]    1200s/task
+[LLM EVAL]   True
+[EVAL BATCH] 10
+========================================================================
+[START] gaia-e1fc63a2
+[START] gaia-8e867cd7
+[START] gaia-ec09fa32
+[START] gaia-5d0080cb
+[START] gaia-46719c30
+[START] gaia-4b6bb5f7
+[START] gaia-27d5d136
+[START] gaia-2d83110e
+[START] gaia-a1e91b78
+[START] gaia-dc28cf18
+[DONE] gaia-2d83110e | 00:00:21.51 | regex=PASS
+[START] gaia-b816bfce
+[DONE] gaia-5d0080cb | 00:00:21.58 | regex=FAIL/NA
+[START] gaia-72e110e7
+[DONE] gaia-8e867cd7 | 00:00:21.81 | regex=PASS
+[START] gaia-42576abe
+[DONE] gaia-ec09fa32 | 00:00:21.97 | regex=FAIL/NA
+[START] gaia-b415aba4
+[DONE] gaia-a1e91b78 | 00:00:23.78 | regex=FAIL/NA
+[START] gaia-935e2cff
+[DONE] gaia-46719c30 | 00:00:38.10 | regex=FAIL/NA
+[START] gaia-4fc2f1ae
+[DONE] gaia-4b6bb5f7 | 00:00:40.62 | regex=PASS
+[START] gaia-5188369a
+[DONE] gaia-935e2cff | 00:00:19.57 | regex=PASS
+[START] gaia-6f37996b
+[DONE] gaia-5188369a | 00:00:13.98 | regex=FAIL/NA
+[START] gaia-4b650a35
+[DONE] gaia-27d5d136 | 00:00:55.28 | regex=PASS
+[LLM-EVAL] evaluating 10 tasks (batch #1)...
+[START] gaia-c714ab3a
+[DONE] gaia-72e110e7 | 00:00:34.41 | regex=FAIL/NA
+[START] gaia-9d191bce
+[DONE] gaia-4fc2f1ae | 00:00:21.39 | regex=PASS
+[START] gaia-cabe07ed
+[DONE] gaia-4b650a35 | 00:00:13.04 | regex=PASS
+[START] gaia-3cef3a44
+[DONE] gaia-e1fc63a2 | 00:01:09.76 | regex=FAIL/NA
+[START] gaia-d0633230
+[DONE] gaia-42576abe | 00:00:48.01 | regex=FAIL/NA
+[START] gaia-305ac316
+[DONE] gaia-6f37996b | 00:00:31.99 | regex=FAIL/NA
+[START] gaia-0383a3ee
+[LLM-EVAL] batch #1: 5/10 correct
+[DONE] gaia-b415aba4 | 00:01:12.69 | regex=FAIL/NA
+[START] gaia-11af4e1a
+[DONE] gaia-9d191bce | 00:00:39.95 | regex=PASS
+[START] gaia-e142056d
+[DONE] gaia-dc28cf18 | 00:01:36.48 | regex=PASS
+[START] gaia-50ad0280
+[DONE] gaia-c714ab3a | 00:00:45.86 | regex=PASS
+[START] gaia-7673d772
+[LLM-EVAL] evaluating 10 tasks (batch #2)...
+[DONE] gaia-305ac316 | 00:00:31.34 | regex=FAIL/NA
+[START] gaia-c365c1c7
+[DONE] gaia-e142056d | 00:00:19.64 | regex=FAIL/NA
+[START] gaia-7d4a7d1d
+[DONE] gaia-50ad0280 | 00:00:21.53 | regex=PASS
+[START] gaia-dc22a632
+[LLM-EVAL] batch #2: 6/10 correct
+[DONE] gaia-c365c1c7 | 00:00:27.09 | regex=FAIL/NA
+[START] gaia-3f57289b
+[DONE] gaia-11af4e1a | 00:00:38.17 | regex=PASS
+[START] gaia-23dd907f
+[DONE] gaia-7673d772 | 00:00:43.87 | regex=FAIL/NA
+[START] gaia-840bfca7
+[DONE] gaia-7d4a7d1d | 00:00:43.24 | regex=FAIL/NA
+[START] gaia-a0068077
+[DONE] gaia-d0633230 | 00:01:29.54 | regex=PASS
+[START] gaia-bda648d7
+[DONE] gaia-cabe07ed | 00:01:43.51 | regex=FAIL/NA
+[START] gaia-50ec8903
+[DONE] gaia-3cef3a44 | 00:01:41.59 | regex=PASS
+[DONE] gaia-dc22a632 | 00:00:51.22 | regex=FAIL/NA
+[START] gaia-cf106601
+[START] gaia-a0c07678
+[LLM-EVAL] evaluating 10 tasks (batch #3)...
+[DONE] gaia-b816bfce | 00:02:28.82 | regex=FAIL/NA
+[START] gaia-5a0c1adf
+[DONE] gaia-23dd907f | 00:00:48.11 | regex=FAIL/NA
+[DONE] gaia-0383a3ee | 00:01:46.82 | regex=FAIL/NA
+[LLM-EVAL] batch #3: 4/10 correct
+[DONE] gaia-3f57289b | 00:01:07.52 | regex=FAIL/NA
+[DONE] gaia-a0c07678 | 00:00:28.45 | regex=FAIL/NA
+[DONE] gaia-840bfca7 | 00:01:05.44 | regex=FAIL/NA
+[DONE] gaia-bda648d7 | 00:00:56.49 | regex=FAIL/NA
+[DONE] gaia-a0068077 | 00:01:20.04 | regex=PASS
+[DONE] gaia-5a0c1adf | 00:01:10.55 | regex=FAIL/NA
+[LLM-EVAL] evaluating 10 tasks (batch #4)...
+[LLM-EVAL] batch #4: 1/10 correct
+[DONE] gaia-cf106601 | 00:01:38.25 | regex=PASS
+[DONE] gaia-50ec8903 | 00:02:46.97 | regex=PASS
+[LLM-EVAL] evaluating 2 tasks (batch #5)...
+[LLM-EVAL] batch #5: 2/2 correct
+
+========================================================================
+BATCH COMPLETE
+========================================================================
+Run:              /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/cuga_runs/gaia_l1_validation__baseline__20260813_035541
+Tasks:            42
+Regex accuracy:   17/42 (0.40476190476190477)
+LLM accuracy:     18/42 (0.42857142857142855)
+Wall time:        00:05:42.68
+Result:           /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/cuga_runs/gaia_l1_validation__baseline__20260813_035541/result.json
+========================================================================
+========================================================================
+[EXPERIMENT] /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/exp/gaia_l2_validation.json
+[RUN]        /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/cuga_runs/gaia_l2_validation__baseline__20260813_040124
+[ABLATION]   baseline
+[MODEL]      openai/azure/gpt-5.6-luna
+[WORKERS]    10
+[TIMEOUT]    1200s/task
+[LLM EVAL]   True
+[EVAL BATCH] 10
+========================================================================
+[START] gaia-c61d22de
+[START] gaia-04a04a9b
+[START] gaia-17b5a6a3
+[START] gaia-3627a8be
+[START] gaia-14569e28
+[START] gaia-2a649bb1
+[START] gaia-7619a514
+[START] gaia-87c610df
+[START] gaia-624cbf11
+[START] gaia-dd3c7503
+[DONE] gaia-04a04a9b | 00:01:09.60 | regex=FAIL/NA
+[START] gaia-f0f46385
+[DONE] gaia-dd3c7503 | 00:01:35.39 | regex=FAIL/NA
+[START] gaia-e4e91f1c
+[DONE] gaia-7619a514 | 00:01:36.66 | regex=FAIL/NA
+[START] gaia-56137764
+[DONE] gaia-3627a8be | 00:02:03.15 | regex=PASS
+[START] gaia-8b3379c0
+[DONE] gaia-2a649bb1 | 00:02:03.63 | regex=FAIL/NA
+[START] gaia-0ff53813
+[DONE] gaia-87c610df | 00:02:05.03 | regex=PASS
+[START] gaia-a7feb290
+[DONE] gaia-c61d22de | 00:02:05.19 | regex=PASS
+[START] gaia-b4cc024b
+[DONE] gaia-17b5a6a3 | 00:02:34.92 | regex=FAIL/NA
+[START] gaia-33d8ea3b
+[DONE] gaia-14569e28 | 00:02:42.62 | regex=FAIL/NA
+[START] gaia-e8cb5b03
+[DONE] gaia-56137764 | 00:01:06.23 | regex=PASS
+[LLM-EVAL] evaluating 10 tasks (batch #1)...
+[START] gaia-f46b4380
+[LLM-EVAL] batch #1: 4/10 correct
+[DONE] gaia-624cbf11 | 00:02:57.86 | regex=FAIL/NA
+[START] gaia-05407167
+[DONE] gaia-e4e91f1c | 00:01:30.26 | regex=FAIL/NA
+[START] gaia-b9763138
+[DONE] gaia-b4cc024b | 00:01:03.28 | regex=FAIL/NA
+[START] gaia-16d825ff
+[DONE] gaia-a7feb290 | 00:01:04.01 | regex=FAIL/NA
+[START] gaia-544b7f0c
+[DONE] gaia-e8cb5b03 | 00:00:29.85 | regex=FAIL/NA
+[START] gaia-6b078778
+[DONE] gaia-05407167 | 00:00:29.62 | regex=FAIL/NA
+[START] gaia-08cae58d
+[DONE] gaia-33d8ea3b | 00:01:00.00 | regex=PASS
+[START] gaia-2dfc4c37
+[DONE] gaia-544b7f0c | 00:00:39.49 | regex=PASS
+[START] gaia-9f41b083
+[DONE] gaia-16d825ff | 00:00:49.84 | regex=FAIL/NA
+[START] gaia-ecbc4f94
+[DONE] gaia-f0f46385 | 00:02:59.92 | regex=FAIL/NA
+[LLM-EVAL] evaluating 10 tasks (batch #2)...
+[START] gaia-71345b0a
+[LLM-EVAL] batch #2: 1/10 correct
+[DONE] gaia-6b078778 | 00:01:11.92 | regex=FAIL/NA
+[START] gaia-7b5377b0
+[DONE] gaia-9f41b083 | 00:00:46.10 | regex=FAIL/NA
+[START] gaia-114d5fd0
+[DONE] gaia-0ff53813 | 00:02:33.55 | regex=FAIL/NA
+[START] gaia-ad37a656
+[DONE] gaia-b9763138 | 00:01:51.40 | regex=FAIL/NA
+[START] gaia-f3917a3d
+[DONE] gaia-ad37a656 | 00:00:21.61 | regex=FAIL/NA
+[START] gaia-48eb8242
+[DONE] gaia-08cae58d | 00:01:32.68 | regex=FAIL/NA
+[START] gaia-c8b7e059
+[DONE] gaia-2dfc4c37 | 00:01:27.11 | regex=FAIL/NA
+[START] gaia-d1af70ea
+[DONE] gaia-ecbc4f94 | 00:01:05.09 | regex=FAIL/NA
+[START] gaia-08f3a05f
+[DONE] gaia-71345b0a | 00:00:59.81 | regex=FAIL/NA
+[START] gaia-ded28325
+[DONE] gaia-8b3379c0 | 00:03:08.10 | regex=FAIL/NA
+[LLM-EVAL] evaluating 10 tasks (batch #3)...
+[START] gaia-d700d50d
+[DONE] gaia-f46b4380 | 00:02:35.85 | regex=PASS
+[START] gaia-0a3cd321
+[DONE] gaia-7b5377b0 | 00:01:00.99 | regex=FAIL/NA
+[START] gaia-f2feb6a4
+[LLM-EVAL] batch #3: 0/10 correct
+[DONE] gaia-ded28325 | 00:00:20.71 | regex=FAIL/NA
+[START] gaia-0b260a57
+[DONE] gaia-48eb8242 | 00:01:00.41 | regex=FAIL/NA
+[START] gaia-ed58682d
+[DONE] gaia-114d5fd0 | 00:01:31.01 | regex=FAIL/NA
+[START] gaia-023e9d44
+[DONE] gaia-d700d50d | 00:00:55.98 | regex=PASS
+[START] gaia-0e9e85b8
+[DONE] gaia-c8b7e059 | 00:01:14.20 | regex=FAIL/NA
+[START] gaia-20194330
+[DONE] gaia-0a3cd321 | 00:01:11.40 | regex=FAIL/NA
+[START] gaia-65638e28
+[DONE] gaia-f2feb6a4 | 00:01:05.91 | regex=PASS
+[START] gaia-3ff6b7a9
+[DONE] gaia-f3917a3d | 00:01:36.89 | regex=FAIL/NA
+[LLM-EVAL] evaluating 10 tasks (batch #4)...
+[START] gaia-708b99c5
+[LLM-EVAL] batch #4: 4/10 correct
+[DONE] gaia-20194330 | 00:00:45.12 | regex=FAIL/NA
+[START] gaia-0a65cb96
+[DONE] gaia-ed58682d | 00:01:01.35 | regex=FAIL/NA
+[START] gaia-65da0822
+[DONE] gaia-3ff6b7a9 | 00:00:29.26 | regex=FAIL/NA
+[START] gaia-0bb3b44a
+[DONE] gaia-708b99c5 | 00:00:30.27 | regex=PASS
+[START] gaia-73c1b9fe
+[DONE] gaia-023e9d44 | 00:01:13.71 | regex=FAIL/NA
+[START] gaia-e2d69698
+[DONE] gaia-0bb3b44a | 00:00:20.46 | regex=FAIL/NA
+[START] gaia-a56f1527
+[DONE] gaia-0b260a57 | 00:01:59.23 | regex=FAIL/NA
+[START] gaia-42d4198c
+[DONE] gaia-65da0822 | 00:00:29.93 | regex=FAIL/NA
+[START] gaia-a26649c6
+[DONE] gaia-d1af70ea | 00:02:59.80 | regex=FAIL/NA
+[START] gaia-d5141ca5
+[DONE] gaia-08f3a05f | 00:03:07.06 | regex=PASS
+[LLM-EVAL] evaluating 10 tasks (batch #5)...
+[START] gaia-1dcc160f
+[DONE] gaia-73c1b9fe | 00:01:08.62 | regex=PASS
+[START] gaia-e0c10771
+[DONE] gaia-0e9e85b8 | 00:02:11.61 | regex=FAIL/NA
+[START] gaia-e29834fd
+[DONE] gaia-a26649c6 | 00:00:50.04 | regex=PASS
+[START] gaia-08c0b6e9
+[LLM-EVAL] ERROR: Invalid \escape: line 60 column 93 (char 2877)
+[DONE] gaia-a56f1527 | 00:01:14.61 | regex=FAIL/NA
+[START] gaia-db4fd70a
+[DONE] gaia-e2d69698 | 00:01:17.93 | regex=PASS
+[START] gaia-853c8244
+[DONE] gaia-65638e28 | 00:02:19.78 | regex=FAIL/NA
+[START] gaia-7a4a336d
+[DONE] gaia-d5141ca5 | 00:00:58.32 | regex=FAIL/NA
+[DONE] gaia-e0c10771 | 00:00:53.83 | regex=PASS
+[DONE] gaia-e29834fd | 00:00:58.12 | regex=PASS
+[DONE] gaia-08c0b6e9 | 00:01:15.49 | regex=PASS
+[LLM-EVAL] evaluating 10 tasks (batch #6)...
+[LLM-EVAL] batch #6: 6/10 correct
+[DONE] gaia-1dcc160f | 00:01:40.14 | regex=FAIL/NA
+[DONE] gaia-42d4198c | 00:02:30.37 | regex=FAIL/NA
+[DONE] gaia-db4fd70a | 00:01:28.60 | regex=FAIL/NA
+[DONE] gaia-0a65cb96 | 00:03:06.60 | regex=PASS
+[DONE] gaia-853c8244 | 00:02:11.09 | regex=FAIL/NA
+[DONE] gaia-7a4a336d | 00:02:01.48 | regex=FAIL/NA
+[LLM-EVAL] evaluating 6 tasks (batch #7)...
+[LLM-EVAL] batch #7: 1/6 correct
+
+========================================================================
+BATCH COMPLETE
+========================================================================
+Run:              /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/cuga_runs/gaia_l2_validation__baseline__20260813_040124
+Tasks:            66
+Regex accuracy:   18/66 (0.2727272727272727)
+LLM accuracy:     16/56 (0.2857142857142857)
+Wall time:        00:11:01.30
+Result:           /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/cuga_runs/gaia_l2_validation__baseline__20260813_040124/result.json
+========================================================================
+========================================================================
+[EXPERIMENT] /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/exp/gaia_l3_validation.json
+[RUN]        /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/cuga_runs/gaia_l3_validation__baseline__20260813_041225
+[ABLATION]   baseline
+[MODEL]      openai/azure/gpt-5.6-luna
+[WORKERS]    10
+[TIMEOUT]    1200s/task
+[LLM EVAL]   True
+[EVAL BATCH] 10
+========================================================================
+[START] gaia-384d0dd8
+[START] gaia-de9887f5
+[START] gaia-676e5e31
+[START] gaia-00d579ea
+[START] gaia-8131e2c0
+[START] gaia-983bba7c
+[START] gaia-72c06643
+[START] gaia-ebbc1f13
+[START] gaia-56db2318
+[START] gaia-e961a717
+[DONE] gaia-676e5e31 | 00:00:20.62 | regex=FAIL/NA
+[START] gaia-851e570a
+[DONE] gaia-e961a717 | 00:00:28.76 | regex=FAIL/NA
+[START] gaia-50f58759
+[DONE] gaia-851e570a | 00:00:24.07 | regex=FAIL/NA
+[START] gaia-872bfbb1
+[DONE] gaia-8131e2c0 | 00:00:56.45 | regex=FAIL/NA
+[START] gaia-c3a79cfe
+[DONE] gaia-00d579ea | 00:00:57.09 | regex=FAIL/NA
+[START] gaia-ad2b4d70
+[DONE] gaia-de9887f5 | 00:00:57.68 | regex=FAIL/NA
+[START] gaia-9e1fc53b
+[DONE] gaia-ebbc1f13 | 00:01:10.22 | regex=FAIL/NA
+[START] gaia-5f982798
+[DONE] gaia-983bba7c | 00:01:16.41 | regex=FAIL/NA
+[START] gaia-0512426f
+[DONE] gaia-9e1fc53b | 00:00:32.00 | regex=FAIL/NA
+[START] gaia-0bdb7c40
+[DONE] gaia-0512426f | 00:00:18.00 | regex=FAIL/NA
+[LLM-EVAL] evaluating 10 tasks (batch #1)...
+[LLM-EVAL] batch #1: 0/10 correct
+[DONE] gaia-56db2318 | 00:01:45.17 | regex=PASS
+[DONE] gaia-72c06643 | 00:01:47.54 | regex=FAIL/NA
+[DONE] gaia-872bfbb1 | 00:01:03.93 | regex=FAIL/NA
+[DONE] gaia-ad2b4d70 | 00:00:53.03 | regex=FAIL/NA
+[DONE] gaia-384d0dd8 | 00:01:59.53 | regex=FAIL/NA
+[DONE] gaia-0bdb7c40 | 00:00:45.92 | regex=FAIL/NA
+[DONE] gaia-c3a79cfe | 00:01:58.68 | regex=PASS
+[DONE] gaia-5f982798 | 00:02:00.10 | regex=FAIL/NA
+[DONE] gaia-50f58759 | 00:03:12.53 | regex=FAIL/NA
+[LLM-EVAL] evaluating 9 tasks (batch #2)...
+[LLM-EVAL] batch #2: 2/9 correct
+
+========================================================================
+BATCH COMPLETE
+========================================================================
+Run:              /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/cuga_runs/gaia_l3_validation__baseline__20260813_041225
+Tasks:            19
+Regex accuracy:   2/19 (0.10526315789473684)
+LLM accuracy:     2/19 (0.10526315789473684)
+Wall time:        00:03:46.81
+Result:           /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/cuga_runs/gaia_l3_validation__baseline__20260813_041225/result.json
+========================================================================
+
+All experiments complete:
+  /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/cuga_runs/gaia_l1_validation__baseline__20260813_035541/result.json
+  /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/cuga_runs/gaia_l2_validation__baseline__20260813_040124/result.json
+  /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/cuga_runs/gaia_l3_validation__baseline__20260813_041225/result.json

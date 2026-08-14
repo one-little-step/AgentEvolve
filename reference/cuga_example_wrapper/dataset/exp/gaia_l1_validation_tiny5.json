@@ -1,0 +1,57 @@
+{
+  "name": "gaia-level1-validation",
+  "version": "1.0",
+  "description": "GAIA benchmark level 1 \u2014 validation split (5 tasks)",
+  "queries": [
+    {
+      "id": "gaia-e1fc63a2",
+      "gaia_task_id": "e1fc63a2-da7a-432f-be78-7c4a95598703",
+      "input": {
+        "query": "If Eliud Kipchoge could maintain his record-making marathon pace indefinitely, how many thousand hours would it take him to run the distance between the Earth and the Moon its closest approach? Please use the minimum perigee value on the Wikipedia page for the Moon when carrying out your calculation. Round your result to the nearest 1000 hours and do not use any comma separators if necessary."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\b17\\b"
+    },
+    {
+      "id": "gaia-8e867cd7",
+      "gaia_task_id": "8e867cd7-cff9-4e6c-867a-ff5ddc2550be",
+      "input": {
+        "query": "How many studio albums were published by Mercedes Sosa between 2000 and 2009 (included)? You can use the latest 2022 version of english wikipedia."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\b3\\b"
+    },
+    {
+      "id": "gaia-ec09fa32",
+      "gaia_task_id": "ec09fa32-d03f-4bf8-84b0-1f16922c3ae4",
+      "input": {
+        "query": "Here's a fun riddle that I think you'll enjoy.\n\nYou have been selected to play the final round of the hit new game show \"Pick That Ping-Pong\". In this round, you will be competing for a large cash prize. Your job will be to pick one of several different numbered ping-pong balls, and then the game will commence. The host describes how the game works.\n\nA device consisting of a winding clear ramp and a series of pistons controls the outcome of the game. The ramp feeds balls onto a platform. The platform has room for three ping-pong balls at a time. The three balls on the platform are each aligned with one of three pistons. At each stage of the game, one of the three pistons will randomly fire, ejecting the ball it strikes. If the piston ejects the ball in the first position on the platform the balls in the second and third position on the platform each advance one space, and the next ball on the ramp advances to the third position. If the piston ejects the ball in the second position, the ball in the first position is released and rolls away, the ball in the third position advances two spaces to occupy the first position, and the next two balls on the ramp advance to occupy the second and third positions on the platform. If the piston ejects the ball in the third position, the ball in the first position is released and rolls away, the ball in the second position advances one space to occupy the first position, and the next two balls on the ramp advance to occupy the second and third positions on the platform.\n\nThe ramp begins with 100 numbered ping-pong balls, arranged in ascending order from 1 to 100. The host activates the machine and the first three balls, numbered 1, 2, and 3, advance to the platform. Before the random firing of the pistons begins, you are asked which of the 100 balls you would like to pick. If your pick is ejected by one of the pistons, you win the grand prize, $10,000.\n\nWhich ball should you choose to maximize your odds of winning the big prize? Please provide your answer as the number of the ball selected."
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\b3\\b"
+    },
+    {
+      "id": "gaia-5d0080cb",
+      "gaia_task_id": "5d0080cb-90d7-4712-bc33-848150e917d3",
+      "input": {
+        "query": "What was the volume in m^3 of the fish bag that was calculated in the University of Leicester paper \"Can Hiccup Supply Enough Fish to Maintain a Dragon\u2019s Diet?\""
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\b0\\.1777\\b"
+    },
+    {
+      "id": "gaia-a1e91b78",
+      "gaia_task_id": "a1e91b78-d3d8-4675-bb8d-62741b4b68a6",
+      "input": {
+        "query": "In the video https://www.youtube.com/watch?v=L1vXCYZAYYM, what is the highest number of bird species to be on camera simultaneously?"
+      },
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "regex": "(?i)\\b3\\b"
+    }
+  ]
+}

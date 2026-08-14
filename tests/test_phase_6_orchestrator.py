@@ -26,8 +26,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT))
 
-from agent_evolve.core.analyzer import FakeAnalyzerJudge  # noqa: E402
-from agent_evolve.core.blame import CausalFinding  # noqa: E402
+from agent_evolve.core.analyzer import AnalyzerJudge, FakeAnalyzerJudge  # noqa: E402
+from agent_evolve.core.blame import (  # noqa: E402
+    BlameGraph,
+    CausalAnalysis,
+    CausalFinding,
+)
 from agent_evolve.core.clustering import LexicalEmbedder  # noqa: E402
 from agent_evolve.core.config import resolve_profile  # noqa: E402
 from agent_evolve.core.contracts import (  # noqa: E402
@@ -71,6 +75,7 @@ def _runner(
     storage: JSONFileStorage | None = None,
     min_comparable_rollouts: int = 1,
     adapter: FakeAdapter | None = None,
+    analyzer_judge: AnalyzerJudge | None = None,
 ) -> SequentialGepaRunner:
     adapter = adapter or FakeAdapter()
     pool = PersistentPool(min_comparable_rollouts=min_comparable_rollouts)
@@ -78,7 +83,7 @@ def _runner(
     return SequentialGepaRunner(
         adapter=adapter,
         pool=pool,
-        analyzer_judge=FakeAnalyzerJudge(),
+        analyzer_judge=analyzer_judge if analyzer_judge is not None else FakeAnalyzerJudge(),
         editor=FakeEditor(),
         embedder=LexicalEmbedder(dim=32),
         storage=storage,
@@ -219,6 +224,64 @@ def test_synthesized_finding_never_carries_the_expected_substring() -> None:
     assert _TOKEN not in blob
 
 
+def test_finding_without_blame_nodes_is_insufficient_evidence() -> None:
+    """Absence of evidence must be expressed, never a synthetic placeholder node."""
+    runner = _runner()
+    analysis = CausalAnalysis(
+        mechanism="failed-to-match",
+        severity=1.0,
+        score=0.0,
+        blame_graph=BlameGraph(nodes=()),
+    )
+
+    finding = runner.finding_from_analysis(
+        analysis,
+        task=_task(),
+        candidate_id="base",
+        trace_id="tr-1",
+        verdict_id="v-1",
+        writable_artifact_ids=("skills/retrieval",),
+    )
+
+    assert finding.status == "insufficient_evidence"
+    assert finding.blame_graph.nodes == ()
+
+
+class _NoBlameAnalyzer:
+    """An analyzer+judge that reports a failure with zero blamed actors."""
+
+    analyzer_model_id = "no-blame"
+    judge_model_id = "no-blame"
+
+    def analyze(self, task: EvolutionTask, trace: object) -> CausalAnalysis:
+        return CausalAnalysis(
+            mechanism="failure-with-no-blame",
+            severity=1.0,
+            score=0.0,
+            blame_graph=BlameGraph(nodes=()),
+        )
+
+
+def test_build_issues_skips_tasks_with_insufficient_evidence() -> None:
+    """No issue is built from absent evidence; the write set stays unattributed."""
+    runner = _runner(analyzer_judge=_NoBlameAnalyzer())
+
+    assert runner.build_issues([_task()]) == ()
+
+
+def test_run_attempt_with_no_blame_produces_no_work_item() -> None:
+    """A failure with no blamed actor yields a PENDING no-issue outcome."""
+    runner = _runner(analyzer_judge=_NoBlameAnalyzer())
+
+    outcome = runner.run_attempt([_task()])
+
+    assert outcome.accepted is False
+    assert outcome.status is AttemptStatus.PENDING
+    assert outcome.issue_id == ""
+    assert outcome.result_candidate_id is None
+    assert len(runner.pool) == 1
+
+
 # ---------------------------------------------------------------------- #
 # select_issues
 # ---------------------------------------------------------------------- #
@@ -333,6 +396,7 @@ def test_run_attempt_commits_the_accepted_candidate_to_the_pool() -> None:
     outcome = runner.run_attempt([_task()])
 
     assert len(runner.pool) == 2
+    assert outcome.result_candidate_id is not None
     committed = runner.pool.get(outcome.result_candidate_id)
     assert committed.candidate.parent_ids == ("base",)
     assert committed.origin_attempt_ids == (outcome.attempt_id,)

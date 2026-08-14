@@ -16,3 +16,7 @@ terminal_output/
 # Reference snapshot: keep only source, never bytecode
 reference/**/__pycache__/
 reference/**/*.py[cod]
+
+# CUGA runtime knowledge stores and lock files (regenerated locally; not source)
+**/.cuga/knowledge/*.db
+**/.cuga/knowledge/.lock
