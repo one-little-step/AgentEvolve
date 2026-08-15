@@ -1,224 +1,353 @@
-# Session Handoff — 2026-08-14 (Phase 6 done + qf22 fix pushed; Phase 7 next)
+# Session Handoff — 2026-08-14 (CUGA tool execution + harness injection verified)
 
-This is the durable resume point. Read this file FIRST after compaction/resume.
-It supersedes `2026-08-13-session-handoff.md`.
+This supersedes the earlier `2026-08-14-session-handoff.md` conclusions about
+tool calling. Read this FIRST on resume.
 
-## One-line current state
+## Status (read this first)
 
-`dev4` @ `438a37b "phase-6 actor_id fix1"`, in sync with `origin/dev4`.
-570 tests pass. Phase 4.5 + Phase 6 + qf22 Part I (synthetic-blame-node fix) are
-committed and pushed. Next: Phase 7 (CUGA Tracing). qf22 Part II (delete legacy
-Orchestrator) still pending.
+- D1 (skills), D2 (policies), D3 (stream_events + graph_final_state + model)
+  are FIXED and VERIFIED against real runs.
+- D4 is ROOT-CAUSED and CLOSED as a model property, not a defect: tool
+  invocation is a deterministic function of prompt wording for
+  `openai/azure/gpt-5.6-luna`. No wrapper code needs changing. User decision:
+  "if it's model dependent, we don't need to bother about this".
+- Suite: 608 passed, 1 skipped. Nothing committed. Branch `dev4`, HEAD `1b3df2e`.
+- All CUGA learnings are consolidated in
+  `reference/cuga_example_wrapper/docs/cuga-integration-learnings.md` (785 lines)
+  for reuse in other CUGA SDK wrapper projects. That file is the durable
+  artifact; this handoff is the session log.
 
-## Git State (IMPORTANT: work is on dev4, not dev3)
+## Headline: the previous root cause was WRONG
 
-- Branches: dev1, dev2, dev3, **dev4** (working). dev3 is at b0dbb06 (synced
-  with origin/dev3). dev2 is ahead of origin/dev2 by 27.
-- dev4 commit history (linear):
-  - `b0dbb06` rho-gepa till phase-4 v1 (base)
-  - `340d450` feat(core): phase 4.5 cleanup — ChampionReport, min-coverage gate, frontier-weight
-  - `b4fba0c` feat(core): phase 6 sequential GEPA orchestrator + B1 runner (Ollama embeddings)
-  - `438a37b` phase-6 actor_id fix1 (qf22 Part I fix + .db/.lock purge)
-- Remote: `https://github.com/one-little-step/AgentEvolve`, branch dev4.
-  HEAD == origin/dev4 (verified `git rev-list --left-right --count HEAD...origin/dev4` = `0 0`).
-- **Discrepancy note:** the earlier handoff assumed dev3, but the Phase 4.5/6
-  commits actually landed on dev4 (the working dir was on dev4). The user chose
-  to push dev4. Do not "fix" this without asking.
+The earlier session concluded "the reasoning model `azure/gpt-5.6-luna` cannot
+emit executable code, so CUGA never runs tools". That is **disproved**.
 
-### Working tree (uncommitted)
-- `?? feedback/from_qwen/qf22.md` (untracked only). Everything else committed.
+Verified this session, with unguessable random-token probes:
 
-## What is committed & pushed (dev4)
+| Test | Evidence | Result |
+|---|---|---|
+| Bare `CugaAgent` + probe | `extract_code_from_model_response` returned `sum_result = await diag_add(17, 25)` | tool body ran, `tool_calls=1` |
+| Wrapper's exact kwargs (`enable_knowledge=True` + prose instructions) | random `TKN-*` token appeared in answer | tool body ran, `tool_calls=1` (2/2 trials) |
+| Real `CugaWrapper.run_task`, 3-tool dependency chain | `chain_completed: true` | all 3 tools ran in correct order |
 
-1. **Phase 4.5** (3 gaps): `config.py` (+champion_min_coverage_fraction),
-   `issues.py` (Issue.entropy_tier + frontier-weight wiring), `pool.py`
-   (ChampionReport + min-coverage gate), `tests/test_issues.py`,
-   `tests/test_pool.py`.
-2. **Phase 6**: `core/embeddings.py` (NEW), `core/orchestrator.py`
-   (SequentialGepaRunner + GepaAttemptOutcome + GepaRunResult),
-   `examples/run_phase_6_b1.py` (NEW), `tests/test_embeddings.py`,
-   `tests/test_phase_6_orchestrator.py`, `tests/test_phase_6_b1.py`.
-3. **qf22 Part I**: `finding_from_analysis()` returns
-   `status="insufficient_evidence"` (empty blame graph) when no actor is blamed;
-   `build_issues()` skips `insufficient_evidence`; 3 new tests.
-4. **.db/.lock purge**: removed `.cuga/knowledge/*.db`, `.cuga/knowledge/.lock`,
-   `reference/cuga_example_wrapper/.cuga/knowledge/{metadata.db,.lock}` from
-   history; added `.gitignore` rules `**/.cuga/knowledge/*.db` and
-   `**/.cuga/knowledge/.lock`.
+**Actual cause of the old empty `tool_calls`:** the probe tasks were *guessable*.
+`1234 * 5678` and `17 + 25` are solvable mentally, so the model answered directly
+and correctly without tools. `tool_calls: []` was truthful, not a defect.
 
-## Test state
+**Lesson: any tool-execution probe MUST return a value the model cannot derive
+or know** (random token, side-effect file). Ground truth is the recorded tool
+function body execution, never the model's narrative claims.
 
-`uv run pytest -p no:cacheprovider` → **570 passed, 1 skipped, 1 warning**.
-(Note: `pyproject.toml` has `addopts = "-q"`; running `pytest -q` becomes
-`-qq` and suppresses the summary line — use `-p no:cacheprovider` without `-q`.)
-Logs: `terminal_output/phase-6/full-suite.log` (567, pre-fix),
-`terminal_output/phase-6/full-suite-fixed.log` (570), `b1-smoke.log`.
+The `Cannot connect to host localhost:8001` / `Error while calling registry to
+get apps` lines are a harmless fallback; they appear in fully-working runs too.
 
-B1 smoke: `OLLAMA_EMBEDDING_URL=http://localhost:11434
-OLLAMA_EMBEDDING_MODEL=embeddinggemma uv run python examples/run_phase_6_b1.py`
-→ seed 0/1/2: 4 attempts, 2 accepted, 2 rejected, pool 3→5, frontier 4,
-coverage 1.00, embedding=ollama, redacted=True.
+## Confirmed working
 
-## Phase status
+- Live multistep tool execution through `CugaWrapper.run_task` (3 chained tools).
+- `track_tool_calls=True` returns populated records: `name`, `arguments`,
+  `result`, `app_name`, `operation_id`, `timestamp`, `duration_ms`, `error`.
+- Trace persistence: manifest, `events.jsonl`, `causal-trace.json` written
+  atomically; `thread_id_source="wrapper_generated_injected"`.
+- Harness **structural** injection: skills discovered, policy loaded into
+  storage, memory ingested + semantically searchable.
+- Harness **memory behavioral** injection: injected random `MEM-*` token was
+  retrieved from knowledge and used in the answer.
+- Test suite: 600 passed, 1 skipped (at commit `1b3df2e`).
 
-- Phase 1-4: committed (`bc77a5f` merged).
-- Phase 4.5: DONE (committed 340d450).
-- Phase 6 (sequential GEPA orchestrator + B1 runner): DONE (b4fba0c + 438a37b).
-- qf22 Part I (synthetic blame node): DONE (438a37b).
-- qf22 Part II (delete legacy Orchestrator): PENDING — see below.
-- Phase 5 (merge/parallel): DEFERRED, do not touch.
-- Phase 7 (CUGA Tracing): NEXT.
+## Defect log (D1-D3 fixed & verified; D4 closed as model property)
 
-## Pending: qf22 Part II — delete legacy Orchestrator
+### D1 — FIXED & VERIFIED: skills now reach the model
+CUGA suppressed the entire skills prompt block unless the shell tool was on.
 
-Delete the legacy `Orchestrator` class at top of `core/orchestrator.py`, plus
-`Profile`, `IterationResult`, and `MINIMAL`/`RESEARCH_SEQUENTIAL`/
-`RESEARCH_PARALLEL`/`FULL_ABLATION` constants. The legacy class still has a
-synthetic `BlameNode(actor_id="agent", blame=1.0, artifacts=())` at ~line 508
-(its `run_iteration` fallback path). It uses deprecated `entropy.Issue`.
-NOT truly dead code: `tests/test_orchestrator.py` (~20 tests) and
-`examples/run_orchestrator_demo.py` import it — delete/rewrite those too.
-`SequentialGepaRunner` does NOT depend on it. Do this via TDD; verify full suite.
+- Root cause: `cuga/backend/cuga_graph/nodes/cuga_lite/prompt_utils.py:682-689`
+  sets `skills_enabled = False; skills_prompt_section = ""` when
+  `not enable_shell_tool`. Live log confirmed:
+  `"Skills are enabled but enable_shell_tool=False; the skills block will be suppressed."`
+- **Fix applied:** `DYNACONF_ADVANCED_FEATURES__ENABLE_SHELL_TOOL=true` in `.env`
+  (commented with the reason and the side effect).
+- **Verified:** `load_skill("status-report")` executed in the sandbox, returned
+  the skill body, and the injected `SKL-*` signature appeared in the answer.
+- **Accepted side effect:** CUGA now injects a real sandbox `run_command` shell
+  tool (log: `[NativeSandbox] Injected run_command`). Tested and accepted by the
+  user; note it if the threat model changes.
 
-## Phase 7 (CUGA Tracing) — starting context
+### D2 — FIXED & VERIFIED: playbooks now match
+An always-only playbook loaded and deserialized but was never evaluated.
 
-- Goal: exact agent-state tracing, artifact provenance, optionally valid
-  checkpoint replay (the reason CUGA is the reference adapter). CUGA SDK is a
-  pinned dependency (`cuga>=0.3.1` in pyproject). Source NOT vendored — do not
-  invent CUGA APIs/trace fields/artifact types/checkpoint behavior.
-- `core/` must remain agent-neutral: never import `cuga` in core. Adapter
-  boundary is `src/agent_evolve/adapters/` (abstract contract + future CUGA/Pi/
-  Gaia adapters). Replay available only when an adapter reports a valid
-  checkpoint/state-reconstruction capability.
+- Root cause: in `cuga/backend/cuga_graph/policy/agent.py`, `_check_trigger`
+  (line 167) handles `AlwaysTrigger` (line 178), but `match_policy` (line 929)
+  builds candidates only from `_evaluate_keyword_triggered_policies` (685,
+  filters `KeywordTrigger`) and `_evaluate_natural_language_policies` (767).
+  **No evaluator selects `AlwaysTrigger`**, so an always-only policy can never win.
+- Empirically confirmed: `always` -> `matched=False`; `keywords` -> `matched=True`;
+  `natural_language` -> `matched=True` with `Playbook guidance will be injected`.
+- **Fix applied** in `materialize_harness` (`cuga_wrapper/__init__.py`): emit a
+  `natural_language` trigger derived from the policy body (`target: intent`,
+  `threshold: 0.5`), keeping `always: true` as forward-compatible intent.
+- **Two schema traps found the hard way (both now regression-tested):**
+  1. The frontmatter key is **`keywords`** (plural). `keyword:` produces zero
+     triggers and CUGA rejects the file: *"must have at least one trigger"*.
+  2. The trigger phrase **must be a quoted YAML scalar**. Policy text usually
+     contains `:` (e.g. "end with the line: MARKER"); unquoted it fails with
+     *"Invalid YAML in frontmatter: mapping values are not allowed here"* and the
+     policy is **silently dropped** — it looks configured but has no effect.
+- Tests added: `test_materialized_playbook_uses_matchable_triggers`,
+  `test_materialized_playbook_frontmatter_is_valid_yaml_with_colons`.
 
-## Critical architecture facts (verified — do not re-derive)
+### Harness injection: ALL THREE CLASSES NOW VERIFIED
+`scripts/verify_harness_behavioral.py` (unguessable tokens per class):
+```
+memory_token_in_answer: true
+policy_token_in_answer: true
+skill_token_in_answer:  true
+all_three_influenced_behavior: true
+```
+Trace: `data/traces/f3fa9b6a-e10e-4760-89c4-e6dc02bc0b62`.
+Full suite after the fixes: **602 passed, 1 skipped**.
 
-- **Two `Issue` classes**: legacy `entropy.Issue` vs target `issues.Issue`
-  (issue_id, task_id, mechanism_cluster_id, severity, confidence, entropy,
-  coverage_need, pareto_relevance, raw_quality, embedding,
-  writable_artifact_ids, evidence_refs, lineage, entropy_tier). Phase 6 uses
-  target.
-- **Two selectors**: legacy `entropy.HierarchicalDPPSelector` (returns
-  tuple[Issue]) vs target `issues.HierarchicalDPPSelector`
-  (`select(issues, k=k) -> IssueSelectionReport` with `.items`/`.selected`).
-  Phase 6 uses target (aliased in orchestrator.py as `TargetIssueSelector`,
-  `TargetIssue`, `TargetIssueSelectionReport`, `build_target_issue`,
-  `TARGET_THETA`, `TARGET_SCORE_FLOOR`).
-- **Two `AcceptanceDecision`**: `editor.py` (accepted, status, reason,
-  weighted_net_gain, protected_floors_violated) is what `decide_acceptance`
-  returns; `evaluation.py` has a different shape (unused by orchestrator).
-- `FakeAnalyzerJudge.analyze` returns blame nodes with `artifacts=()`. On
-  FAILURE it returns nodes (actors from trace, e.g. actor "agent"); on SUCCESS
-  returns `empty_analysis()` (no nodes). So `finding_from_analysis` normally
-  sees non-empty `blamed`; the empty case is the defensive
-  `insufficient_evidence` path.
-- `CausalFinding` (pydantic, blame.py): required verdict_id, candidate_id,
-  task_id, trace_id, status, rationale. `status="observed"` also requires
-  mechanism_description, mechanism_cluster_id, severity, confidence,
-  evidence_refs, and every blame-node artifact in evidence_refs. Other statuses
-  (uncertain/insufficient_evidence/malformed) may omit those.
-- `build_issue(finding, inventory, ...)` rejects (returns None) findings with no
-  writable artifact attribution. Empty embedding forces DPP into
-  `incompatible_embeddings` fallback (never silently).
-- `FakeAdapter`: base artifacts `skills/retrieval`, `policies/execution`,
-  `prompts/system` (all writable). Scores by substring match against
-  `task.expected_contract["expected_substring"]`.
-- `FakeEditor.propose_edit`: injects expected_substring into the highest-blame
-  writable artifact (or write_set[0] on empty blame).
-- `PersistentPool`: add_base, add_candidate, record_score(score, ScoreProvenance),
-  parent_frequencies() (frequency = sum severity*confidence over winning cells),
-  select_champion() -> ChampionReport (with .candidate_id alias), pareto_frontier.
-- `SequentialGepaRunner` methods: `observe(entry, task) -> (trace, analysis)`,
-  `finding_from_analysis(...)`, `build_issues(tasks)`, `select_issues(issues, k)`,
-  `select_parent()`, `propose_edits(parent, issue, task, analysis, attempt_id)`,
-  `validate(workspace, origin_task, regression_tasks)`,
-  `commit_to_pool(parent, workspace, attempt_id, report, analysis)`,
-  `run_attempt(tasks)`, `run(tasks, n_attempts)`. Fields: adapter, pool,
-  analyzer_judge, editor, embedder, storage, config, mechanism_cluster_id="c0",
-  seed=0, protected_floors=(), net_gain_threshold=0.0.
-- Parent sampling: `random.Random(seed)` proportional to parent_frequencies;
-  zero mass → `pool.base`. Runs via `_rng.random() * total` cumulative walk.
-- `GepaAttemptOutcome`: attempt_id, issue_id, parent_candidate_id,
-  result_candidate_id (None if rejected/no-issue), status (AttemptStatus),
-  accepted, weighted_net_gain, reason, artifact_ids, fallback_reason.
-  `GepaRunResult`: attempts, champion (ChampionReport|None), pool_size,
-  pareto_frontier; props attempts_run/accepted_count/rejected_count/no_issue_count.
+Note on methodology: the pre-existing `verify_harness_injection.py` checks only
+that CUGA *loaded* artifacts into its stores. That reported success while two of
+three never reached the model. Structural loading is NOT evidence of behavioral
+influence — always assert on an unguessable token in the output.
 
-## Embeddings (new this phase)
+### D3 — FIXED & VERIFIED: stream_events + graph_final_state now captured
+Real run manifest (`data/traces/9be8a129-f09f-4d8f-8a9b-a952a20198e5`):
+```
+"stream_events":     {"status": "captured"}     <- 19 node lifecycle events
+"graph_final_state": {"status": "captured"}     <- 1 StateSnapshot, replay_safe=false
+"model": "openai/azure/gpt-5.6-luna"            <- was null
+"captured_event_count": 19                       <- was 3 (tool summaries only)
+"files": {"events.jsonl", "checkpoints/", "causal-trace.json", "manifest.json"}
+```
+Mechanism (one execution only; `stream()` is never called):
+- `GraphEventCollector` is an agent-neutral event sink holding no LangChain types.
+- `build_graph_callback_handler(collector)` adapts it to LangChain by
+  **subclassing `BaseCallbackHandler`**, then it is passed through
+  `invoke(..., config={"callbacks": [handler]})`. CUGA merges caller callbacks
+  into that single `graph.ainvoke` (`sdk.py:_apply_callbacks`), so node evidence
+  needs no second run.
+- `graph_final_state` reads `agent.graph.get_state({"configurable": {"thread_id": ...}})`
+  **after** the run. `CugaAgent.graph` compiles with a `MemorySaver`
+  (`sdk.py:2291-2301`), so this is real post-run state, not a re-execution.
+  Reported `replay_safe=false`: reading final state is not state reconstruction.
+- Node observed: `CugaLiteSubgraph`, `prepare`, `call_model`, `SDKCallback`,
+  `FinalAnswerAgent`.
+- Only structural identifiers persist (node name, step, tool name). Node inputs
+  and outputs are deliberately NOT persisted — they can carry evaluator
+  internals or expected answers.
 
-- `core/embeddings.py`: `OllamaEmbedder(url, model, dim=768, timeout=30,
-  transport=None)` — POST `/api/embed` with `{model, input}`, parses
-  `embeddings[0]` or `embedding`, caches per text, raises
-  `EmbeddingProviderUnavailable` on any transport/malformed/dim error.
-  `FallbackEmbedder(primary, fallback)` records `fallback_reason` (never silent),
-  requires matching dim. `build_embedder(config, dim, timeout, transport)` —
-  provider "ollama"+fallback "lexical" → FallbackEmbedder; "lexical" →
-  LexicalEmbedder(dim); "none" → bare OllamaEmbedder.
-- Live service verified: `embeddinggemma:latest` at localhost:11434, `/api/embed`,
-  768-dim, L2-normalized (norm=1.0), deterministic. `qwen3.5:0.8b` also present.
-- `EmbeddingConfig` (config.py): url/model/provider/fallback. resolve_profile
-  reads `OLLAMA_EMBEDDING_URL`/`OLLAMA_EMBEDDING_MODEL`.
-- Unit tests stay OFFLINE: `OllamaEmbedder(transport=_RecordingTransport(...))`.
-  Live test gated by env `AGENT_EVOLVE_LIVE_EMBEDDINGS=1`.
+**Two defects found and fixed while doing D3:**
+1. A duck-typed callback handler is not enough. LangChain async dispatch reads
+   `h.run_inline` (`langchain_core/callbacks/manager.py:471`), so a handler that
+   merely implements `on_chain_start` raises
+   `AttributeError: 'GraphEventCollector' object has no attribute 'run_inline'`
+   mid-run. Regression test:
+   `test_graph_event_collector_satisfies_langchain_callback_contract`.
+2. `run_task` swallowed invoke exceptions into a bare `status="error"` with empty
+   output and no reason — which is exactly how defect 1 first presented. The
+   error is now persisted in the result dict and in `CausalTrace.error`.
+   Regression test: `test_sdk_runtime_persists_invoke_exception_as_trace_evidence`.
 
-## Binding constraints / non-negotiables (AGENTS.md + qf21/qf22)
+Still open in D3 scope:
+- `tool_observations`: `ToolObservationRecorder.wrap()` is still never called on
+  live tools; honestly reported `unavailable_no_sdk_surface`.
+- `graph_history`: still `unavailable_no_checkpointer`. Note `get_state_history`
+  exists on the compiled graph and was verified to return 4 entries on a local
+  LangGraph probe, so this facility is now plausibly implementable — but it has
+  NOT been verified against CUGA's graph and must not be claimed until it is.
 
-- `src/agent_evolve/core/` is agent-neutral: never import `cuga`/Gaia/runtime.
-- TDD: write failing tests first, then implement. Run
-  `uv run pytest -p no:cacheprovider`.
-- Capture commands with `2>&1 | tee terminal_output/<topic>/<name>.log`.
-- NEVER persist credentials, expected answers, evaluator internals, labels,
-  regexes, raw prompts/responses/traces. `JSONFileStorage` redacts
-  `expected_*`, label, regex, secret, token, raw_* fields.
-- **qf22 mandate**: synthetic placeholder blame nodes are forbidden; absence of
-  evidence = `status="insufficient_evidence"` (empty blame graph).
-- Phase 5 merge.py/parallel.py: DO NOT TOUCH. RHO outer-stage proposal
-  generation: deferred (use deterministic fake candidates from `_build_harness`).
-- Do not commit unless explicitly asked.
-- `.env` is gitignored; requires CUGA/LiteLLM config + `DYNACONF_*` vars +
-  `SEARXNG_URL="http://localhost:8080"`.
-- CUGA wrapper stays OUTSIDE core/ (`src/agent_evolve/cuga_wrapper/`), deferred
-  imports, no top-level `import cuga`.
-- `.gitignore` now ignores `**/.cuga/knowledge/*.db` and `**/.cuga/knowledge/.lock`.
+### D4 — CLOSED (model property, no fix needed): prompt wording controls tool use
+Ruled out as a D3 regression by controlled A/B on the same prompt and agent:
+```
+A-baseline-no-config     (no callbacks): 0/4 trials executed the tool
+B-config-with-callbacks  (D3 path):      0/4 trials executed the tool, 19 events each
+```
+Callbacks cost zero tool executions. Also unaffected by
+`DYNACONF_ADVANCED_FEATURES__ENABLE_SHELL_TOOL=false`, by an empty
+`SKILLS_ROOT`, and by quarantining the leaked `.cuga/playbooks` global policy.
+- Failure mode: the model returns prose such as *"I'm unable to execute the tool
+  call in the current interaction"*; `call_model` runs, `CodeAgent` never does.
+- `scripts/bisect_instructions_contract.py` scored
+  `wrapper_prose_instructions#1 RAN calls=1` while its other 3 cases did not run.
+  That looked like intermittency at the time; it was actually per-prompt
+  determinism across arms with different wording (see the table below).
+- Earlier today the same three-tool chain completed
+  (`data/traces/2b3ced93-6929-404b-803f-56a2a22cc003`, 21:39) — with different
+  task text. Not drift; different prompt.
+**Root cause (confirmed, all-or-nothing across 5 phrasings):** with identical
+tools, config, and registered callable, whether the agent invokes the tool is
+decided by incidental task wording. Ground truth = tool body executed:
 
-## Key decisions / gotchas this session
+```
+(no suffix)                                 0/2
+"Respond with only the value."              0/2
+"Return just the value, nothing else."      2/2
+"First call X. Then report..."              0/2
+"Write and execute Python code that
+ calls read_build_number(), then report"    2/2
+```
 
-- Earlier assumption "work on dev3" was wrong; commits are on dev4. Keep dev4.
-- `.env.example` and `config/settings.openai.toml` are blank placeholders (no
-  real secrets) — kept intentionally.
-- `uv.lock` files (root + reference/) are dependency lockfiles — KEEP (dev).
-- The GAIA datasets / terminal outputs under `reference/cuga_example_wrapper/`
-  were deliberately KEPT at the user's instruction ("keep all dev things").
-- `ctx_index`/context-mode KB writes have historically failed with
-  "disk I/O error"; the durable handoff file is the reliable resume path.
+Never 1/2 — so it is reproducible per prompt, NOT flaky. Failing runs emit no
+``` fence, so `extract_code_from_model_response` returns "" and `call_model`
+takes the no-code branch; the sandbox is never reached. The model then narrates
+"I'm unable to call the tool", which is false — the tool was in the prompt and
+registered in the sandbox.
 
-## Relevant files
+Ruled out by direct experiment (each with its own log):
+- D3 callbacks: 0/4 vs 0/4 with and without, 19 node events either way
+- `enable_shell_tool=false`, empty `SKILLS_ROOT`, quarantined `.cuga/playbooks`
+- tool construction (`@tool` over `@tracked_tool` vs post-hoc `__doc__`): 1/3
+  vs 1/3, byte-identical tool metadata
+- probe vocabulary alone: the arm that scored 3/3 scored 0/3 later once only its
+  task suffix changed
 
-- `feedback/from_qwen/qf21.md` — binding directive (Phase 4.5 + 6; skip Phase 5).
-- `feedback/from_qwen/qf22.md` — Part I done; Part II (legacy Orchestrator) pending.
-- `src/agent_evolve/core/embeddings.py` — Ollama/Fallback/build_embedder.
-- `src/agent_evolve/core/orchestrator.py` — SequentialGepaRunner (target) + legacy Orchestrator (to delete in qf22 Part II).
-- `src/agent_evolve/core/issues.py` — target Issue/selector/build_issue.
-- `src/agent_evolve/core/pool.py` — ChampionReport, parent_frequencies.
-- `src/agent_evolve/core/blame.py` — CausalFinding/CausalAnalysis/BlameGraph/BlameNode.
-- `src/agent_evolve/core/editor.py` — decide_acceptance, AcceptanceDecision, repair_once_then_classify.
-- `src/agent_evolve/core/fake_editor.py`, `core/analyzer.py` — FakeEditor/FakeAnalyzerJudge.
-- `src/agent_evolve/core/storage.py` — JSONFileStorage + redaction.
-- `src/agent_evolve/core/config.py` — ResolvedConfig, resolve_profile.
-- `examples/fake_adapter.py`, `examples/run_phase_6_b1.py`, `examples/run_phase_1_4_smoke.py`.
-- `tests/test_embeddings.py`, `tests/test_phase_6_orchestrator.py`, `tests/test_phase_6_b1.py`.
-- `tests/test_orchestrator.py`, `examples/run_orchestrator_demo.py` — to remove in qf22 Part II.
-- `terminal_output/phase-6/` — full-suite-fixed.log (570), b1-smoke.log.
-- AGENTS.md — non-negotiables + required reading order.
+**Methodology error this exposed (now in the learnings doc):** repeating an
+identical prompt is not sampling. This reasoning model skips temperature, so
+decoding is greedy and identical prompts give byte-identical output — my
+"3 trials" were 1 observation reported 3 times. Vary the PROMPT, not the trial
+index.
 
-## Next steps (in order)
+**Consequence for future work:** phrase any tool-exercising task as an explicit
+code-execution instruction. Do not attribute non-execution to safety filters
+without evidence — one arm did produce a real refusal
+("I can't provide or reveal secret tokens", provoked by probe words
+"secret"/"token"/"reveal"), but neutral-vocabulary arms failed too.
 
-1. qf22 Part II: TDD-delete legacy `Orchestrator` + `Profile` + `IterationResult`
-   + MINIMAL/RESEARCH_* + `tests/test_orchestrator.py` +
-   `examples/run_orchestrator_demo.py`; verify 570→(570 - deleted tests) green;
-   commit + push dev4.
-2. Phase 7 (CUGA Tracing): read `docs/migration/cuga-sdk-integration-notes.md`,
-   `docs/migration/cuga-adaptation-guide.md`,
-   `reference/cuga_example_wrapper/docs/cuga-integration-learnings.md`; design
-   tracing/provenance/checkpoint adapter boundary; TDD. Do NOT invent CUGA APIs.
-3. Only after tests + adapters prove them, claim tracing/replay/parallel GEPA.
+## Verified CUGA facts (cuga 0.3.1; `cuga.__version__` misreports 0.2.20)
+
+- `CugaAgent.__init__` accepts: `tools`, `tool_provider`, `model`, `callbacks`,
+  `policy_system`, `special_instructions`, `cuga_folder`, `auto_load_policies`,
+  `reset_policy_storage`, `filesystem_sync`, `enable_knowledge`,
+  `enable_citations`, `enable_skills`, `skills_folder`.
+- `invoke(message, thread_id, config, action_response, user_context,
+  track_tool_calls, variables) -> InvokeResult(answer, tool_calls, sources,
+  thread_id, error, variables)`.
+- `stream(message, thread_id, config, action_response)` — async generator of raw
+  LangGraph state; has NO `track_tool_calls` parameter.
+- `find_tools` shortlisting is OFF here: `enable_find_tools = total_tool_count >
+  shortlisting_tool_threshold or _web_search_enabled()`; runtime values are
+  threshold `35`, `enable_web_search=False`, and we pass ~5 tools. So our tools
+  ARE exposed directly to the model. (Ruled out as a cause.)
+- Effective settings: `force_autonomous_mode=True`,
+  `cuga_lite_nl_auto_continue=True`, `enable_todos=False`,
+  `features.code_generation="fast"`, `features.local_sandbox=True`,
+  `enable_shell_tool=False`.
+- `tracked_tool` records into `ToolCallTracker` contextvars; correct decorator
+  order is `@tool` on top of `@tracked_tool(app_name=...)` (matches our
+  `build_tools`, and the verified-working reference wrapper).
+- `prepare_node` extracts `tool.coroutine` -> `.func` -> `._run` into
+  `adapter._tools_context` (line 365/378); the sandbox awaits these directly,
+  bypassing `args_schema`.
+- Policy files need frontmatter `id` (e.g. `playbook_<name>`) or
+  `filesystem_sync` deletes them from storage after load. `materialize_harness`
+  already writes `id` correctly — confirmed by the `be-concise` vs
+  `status-format` sync lines in the log.
+- `skills_folder` must be the folder CONTAINING `skills/`; `materialize_harness`
+  writes `<workspace>/skills/<name>/SKILL.md` and passes the workspace. Correct.
+
+## Reproduction commands
+
+```bash
+uv run python -m scripts.diagnose_tool_prompt        # proves code emission + execution
+uv run python -m scripts.bisect_instructions_contract # unguessable probe, 2 trials/config
+uv run python -m scripts.verify_multistep_e2e        # 3-tool chain via real wrapper
+uv run python -m scripts.verify_harness_injection    # structural only (can false-green)
+uv run python -m scripts.verify_harness_behavioral   # AUTHORITATIVE: all 3 classes
+uv run python -m scripts.test_policy_triggers        # keyword vs NL trigger matching
+uv run pytest                                        # 608 passed, 1 skipped
+uv run python -m scripts.diagnose_callback_config    # A/B: callbacks vs none, N trials
+uv run python -m scripts.diagnose_run_task_error     # surfaces a swallowed invoke error
+```
+Logs land in `terminal_output/cuga-tracing/`. `2>&1 | tee` is required by AGENTS.md.
+Note: macOS zsh has no `timeout`; do not use it.
+Delete `data/workspaces/<task-id>` before re-running a harness test — a stale
+workspace can leave a previously-written playbook in place.
+
+## Evidence artifacts
+
+- `terminal_output/cuga-tracing/tool-prompt-diagnosis.log` + `.json`
+- `terminal_output/cuga-tracing/bisect-instructions-contract.log`
+- `terminal_output/cuga-tracing/e2e-multistep.log`
+- `terminal_output/cuga-tracing/e2e-tool-execution.jsonl` (ground-truth calls)
+- `terminal_output/cuga-tracing/harness-injection-structural.log`
+- `terminal_output/cuga-tracing/harness-behavioral.log`
+- `terminal_output/cuga-tracing/callback-config-ab.log` (D4 A/B: 0/4 both arms)
+- `terminal_output/cuga-tracing/d4-code-emission.log` (no ``` fence emitted)
+- `terminal_output/cuga-tracing/d4-prompt-tools.log` (tool WAS in prompt+sandbox)
+- `terminal_output/cuga-tracing/d4-vocabulary-ab.log` (0/3, 0/3, 3/3)
+- `terminal_output/cuga-tracing/d4-framing-isolation.log` (refuted vocabulary)
+- `terminal_output/cuga-tracing/d4-tool-construction.log` (1/3 vs 1/3)
+- `terminal_output/cuga-tracing/d4-prompt-determinism.log` (all-or-nothing proof)
+- `terminal_output/cuga-tracing/full-suite-d3.log` (608 passed, 1 skipped)
+- `terminal_output/cuga-tracing/diagnose-run-task-error.log` (the `run_inline` bug)
+- Traces: `data/traces/2b3ced93-6929-404b-803f-56a2a22cc003` (3-tool chain),
+  `data/traces/70e605d6-698d-4665-82a3-7ea229691175` (harness behavioral),
+  `data/traces/9be8a129-f09f-4d8f-8a9b-a952a20198e5` (D3: stream_events +
+  graph_final_state captured, events.jsonl + checkpoints/ present)
+
+## Git state
+
+- Branch `dev4`, HEAD `1b3df2e "phase7 v1"`. Nothing committed this session.
+- Modified this session:
+  - `.env` — added `DYNACONF_ADVANCED_FEATURES__ENABLE_SHELL_TOOL=true` (D1 fix)
+  - `src/agent_evolve/cuga_wrapper/__init__.py` — `materialize_harness` now emits
+    a quoted `natural_language` trigger (D2 fix)
+  - `tests/test_cuga_wrapper.py` — 2 playbook trigger/YAML tests, plus 6 D3 tests
+    (callback node events, graph final state without a second execution, honest
+    runtime_failure when no events arrive, model in manifest, LangChain callback
+    contract, persisted invoke exception)
+  - `src/agent_evolve/core/trace.py` — `CausalTrace.error` field added
+  - `src/agent_evolve/cuga_wrapper/__init__.py` (D3) — `GraphEventCollector`,
+    `build_graph_callback_handler`, `_final_state_snapshot`,
+    `_stream_events_capability`, `CugaSdkRuntime(model=...)`, error persistence
+  - `reference/cuga_example_wrapper/docs/cuga-integration-learnings.md` —
+    578 -> 785 lines, the durable cross-project artifact. Added this session:
+    removed the disproved "`triggers: {always: true}` works" advice; the
+    always-never-matches root cause; `keywords`-plural and quoted-scalar traps;
+    the skills `enable_shell_tool` gate; the guessable-probe rule; a new
+    "Node-Level Tracing From One `invoke()`" section (callbacks via
+    `invoke(config=...)`, the `BaseCallbackHandler` subclassing requirement,
+    `get_state` after invoke, honest capture-status taxonomy, never swallow the
+    exception); and "Tool Invocation Can Be A Deterministic Function Of Prompt
+    Wording" with the measured phrasing table and the identical-prompt
+    non-sampling rule
+  - `.gitignore` — ignore `cuga_workspace/`, `data/workspaces/`, and ingested
+    knowledge files (all regenerated per run)
+  - `docs/architecture/cuga-adapter/sdk-verification-matrix.md`
+  - `docs/superpowers/plans/2026-08-14-session-handoff.md`
+- Deleted `scripts/bisect_wrapper_config.py` (guessable probe produced a false
+  negative; superseded by `bisect_instructions_contract.py`).
+- Untracked diagnostics: `scripts/diagnose_tool_prompt.py`,
+  `scripts/bisect_instructions_contract.py`, `scripts/verify_multistep_e2e.py`,
+  `scripts/verify_harness_behavioral.py`, `scripts/test_policy_triggers.py`,
+  `scripts/live_trace_smoke.py`, `scripts/probe_tool_tracing.py`,
+  `scripts/diagnose_callback_config.py`, `scripts/diagnose_run_task_error.py`,
+  `scripts/diagnose_code_emission.py`, `scripts/diagnose_prompt_tools.py`,
+  `scripts/diagnose_probe_vocabulary.py`, `scripts/diagnose_framing_isolation.py`,
+  `scripts/diagnose_tool_construction.py`, `scripts/diagnose_prompt_determinism.py`,
+  `feedback/ganeral/`
+- Do NOT commit without explicit user request.
+
+## Next steps
+
+D4 is closed; no wrapper fix is needed. Remaining work, in order:
+
+1. **Re-phrase the verification scripts' task text** to the verified-executing
+   form ("Write and execute Python code that calls `X()`, then report the exact
+   value it returned"). `scripts/verify_multistep_e2e.py` and
+   `scripts/verify_harness_behavioral.py` currently use wording that
+   deterministically does NOT execute tools on this model, so they under-report.
+   This is a test-instrument change, not a product change.
+2. **`tool_observations`** — wire `ToolObservationRecorder.wrap()` into the live
+   tool path, or delete the class and report the facility honestly. It is
+   currently dead code: only `.replay()` is reachable. This is the last
+   `unavailable_no_sdk_surface` facility that is implementable today.
+3. **`graph_history`** via `get_state_history` — verified on a standalone
+   LangGraph probe (4 entries with `MemorySaver`) but NOT against CUGA's graph.
+   Verify before claiming. Keep `supports_counterfactual_replay()` false
+   regardless: reading state is not state reconstruction.
+4. Final acceptance: one complex multistep task exercising tools + skills +
+   policies + memory with a complete saved, inspectable trace.
+
+Do not re-open D4 by retrying identical prompts. If tools do not execute, first
+check the task phrasing against the table above.

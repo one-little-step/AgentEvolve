@@ -149,6 +149,7 @@ class CausalTrace(BaseModel):
     harness_version: str = "unversioned"
     status: str = Field(min_length=1)
     final_output: str = ""
+    error: str | None = None
     model: str | None = None
     events: tuple[CausalEvent, ...] = ()
     checkpoints: tuple[StateSnapshot, ...] = ()

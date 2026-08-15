@@ -21,3 +21,11 @@ reference/**/*.py[cod]
 # CUGA runtime knowledge stores and lock files (regenerated locally; not source)
 **/.cuga/knowledge/*.db
 **/.cuga/knowledge/.lock
+
+# CUGA per-thread sandbox scratch space, created fresh per run (not source)
+cuga_workspace/
+
+# Harness artifacts materialized per task by materialize_harness, plus the
+# knowledge documents CUGA ingests from them. Both are regenerated every run.
+data/workspaces/
+**/.cuga/knowledge/files/

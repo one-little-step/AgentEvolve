@@ -83,3 +83,21 @@ is made.
   checkpointer is attached; recorded-environment replay applies only to
   wrapper-recorded tool observations, never to arbitrary agent state. The CUGA
   adapter is untouched and `supports_counterfactual_replay()` remains `False`.
+- **Live tool-call capture gap (observed 2026-08-14):** in a live multistep
+  smoke run (`terminal_output/cuga-tracing/multistep-smoke.log`) the agent
+  returned correct arithmetic yet `InvokeResult.tool_calls` came back empty, so
+  the wrapper persisted `captured_event_count=0` and no `events.jsonl`.
+  Root cause (confirmed with a side-effecting probe tool,
+  `terminal_output/cuga-tracing/tool-invocation-probe.log`): the custom tool is
+  **never actually invoked**. CUGA 0.3.1 is a CodeAct agent — it requires the
+  model to emit Python code (or native `tool_calls`) that the sandbox then
+  executes. The configured model (`azure/gpt-5.6-luna`, a reasoning model, in
+  `balanced` mode) instead returns natural-language prose ("Calling the probe
+  tool now…", "unable to call the tool in the current execution context"), which
+  CUGA classifies as "interim" and auto-continues without executing any tool.
+  The `@tracked_tool`/`ToolCallTracker` mechanism itself works (proven in
+  isolation: `start_tracking` → `Tool.ainvoke` records the call), but it is
+  never reached because no tool runs. The wrapper's zero tool-call events are
+  therefore correct; producing real tool-call trajectories requires a
+  model/mode that emits executable code or native tool calls, to be verified in
+  a separate integration pass.

@@ -32,6 +32,7 @@ from agent_evolve.core.trace import (
     CausalTrace,
     FacilityCapability,
     PayloadLevel,
+    StateSnapshot,
     ToolObservation,
     canonical_json,
 )
@@ -170,8 +171,41 @@ def materialize_harness(
         policy_dir.mkdir(parents=True, exist_ok=True)
         for name, content in policies.items():
             segment = _safe_segment(str(name))
+            body = str(content)
+            # Trigger choice is load-bearing, not cosmetic. Verified against cuga
+            # 0.3.1: ``PolicyAgent.match_policy`` builds candidates only from
+            # ``_evaluate_keyword_triggered_policies`` (filters ``KeywordTrigger``)
+            # and ``_evaluate_natural_language_policies``. No evaluator selects an
+            # ``AlwaysTrigger``, so a playbook carrying only ``always: true``
+            # deserializes correctly and then never matches -- the policy artifact
+            # would be silently inert and impossible to optimize against.
+            #
+            # A natural-language trigger derived from the policy text is therefore
+            # emitted as the primary matcher (LLM-validated against the user
+            # intent), with ``always: true`` retained as forward-compatible intent
+            # in case a future CUGA release evaluates it.
+            #
+            # ``id`` is required: ``filesystem_sync`` reconciles storage against
+            # frontmatter ids and deletes any policy it cannot find on disk.
+            #
+            # The trigger phrase is emitted as a double-quoted YAML scalar: policy
+            # text routinely contains ``:`` (e.g. "end with the line: MARKER"),
+            # and an unquoted scalar makes CUGA reject the whole file with
+            # "Invalid YAML in frontmatter: mapping values are not allowed here",
+            # which silently drops the policy.
+            trigger_phrase = _derive_description(body).replace("\\", " ").replace('"', "'")
             (policy_dir / f"{segment}.md").write_text(
-                f"---\nname: {segment}\nid: playbook_{segment}\ntriggers:\n  always: true\n---\n{content}\n",
+                "---\n"
+                f"name: {segment}\n"
+                f"id: playbook_{segment}\n"
+                "triggers:\n"
+                "  natural_language:\n"
+                f'    - "{trigger_phrase}"\n'
+                "  target: intent\n"
+                "  threshold: 0.5\n"
+                "  always: true\n"
+                "---\n"
+                f"{body}\n",
                 encoding="utf-8",
             )
 
@@ -265,6 +299,7 @@ class TraceConfig:
     capture_graph_history: bool = True
     capture_tool_observations: bool = True
     capture_external_correlation: bool = True
+    capture_node_payloads: bool = True
     payload_level: PayloadLevel = PayloadLevel.CAUSAL_SUFFICIENT
     max_observation_bytes: int = 1_048_576
     max_events_per_trace: int = 10_000
@@ -295,18 +330,29 @@ def _facility(config_flag: bool, *, available: bool = False, captured: bool = Fa
 
 
 def _events_from_dicts(events: Sequence[object]) -> tuple[CausalEvent, ...]:
+    """Normalize raw event dicts, keeping graph fields at the top level.
+
+    ``parent_event_id``, ``actor_id`` and ``timestamp`` are the traversal fields
+    on :class:`CausalEvent`. Letting them fall into ``payload`` leaves the trace
+    a flat list that no analyzer can walk as a DAG.
+    """
+    reserved = {"event_id", "kind", "parent_event_id", "actor_id", "timestamp", "sequence"}
     result: list[CausalEvent] = []
     for index, event in enumerate(events):
         if not isinstance(event, Mapping):
             continue
-        payload = {
-            str(key): value for key, value in event.items() if key not in ("event_id", "kind")
-        }
+        payload = {str(key): value for key, value in event.items() if key not in reserved}
+        parent_event_id = event.get("parent_event_id")
+        actor_id = event.get("actor_id")
+        timestamp = event.get("timestamp")
         result.append(
             CausalEvent(
                 event_id=str(event.get("event_id", f"event-{index}")),
                 sequence=index,
                 kind=str(event.get("kind", "runtime_update")),
+                actor_id=str(actor_id) if actor_id is not None else None,
+                parent_event_id=str(parent_event_id) if parent_event_id is not None else None,
+                timestamp=str(timestamp) if timestamp is not None else None,
                 payload=payload,
             )
         )
@@ -361,7 +407,13 @@ class TraceWriter:
     def __init__(self, config: TraceConfig) -> None:
         self._config = config
 
-    def write(self, trace: CausalTrace) -> Path:
+    def write(
+        self,
+        trace: CausalTrace,
+        *,
+        payload_store: "PayloadStore | None" = None,
+        topology: Mapping[str, object] | None = None,
+    ) -> Path:
         if not self._config.enabled:
             raise ValueError("TraceWriter.write requires an enabled TraceConfig")
 
@@ -377,11 +429,42 @@ class TraceWriter:
         staging.mkdir(parents=True, exist_ok=False)
         try:
             self._write_files(staging, redacted)
+            self._write_payload_blobs(staging, payload_store)
+            self._write_topology(staging, topology)
             staging.replace(run_dir)
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
             raise
         return run_dir
+
+    def _write_topology(self, staging: Path, topology: Mapping[str, object] | None) -> None:
+        """Write the declared graph topology as a sidecar file.
+
+        Kept out of ``CausalTrace`` (which forbids extra fields) so the
+        agent-neutral schema stays unchanged while adapters can still record the
+        structure their runtime declares.
+        """
+        if not topology:
+            return
+        (staging / "graph-topology.json").write_text(_json_dumps(topology), encoding="utf-8")
+
+    def _write_payload_blobs(self, staging: Path, payload_store: "PayloadStore | None") -> None:
+        """Write verbatim payload blobs, bypassing the redaction gateway.
+
+        Deliberate and opt-in: the gateway truncates at 2000 chars and rejects
+        field names common in agent state, which would destroy the exact prompts
+        and states needed to reconstruct a subagent. Requires
+        ``PayloadLevel.RAW_OPT_IN`` with ``allow_raw_payloads=True``.
+        """
+        if payload_store is None or not self._config.capture_node_payloads:
+            return
+        blobs = payload_store.blobs
+        if not blobs:
+            return
+        payloads_dir = staging / "payloads"
+        payloads_dir.mkdir(parents=True, exist_ok=True)
+        for digest, serialized in blobs.items():
+            (payloads_dir / f"{digest}.json").write_text(serialized, encoding="utf-8")
 
     def _write_files(self, staging: Path, data: Mapping[str, object]) -> None:
         files: dict[str, bool] = {}
@@ -443,6 +526,546 @@ class TraceWriter:
 
 class RecordedEnvironmentReplayError(RuntimeError):
     """Raised when recorded-environment tool replay fails closed on a mismatch."""
+
+
+class PayloadStore:
+    """Content-addressed store for verbatim callback payloads.
+
+    Payloads are kept whole and unsanitized: reconstructing a subagent's exact
+    pre/post state, prompt and response is the entire point, and the shared
+    persistence gateway would truncate strings at 2000 chars and hard-fail on
+    field names such as ``token`` or ``label`` that occur naturally in agent
+    state. Callers must therefore opt in with
+    ``PayloadLevel.RAW_OPT_IN``/``allow_raw_payloads``.
+
+    Content addressing means identical state dicts - common, because every node
+    sees a near-identical ``AgentState`` - collapse into one blob.
+    """
+
+    def __init__(self) -> None:
+        self._blobs: dict[str, str] = {}
+
+    def put(self, value: object) -> str | None:
+        """Store ``value`` verbatim and return its digest, or None if unusable."""
+        if value is None:
+            return None
+        try:
+            serialized = json.dumps(_json_safe(value), sort_keys=True, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return None
+        digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+        self._blobs.setdefault(digest, serialized)
+        return digest
+
+    @property
+    def blobs(self) -> dict[str, str]:
+        return dict(self._blobs)
+
+
+def _json_safe(value: object, depth: int = 0) -> object:
+    """Best-effort JSON projection that preserves scalar content verbatim.
+
+    Unlike the canonicalizer in ``core.trace`` this never raises: a payload that
+    cannot be represented is reduced to a typed marker so one exotic object in
+    agent state cannot discard the whole trajectory.
+    """
+    if depth > 12:
+        return {"__truncated__": "max_depth"}
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item, depth + 1) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item, depth + 1) for item in value]
+    for attribute in ("model_dump", "dict"):
+        method = getattr(value, attribute, None)
+        if callable(method):
+            try:
+                return {"__type__": type(value).__name__, **_json_safe(method(), depth + 1)}
+            except Exception:  # noqa: BLE001 - fall through to other strategies
+                pass
+    # ``__slots__`` classes (notably LangGraph's ``Command``) have an empty
+    # ``vars()``, so projecting via ``__dict__`` alone silently discards the
+    # routing decision. Read declared slots explicitly first.
+    slot_names: list[str] = []
+    for klass in type(value).__mro__:
+        for name in getattr(klass, "__slots__", ()) or ():
+            if name not in slot_names:
+                slot_names.append(str(name))
+    if slot_names:
+        projected: dict[str, object] = {}
+        for name in slot_names:
+            try:
+                projected[name] = _json_safe(getattr(value, name), depth + 1)
+            except AttributeError:
+                continue
+        if projected:
+            return {"__type__": type(value).__name__, **projected}
+    if hasattr(value, "__dict__"):
+        try:
+            attributes = vars(value)
+        except TypeError:
+            attributes = {}
+        if attributes:
+            try:
+                return {"__type__": type(value).__name__, **_json_safe(attributes, depth + 1)}
+            except Exception:  # noqa: BLE001
+                pass
+    return {"__type__": type(value).__name__, "__repr__": repr(value)}
+
+
+def _routing_target(value: object) -> str | None:
+    """Extract the branch a node routed to, when it returned a routing object."""
+    goto = getattr(value, "goto", None)
+    if goto is None and isinstance(value, Mapping):
+        goto = value.get("goto")
+    if goto is None:
+        return None
+    if isinstance(goto, (list, tuple)):
+        return ",".join(str(item) for item in goto) or None
+    return str(goto)
+
+
+def load_node_state(
+    trace_dir: Path | str,
+    *,
+    node: str | None = None,
+    event_id: str | None = None,
+    with_provenance: bool = False,
+):
+    """Lazily resolve one node's (before, after) state from a persisted trace.
+
+    Reads only ``events.jsonl`` and the referenced blobs, so recovering one
+    subagent's state never materializes the whole trajectory.
+
+    The post-state is honest about its origin. Most CUGA nodes return a
+    LangGraph ``Command`` rather than full state, so the "after" is derived by
+    applying ``Command.update`` onto the pre-state; a raw routing object is never
+    returned as though it were a state. Pass ``with_provenance=True`` to receive
+    ``(before, after, provenance)`` where ``provenance["after_source"]`` is one
+    of ``chain_end_outputs``, ``command_update`` or ``unavailable``.
+    """
+    directory = Path(trace_dir)
+    events_path = directory / "events.jsonl"
+    if not events_path.exists():
+        return (None, None, {"after_source": "unavailable"}) if with_provenance else (None, None)
+
+    start: Mapping[str, object] | None = None
+    end: Mapping[str, object] | None = None
+    target_run: str | None = None
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        payload = event.get("payload") or {}
+        if event.get("kind") == "graph_node_start" and start is None:
+            if event_id is not None and event.get("event_id") != event_id:
+                continue
+            if node is not None and event.get("actor_id") != node:
+                continue
+            start = event
+            target_run = payload.get("run_id")
+        elif event.get("kind") == "graph_node_end" and start is not None and end is None:
+            if target_run is not None and payload.get("run_id") != target_run:
+                continue
+            end = event
+
+    def resolve(event: Mapping[str, object] | None, key: str) -> object | None:
+        if event is None:
+            return None
+        reference = (event.get("payload") or {}).get(key)
+        if not reference:
+            return None
+        blob = directory / "payloads" / f"{reference}.json"
+        if not blob.exists():
+            return None
+        return json.loads(blob.read_text(encoding="utf-8"))
+
+    before = resolve(start, "state_before_ref")
+    raw_after = resolve(end, "state_after_ref")
+    before_state = before if isinstance(before, Mapping) else None
+
+    after_state: Mapping[str, object] | None = None
+    after_source = "unavailable"
+    if isinstance(raw_after, Mapping) and "__type__" not in raw_after:
+        # A genuine state mapping: the node returned full state.
+        after_state = raw_after
+        after_source = "chain_end_outputs"
+    elif isinstance(raw_after, Mapping):
+        update = raw_after.get("update")
+        if isinstance(update, Mapping):
+            merged = dict(before_state or {})
+            merged.update(update)
+            after_state = merged
+            after_source = "command_update"
+
+    if with_provenance:
+        provenance = {
+            "after_source": after_source,
+            "after_type": raw_after.get("__type__") if isinstance(raw_after, Mapping) else None,
+            "routed_to": (end or {}).get("payload", {}).get("routed_to") if end else None,
+        }
+        return before_state, after_state, provenance
+    return before_state, after_state
+
+
+def _graph_topology(agent: object) -> dict[str, object] | None:
+    """Extract the compiled graph's declared nodes and edges.
+
+    Observed adjacency shows what happened; the declared topology shows what was
+    *permitted*. Blame attribution needs both, so a transition can be judged a
+    legal branch rather than an anomaly. ``conditional`` marks routing edges.
+
+    Note: on this CUGA build ``get_graph(xray=True)`` returns exactly the same
+    10 nodes / 15 edges as ``get_graph()``, so subgraph internals are not
+    expanded; the non-xray form is used and no expansion is claimed.
+    """
+    graph = getattr(agent, "graph", None)
+    get_graph = getattr(graph, "get_graph", None)
+    if not callable(get_graph):
+        return None
+    try:
+        drawable = get_graph()
+    except Exception:  # noqa: BLE001 - tracing must never break a run
+        return None
+    nodes: list[str] = []
+    try:
+        nodes = sorted(str(name) for name in getattr(drawable, "nodes", ()) or ())
+    except Exception:  # noqa: BLE001
+        nodes = []
+    edges: list[dict[str, object]] = []
+    for edge in getattr(drawable, "edges", ()) or ():
+        source = getattr(edge, "source", None)
+        target = getattr(edge, "target", None)
+        if source is None or target is None:
+            continue
+        edges.append(
+            {
+                "source": str(source),
+                "target": str(target),
+                "conditional": bool(getattr(edge, "conditional", False)),
+            }
+        )
+    if not nodes and not edges:
+        return None
+    return {"nodes": nodes, "edges": edges}
+
+
+def _event_sort_key(event: Mapping[str, object], index: int) -> tuple[str, int]:
+    """Order events by observed time, falling back to arrival order.
+
+    Callback events and the SDK's post-hoc tool-call report are two separate
+    lists; concatenating them made ``sequence`` encode "which list" instead of
+    "when", placing tool calls before the nodes that issued them.
+    """
+    timestamp = event.get("timestamp")
+    if not timestamp:
+        payload = event.get("payload")
+        if isinstance(payload, Mapping):
+            timestamp = payload.get("timestamp")
+            if not timestamp:
+                inner = payload.get("tool_call")
+                if isinstance(inner, Mapping):
+                    timestamp = inner.get("timestamp")
+    if not timestamp:
+        nested = event.get("tool_call")
+        if isinstance(nested, Mapping):
+            timestamp = nested.get("timestamp")
+    return (_normalize_timestamp(str(timestamp)) if timestamp else "", index)
+
+
+def _normalize_timestamp(value: str) -> str:
+    """Normalize to a lexicographically comparable UTC form."""
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1]
+    return text
+
+
+def _sorted_events(events: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    """Return events in chronological order, preserving ties by arrival."""
+    decorated = sorted(
+        ((_event_sort_key(event, index), event) for index, event in enumerate(events)),
+        key=lambda pair: pair[0],
+    )
+    return [dict(event) for _, event in decorated]
+
+
+class GraphEventCollector:
+    """Agent-neutral sink for graph node/tool lifecycle events.
+
+    This holds no LangChain types. ``build_graph_callback_handler`` adapts it to
+    the LangChain callback contract, which must be satisfied by real inheritance:
+    LangChain's async dispatch reads handler attributes such as ``run_inline``
+    (``langchain_core/callbacks/manager.py:471``), so a duck-typed handler raises
+    ``AttributeError`` mid-run.
+
+    Only structural identifiers are retained. Node inputs and outputs are not
+    persisted, because they can carry evaluator internals or expected answers.
+    """
+
+    def __init__(self, *, max_events: int, payload_store: "PayloadStore | None" = None) -> None:
+        self._max_events = max_events
+        self.events: list[dict[str, object]] = []
+        self.dropped_event_count = 0
+        self.payload_store = payload_store
+        # run_id -> (event_id, node) of the start event, so an edge can point at a
+        # real recorded event and an end callback can recover its node name.
+        # LangGraph omits ``langgraph_node`` on end callbacks and reuses node
+        # names across nesting depths, so run_id is the only reliable key.
+        self._run_index: dict[str, tuple[str, str | None]] = {}
+
+    def store_payload(self, value: object) -> str | None:
+        """Persist a verbatim payload, returning its content digest."""
+        if self.payload_store is None:
+            return None
+        return self.payload_store.put(value)
+
+    def record(
+        self,
+        kind: str,
+        payload: Mapping[str, object],
+        *,
+        run_id: object = None,
+        parent_run_id: object = None,
+    ) -> None:
+        if len(self.events) >= self._max_events:
+            self.dropped_event_count += 1
+            return
+        event_id = f"graph:{len(self.events)}"
+        run_key = str(run_id) if run_id is not None else None
+        parent_key = str(parent_run_id) if parent_run_id is not None else None
+        event: dict[str, object] = {
+            "event_id": event_id,
+            "kind": kind,
+            "timestamp": _now_iso(),
+            **{key: value for key, value in payload.items() if value is not None},
+        }
+        if run_key is not None:
+            event["run_id"] = run_key
+        if parent_key is not None:
+            event["parent_run_id"] = parent_key
+        node = event.get("node")
+        if node is not None:
+            event["actor_id"] = str(node)
+        if run_key is not None and run_key not in self._run_index:
+            self._run_index[run_key] = (event_id, str(node) if node is not None else None)
+        self.events.append(event)
+
+    def resolved_events(self) -> list[dict[str, object]]:
+        """Return events with ``parent_event_id`` resolved from run identity.
+
+        Resolution is deferred to here rather than done in :meth:`record` because
+        LangGraph's outermost chain reports last: the root run's own callback is
+        the final event while its children fire first. Resolving eagerly dropped
+        every edge into the root and split one trajectory into several apparent
+        roots. Only genuinely reported parents produce an edge - an unresolvable
+        ``parent_run_id`` leaves no link rather than a guess.
+        """
+        resolved: list[dict[str, object]] = []
+        for event in self.events:
+            copy = dict(event)
+            parent_key = copy.get("parent_run_id")
+            entry = self._run_index.get(str(parent_key)) if parent_key else None
+            if entry is not None and entry[0] != copy["event_id"]:
+                copy["parent_event_id"] = entry[0]
+            resolved.append(copy)
+        return resolved
+
+    def node_for_run(self, run_id: object) -> str | None:
+        """Recover the node name recorded for a run id, if any."""
+        if run_id is None:
+            return None
+        entry = self._run_index.get(str(run_id))
+        return entry[1] if entry else None
+
+    @staticmethod
+    def node_name(serialized: object, metadata: object) -> str | None:
+        if isinstance(metadata, Mapping):
+            node = metadata.get("langgraph_node")
+            if node:
+                return str(node)
+        if isinstance(serialized, Mapping):
+            name = serialized.get("name")
+            if name:
+                return str(name)
+        return None
+
+
+def build_graph_callback_handler(collector: GraphEventCollector) -> object:
+    """Adapt a :class:`GraphEventCollector` to the LangChain callback contract.
+
+    ``BaseCallbackHandler`` is imported lazily so the module keeps importing
+    without LangChain present, and subclassed rather than duck-typed so async
+    dispatch finds every attribute it requires.
+    """
+    from langchain_core.callbacks import BaseCallbackHandler
+
+    class _GraphCallbackHandler(BaseCallbackHandler):
+        # Signatures stay permissive: the caller is LangChain/LangGraph.
+        def on_chain_start(self, serialized=None, inputs=None, **kwargs) -> None:  # noqa: ANN001
+            node = collector.node_name(serialized, kwargs.get("metadata"))
+            if node is None:
+                return
+            metadata = kwargs.get("metadata")
+            step = metadata.get("langgraph_step") if isinstance(metadata, Mapping) else None
+            collector.record(
+                "graph_node_start",
+                {
+                    "node": node,
+                    "step": step,
+                    # Pre-state of this node: the "before" half of a counterfactual.
+                    "state_before_ref": collector.store_payload(inputs),
+                },
+                run_id=kwargs.get("run_id"),
+                parent_run_id=kwargs.get("parent_run_id"),
+            )
+
+        def on_chain_end(self, outputs=None, **kwargs) -> None:  # noqa: ANN001
+            # End callbacks omit ``langgraph_node``; recover it from the run id so
+            # start/end pair exactly (verified 10/10 on a live run).
+            node = collector.node_name(None, kwargs.get("metadata")) or collector.node_for_run(
+                kwargs.get("run_id")
+            )
+            collector.record(
+                "graph_node_end",
+                {
+                    "node": node,
+                    "state_after_ref": collector.store_payload(outputs),
+                    # Most CUGA nodes return Command(goto=...); surfacing the branch
+                    # here makes routing queryable without opening a blob.
+                    "routed_to": _routing_target(outputs),
+                },
+                run_id=kwargs.get("run_id"),
+                parent_run_id=kwargs.get("parent_run_id"),
+            )
+
+        def on_chat_model_start(self, serialized=None, messages=None, **kwargs) -> None:  # noqa: ANN001
+            # Chat models never fire ``on_llm_start``; this is the only hook that
+            # exposes the real prompt (verified: 3 calls, up to 39,506 bytes).
+            collector.record(
+                "llm_call_start",
+                {"messages_ref": collector.store_payload(messages)},
+                run_id=kwargs.get("run_id"),
+                parent_run_id=kwargs.get("parent_run_id"),
+            )
+
+        def on_llm_start(self, serialized=None, prompts=None, **kwargs) -> None:  # noqa: ANN001
+            collector.record(
+                "llm_call_start",
+                {"messages_ref": collector.store_payload(prompts)},
+                run_id=kwargs.get("run_id"),
+                parent_run_id=kwargs.get("parent_run_id"),
+            )
+
+        def on_llm_end(self, response=None, **kwargs) -> None:  # noqa: ANN001
+            collector.record(
+                "llm_call_end",
+                {"response_ref": collector.store_payload(response)},
+                run_id=kwargs.get("run_id"),
+                parent_run_id=kwargs.get("parent_run_id"),
+            )
+
+        def on_llm_error(self, error=None, **kwargs) -> None:  # noqa: ANN001
+            collector.record(
+                "llm_call_error",
+                {"error": repr(error)},
+                run_id=kwargs.get("run_id"),
+                parent_run_id=kwargs.get("parent_run_id"),
+            )
+
+        def on_chain_error(self, error=None, **kwargs) -> None:  # noqa: ANN001
+            node = collector.node_name(None, kwargs.get("metadata")) or collector.node_for_run(
+                kwargs.get("run_id")
+            )
+            collector.record(
+                "graph_node_error",
+                {"node": node, "error": repr(error)},
+                run_id=kwargs.get("run_id"),
+                parent_run_id=kwargs.get("parent_run_id"),
+            )
+
+        def on_tool_start(self, serialized=None, input_str=None, **kwargs) -> None:  # noqa: ANN001
+            name = serialized.get("name") if isinstance(serialized, Mapping) else None
+            collector.record(
+                "graph_tool_start",
+                {"tool_name": str(name) if name else None},
+                run_id=kwargs.get("run_id"),
+                parent_run_id=kwargs.get("parent_run_id"),
+            )
+
+        def on_tool_end(self, output=None, **kwargs) -> None:  # noqa: ANN001
+            collector.record(
+                "graph_tool_end",
+                {},
+                run_id=kwargs.get("run_id"),
+                parent_run_id=kwargs.get("parent_run_id"),
+            )
+
+        def on_tool_error(self, error=None, **kwargs) -> None:  # noqa: ANN001
+            collector.record(
+                "graph_tool_error",
+                {"error": repr(error)},
+                run_id=kwargs.get("run_id"),
+                parent_run_id=kwargs.get("parent_run_id"),
+            )
+
+    return _GraphCallbackHandler()
+
+
+def _final_state_snapshot(agent: object, run_config: Mapping[str, object]) -> StateSnapshot | None:
+    """Read the post-invoke graph state without re-executing the graph.
+
+    ``CugaAgent.graph`` compiles with a ``MemorySaver`` checkpointer
+    (``sdk.py:2291-2301``), so ``get_state`` reflects the state left by the run
+    that just completed. The snapshot is reported ``replay_safe=False``: reading
+    a final state is not a verified state-reconstruction capability.
+    """
+    graph = getattr(agent, "graph", None)
+    get_state = getattr(graph, "get_state", None)
+    if not callable(get_state):
+        return None
+    try:
+        state = get_state(run_config)
+    except Exception:  # noqa: BLE001 - absence of state is not a run failure
+        return None
+    if state is None:
+        return None
+
+    values = getattr(state, "values", None)
+    config = getattr(state, "config", None)
+    checkpoint_id = None
+    if isinstance(config, Mapping):
+        configurable = config.get("configurable")
+        if isinstance(configurable, Mapping):
+            checkpoint_id = configurable.get("checkpoint_id")
+
+    try:
+        serialized = canonical_json(_state_payload(values))
+    except Exception:  # noqa: BLE001 - unserializable state still yields structure
+        serialized = None
+
+    return StateSnapshot(
+        sequence=0,
+        checkpoint_id=str(checkpoint_id) if checkpoint_id else None,
+        state_hash=(
+            f"sha256:{hashlib.sha256(serialized.encode('utf-8')).hexdigest()}"
+            if serialized is not None
+            else None
+        ),
+        payload=_state_payload(values),
+        replay_safe=False,
+    )
+
+
+def _state_payload(values: object) -> object:
+    """Reduce a graph state mapping to trace-safe structural keys."""
+    if not isinstance(values, Mapping):
+        return None
+    return {
+        "state_keys": sorted(str(key) for key in values.keys()),
+        "next_nodes_pending": False,
+    }
 
 
 class ToolObservationRecorder:
@@ -513,7 +1136,7 @@ class ToolObservationRecorder:
         sequence: int,
         canonical_arguments: str,
         result: object,
-        duration_ms: float,
+        duration_ms: float | None,
     ) -> None:
         if name in self._high_risk_tool_names and name not in self._config.high_risk_tool_allowlist:
             self.observations.append(
@@ -549,6 +1172,55 @@ class ToolObservationRecorder:
 
     def supports_recorded_environment_replay(self) -> bool:
         return any(observation.replay_eligible for observation in self.observations)
+
+    def ingest_sdk_tool_calls(self, tool_calls: Sequence[object]) -> None:
+        """Record observations from CUGA's returned ``InvokeResult.tool_calls``.
+
+        This is the only tool surface a live run actually exposes. CUGA does not
+        call ``tool.invoke``: ``prepare_node`` extracts ``tool.coroutine``,
+        ``tool.func`` or ``tool._run`` and registers the bare callable through
+        ``make_tool_awaitable`` (``cuga_agent_core/execution/code_extraction.py:120``),
+        and the sandbox then calls that callable directly. So ``wrap()`` can never
+        observe a live call, while ``track_tool_calls=True`` reports every call
+        after the fact with name, arguments, result, duration and error.
+
+        The trade-off is explicit: these are post-hoc SDK reports, not intercepted
+        invocations, so timings come from CUGA rather than from our own clock.
+        """
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, Mapping):
+                continue
+            name = tool_call.get("name") or tool_call.get("operation_id")
+            if not name:
+                continue
+            sequence = self._sequence
+            self._sequence += 1
+            canonical_arguments = canonical_json(tool_call.get("arguments"))
+            duration = tool_call.get("duration_ms")
+            duration_ms = float(duration) if isinstance(duration, (int, float)) else None
+            if duration_ms is not None and duration_ms < 0:
+                duration_ms = None
+            reported_error = tool_call.get("error")
+            if reported_error:
+                # Keep failures as evidence, never as replayable ground truth.
+                self.observations.append(
+                    ToolObservation(
+                        sequence=sequence,
+                        tool_name=str(name),
+                        canonical_arguments=canonical_arguments,
+                        error=str(reported_error),
+                        replay_eligible=False,
+                        duration_ms=duration_ms,
+                    )
+                )
+                continue
+            self._append_recorded(
+                str(name),
+                sequence,
+                canonical_arguments,
+                tool_call.get("result"),
+                duration_ms,
+            )
 
     def replay_tool_call(self, *, sequence: int, tool_name: str, arguments: object) -> object:
         if sequence < 0 or sequence >= len(self.observations):
@@ -755,11 +1427,13 @@ class CugaSdkRuntime:
         artifacts: Mapping[str, str] | None = None,
         workspace_root: Path | str | None = None,
         trace_config: TraceConfig | None = None,
+        model: str | None = None,
     ) -> None:
         self._agent_factory = agent_factory
         self._artifacts = dict(artifacts or {})
         self._workspace_root = Path(workspace_root) if workspace_root is not None else DEFAULT_WORKSPACE_ROOT
         self._trace_config = trace_config if trace_config is not None else TraceConfig()
+        self._model = model
 
     @classmethod
     def from_settings(
@@ -779,7 +1453,11 @@ class CugaSdkRuntime:
         ) -> object:
             return _construct_agent(harness_config, default_tools, DEFAULT_SPECIAL_INSTRUCTIONS, workspace_dir)
 
-        return cls(build_agent, trace_config=trace_config)
+        return cls(
+            build_agent,
+            trace_config=trace_config,
+            model=settings.public_config()["model"],
+        )
 
     def run_task(self, task_id: str, harness_config: Mapping[str, object]) -> dict[str, object]:
         workspace_dir = materialize_harness(harness_config, self._workspace_root / task_id)
@@ -804,7 +1482,32 @@ class CugaSdkRuntime:
             invoke_kwargs["thread_id"] = thread_id
             thread_id_source = "wrapper_generated_injected"
 
+        # Attach the graph event collector to the SAME invoke() call. CUGA merges
+        # caller callbacks into that single execution, so node evidence needs no
+        # second run; stream() would re-execute the graph and repeat side effects.
+        collector: GraphEventCollector | None = None
+        payload_store: PayloadStore | None = None
+        if self._trace_config.enabled and self._trace_config.capture_stream_events and "config" in params:
+            try:
+                if self._trace_config.capture_node_payloads:
+                    payload_store = PayloadStore()
+                candidate = GraphEventCollector(
+                    max_events=self._trace_config.max_events_per_trace,
+                    payload_store=payload_store,
+                )
+                handler = build_graph_callback_handler(candidate)
+            except Exception:  # noqa: BLE001 - tracing must never break a run
+                collector = None
+                payload_store = None
+            else:
+                collector = candidate
+                invoke_kwargs["config"] = {
+                    "configurable": {"thread_id": thread_id},
+                    "callbacks": [handler],
+                }
+
         started_at = _now_iso()
+        final_state: StateSnapshot | None = None
         try:
             result = asyncio.run(_execute(agent, message, memory_docs, invoke_kwargs))
             error = getattr(result, "error", None)
@@ -814,6 +1517,9 @@ class CugaSdkRuntime:
             error = repr(exc)
             tool_calls = []
             final_output = ""
+        else:
+            if self._trace_config.enabled and self._trace_config.capture_graph_final_state:
+                final_state = _final_state_snapshot(agent, {"configurable": {"thread_id": thread_id}})
         finally:
             try:
                 asyncio.run(agent.aclose())
@@ -821,7 +1527,7 @@ class CugaSdkRuntime:
                 pass
         completed_at = _now_iso()
 
-        events = [
+        events: list[dict[str, object]] = [
             {
                 "event_id": f"{task_id}:tool:{index}",
                 "kind": "tool_call",
@@ -829,6 +1535,23 @@ class CugaSdkRuntime:
             }
             for index, tool_call in enumerate(tool_calls)
         ]
+        if collector is not None:
+            events.extend(collector.resolved_events())
+
+        # Order by observed time so ``sequence`` means "when", not "which list".
+        # Callback events and the SDK's post-hoc tool report are separate lists;
+        # concatenating them put tool calls ahead of the nodes that issued them.
+        events = _sorted_events(events)
+
+        # Tool provenance comes from the SDK's post-hoc report, the only surface a
+        # live CUGA run exposes (see ToolObservationRecorder.ingest_sdk_tool_calls).
+        recorder: ToolObservationRecorder | None = None
+        if self._trace_config.enabled and self._trace_config.capture_tool_observations:
+            recorder = ToolObservationRecorder(self._trace_config)
+            try:
+                recorder.ingest_sdk_tool_calls(tool_calls)
+            except Exception:  # noqa: BLE001 - tracing must never break a run
+                recorder = None
         available = {"instructions", "tools"}
         for field_name in ("skills", "memory", "policies"):
             if harness_config.get(field_name):
@@ -842,6 +1565,10 @@ class CugaSdkRuntime:
             "events": events,
             **metadata,
         }
+        if error:
+            # A failed run must say why. Without this, an exception collapses
+            # into an opaque status="error" with no diagnosable evidence.
+            result_dict["error"] = str(error)
 
         if self._trace_config.enabled:
             causal_trace_path = self._write_trace(
@@ -856,18 +1583,37 @@ class CugaSdkRuntime:
                 agent=agent,
                 started_at=started_at,
                 completed_at=completed_at,
+                collector=collector,
+                final_state=final_state,
+                error=str(error) if error else None,
+                recorder=recorder,
+                payload_store=payload_store,
+                topology=_graph_topology(agent),
             )
             result_dict["causal_trace_path"] = str(causal_trace_path)
 
         return result_dict
 
-    def _compute_capabilities(self, agent: object) -> dict[str, FacilityCapability]:
+    def _compute_capabilities(
+        self,
+        agent: object,
+        *,
+        collector: "GraphEventCollector | None" = None,
+        final_state: StateSnapshot | None = None,
+        recorder: "ToolObservationRecorder | None" = None,
+        payload_store: "PayloadStore | None" = None,
+        topology: Mapping[str, object] | None = None,
+    ) -> dict[str, FacilityCapability]:
         config = self._trace_config
         has_stream = callable(getattr(agent, "stream", None))
         has_graph = getattr(agent, "graph", None) is not None
         return {
-            "stream_events": _facility(config.capture_stream_events, available=has_stream),
-            "graph_final_state": _facility(config.capture_graph_final_state, available=has_graph),
+            "stream_events": self._stream_events_capability(collector, has_stream=has_stream),
+            "graph_final_state": _facility(
+                config.capture_graph_final_state,
+                available=has_graph,
+                captured=final_state is not None,
+            ),
             "graph_history": (
                 FacilityCapability(status="disabled_by_config")
                 if not config.capture_graph_history
@@ -876,9 +1622,67 @@ class CugaSdkRuntime:
                     reason="no verified active checkpointer exposed by this runtime",
                 )
             ),
-            "tool_observations": _facility(config.capture_tool_observations),
+            # Only claim capture when observations actually exist. A run where the
+            # model never called a tool is not a tracing failure and must not be
+            # reported as one, so absence stays "unavailable" rather than
+            # "runtime_failure" (which would imply we lost real evidence).
+            "tool_observations": (
+                FacilityCapability(status="disabled_by_config")
+                if not config.capture_tool_observations
+                else FacilityCapability(status="captured")
+                if recorder is not None and recorder.observations
+                else FacilityCapability(
+                    status="unavailable_no_sdk_surface",
+                    reason="no tool calls reported by this run",
+                )
+            ),
             "external_correlation": _facility(config.capture_external_correlation),
+            # Node payloads are the substrate for subagent-level simulation, so
+            # claim capture only when blobs were actually written.
+            # Declared topology: what the graph permits, vs what was observed.
+            "graph_topology": (
+                FacilityCapability(status="captured")
+                if topology
+                else FacilityCapability(
+                    status="unavailable_no_sdk_surface",
+                    reason="compiled graph exposes no drawable topology",
+                )
+            ),
+            "node_payloads": (
+                FacilityCapability(status="disabled_by_config")
+                if not config.capture_node_payloads
+                else FacilityCapability(status="captured")
+                if payload_store is not None and payload_store.blobs
+                else FacilityCapability(
+                    status="unavailable_no_sdk_surface",
+                    reason="no callback payloads observed",
+                )
+            ),
         }
+
+    def _stream_events_capability(
+        self,
+        collector: "GraphEventCollector | None",
+        *,
+        has_stream: bool,
+    ) -> FacilityCapability:
+        """Report stream-event capture honestly, distinguishing every failure mode."""
+        config = self._trace_config
+        if not config.capture_stream_events:
+            return FacilityCapability(status="disabled_by_config")
+        if collector is None:
+            if not has_stream:
+                return FacilityCapability(status="unavailable_no_sdk_surface")
+            return FacilityCapability(
+                status="unavailable_no_sdk_surface",
+                reason="invoke() does not accept a config argument for callbacks",
+            )
+        if not collector.events:
+            return FacilityCapability(
+                status="runtime_failure",
+                reason="callback handler attached but emitted no events",
+            )
+        return FacilityCapability(status="captured")
 
     def _write_trace(
         self,
@@ -894,6 +1698,12 @@ class CugaSdkRuntime:
         agent: object,
         started_at: str,
         completed_at: str,
+        collector: "GraphEventCollector | None" = None,
+        final_state: StateSnapshot | None = None,
+        error: str | None = None,
+        recorder: "ToolObservationRecorder | None" = None,
+        payload_store: "PayloadStore | None" = None,
+        topology: Mapping[str, object] | None = None,
     ) -> Path:
         causal = CausalTrace(
             run_id=run_id,
@@ -903,13 +1713,28 @@ class CugaSdkRuntime:
             harness_version=str(metadata.get("harness_version", "unversioned")),
             status=status,
             final_output=final_output,
+            error=error,
+            model=self._model,
             events=_events_from_dicts(events),
-            capabilities=self._compute_capabilities(agent),
+            checkpoints=(final_state,) if final_state is not None else (),
+            tool_observations=tuple(recorder.observations) if recorder else (),
+            capabilities=self._compute_capabilities(
+                agent,
+                collector=collector,
+                final_state=final_state,
+                recorder=recorder,
+                payload_store=payload_store,
+                topology=topology,
+            ),
             captured_event_count=len(events),
+            dropped_event_count=collector.dropped_event_count if collector else 0,
+            events_truncated=bool(collector and collector.dropped_event_count),
             started_at=started_at,
             completed_at=completed_at,
         )
-        return TraceWriter(self._trace_config).write(causal)
+        return TraceWriter(self._trace_config).write(
+            causal, payload_store=payload_store, topology=topology
+        )
 
     def get_artifacts(self) -> dict[str, str]:
         return dict(self._artifacts)
