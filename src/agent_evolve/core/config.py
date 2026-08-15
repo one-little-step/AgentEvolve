@@ -35,6 +35,7 @@ class BudgetLimits:
     max_model_tokens: int | None = None
     max_rollouts: int | None = None
     max_judge_verdicts: int | None = None
+    max_editor_calls: int | None = None
     edit_max_retries: int = 3
     max_wall_seconds: float | None = None
     max_pool_candidates: int | None = None
@@ -57,6 +58,7 @@ class BudgetUsage:
         limit_fields = {
             "rollouts": "max_rollouts",
             "analyzer_judge_calls": "max_judge_verdicts",
+            "editor_calls": "max_editor_calls",
             "model_tokens": "max_model_tokens",
             "attempts": "max_attempts",
             "accepted_edits": "max_accepted_edits",
@@ -159,6 +161,7 @@ class ResolvedConfig:
                 "max_model_tokens": self.budgets.max_model_tokens,
                 "max_rollouts": self.budgets.max_rollouts,
                 "max_judge_verdicts": self.budgets.max_judge_verdicts,
+                "max_editor_calls": self.budgets.max_editor_calls,
                 "edit_max_retries": self.budgets.edit_max_retries,
                 "max_wall_seconds": self.budgets.max_wall_seconds,
                 "max_pool_candidates": self.budgets.max_pool_candidates,

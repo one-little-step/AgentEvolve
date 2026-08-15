@@ -122,11 +122,39 @@ def test_continuation_brief_names_vision_decisions_and_cuga_boundary() -> None:
 
 
 def test_active_package_has_no_legacy_or_adapter_runtime_imports() -> None:
+    """No legacy Gaia/dataset imports, and CUGA only inside adapter boundaries.
+
+    ``core/`` remains agent-neutral: it must never import CUGA. ``adapters/``
+    is the CUGA boundary by design -- the editor (and later the judge and seed
+    generator) are CUGA-backed agents, so an adapter module importing the SDK
+    is the intended architecture, not a violation. Those imports stay deferred
+    inside functions, which ``test_editor_offline_decoupling`` proves by
+    importing every editing module with the SDK blocked.
+    """
     forbidden = re.compile(r"^\s*(?:from|import)\s+(?:cuga|agent\.|dataset\.|reference\.|gaia)", re.MULTILINE)
     violations = [
         str(path.relative_to(ROOT))
         for path in (ROOT / "src" / "agent_evolve").rglob("*.py")
         if "cuga_wrapper" not in path.parts
+        if "adapters" not in path.parts
+        if forbidden.search(path.read_text(encoding="utf-8"))
+    ]
+    assert violations == []
+
+
+def test_core_never_imports_cuga_or_adapters() -> None:
+    """The agent-neutral boundary that actually matters (AGENTS.md).
+
+    Narrowing the scan above to exclude ``adapters/`` would be a silent
+    weakening if nothing still guarded ``core/``, so this asserts the real
+    invariant directly: no CUGA, and no adapter module, reachable from core.
+    """
+    forbidden = re.compile(
+        r"^\s*(?:from|import)\s+(?:cuga|agent_evolve\.adapters)", re.MULTILINE
+    )
+    violations = [
+        str(path.relative_to(ROOT))
+        for path in (ROOT / "src" / "agent_evolve" / "core").rglob("*.py")
         if forbidden.search(path.read_text(encoding="utf-8"))
     ]
     assert violations == []

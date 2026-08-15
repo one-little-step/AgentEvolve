@@ -52,6 +52,7 @@ from agent_evolve.core.contracts import (
     ExecutionTrace,
 )
 from agent_evolve.core.editor import (
+    ParentContext,
     AcceptanceDecision,
     Editor,
     EditorRequest,
@@ -799,6 +800,8 @@ class SequentialGepaRunner:
     seed: int = 0
     protected_floors: tuple[ProtectedFloor, ...] = ()
     net_gain_threshold: float = 0.0
+    # Donor parents offered to the editor alongside the primary (spec §7).
+    donor_count: int = 2
     _selector: TargetIssueSelector | None = field(default=None, init=False, repr=False)
     _rng: random.Random | None = field(default=None, init=False, repr=False)
     _iteration: int = field(default=0, init=False, repr=False)
@@ -1131,6 +1134,28 @@ class SequentialGepaRunner:
     # ------------------------------------------------------------------ #
     # propose_edits
     # ------------------------------------------------------------------ #
+    def select_parents(self, k: int = 3) -> tuple[PoolEntry, ...]:
+        """Select the primary parent plus up to ``k - 1`` donor parents.
+
+        The primary keeps the architecture's frequency-proportional sampling and
+        owns the workspace being written. Donors come from the Pareto frontier
+        and are exposed read-only, so an editor can transplant a capability
+        without the prompt growing with the pool.
+        """
+        if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+            raise ValueError("k must be >= 1")
+        primary = self.select_parent()
+        if k == 1:
+            return (primary,)
+        donors: list[PoolEntry] = []
+        for candidate_id in self.pool.pareto_frontier():
+            if candidate_id == primary.candidate_id:
+                continue
+            donors.append(self.pool.get(candidate_id))
+            if len(donors) >= k - 1:
+                break
+        return (primary, *donors)
+
     def propose_edits(
         self,
         parent_entry: PoolEntry,
@@ -1138,19 +1163,53 @@ class SequentialGepaRunner:
         task: EvolutionTask,
         analysis: CausalAnalysis,
         attempt_id: str,
-    ) -> tuple[CandidateWorkspace, EditorResponse | None, int]:
+    ) -> tuple[CandidateWorkspace, EditorResponse | None, int, tuple[str, ...]]:
         """Materialize a workspace and obtain a validated editor response.
 
-        Uses the one-correction-attempt repair protocol
-        (``component-contracts.md:72-74``). A response that is still malformed
-        after one correction returns ``None`` so the caller records a
-        non-promotion outcome and discards the workspace.
+        The editor receives the primary parent plus up to ``donor_count`` donor
+        parents, so one call can refine the primary or transplant a capability
+        from a donor. Donors are read-only: writes always land in the primary's
+        workspace.
+
+        The fourth return element is the donor parents the editor actually read.
+        It comes from the editor's own tool-execution ledger, never from its
+        prose, so lineage cannot claim a donor that was merely offered.
         """
         workspace = self.adapter.materialize_candidate(
             parent_entry.version, attempt_id
         )
         write_set = tuple(issue.writable_artifact_ids)
         current = self.adapter.read_artifacts(parent_entry.version, write_set)
+
+        entries = self.select_parents(k=self.donor_count + 1)
+        parents = tuple(
+            ParentContext(
+                candidate_id=entry.candidate_id,
+                version=entry.version,
+                is_primary=entry.candidate_id == parent_entry.candidate_id,
+                score_summary={
+                    t_id: cell.mean
+                    for (t_id, _m), cell in entry.score_tensor.items()
+                },
+            )
+            for entry in entries
+        )
+        # select_parents samples independently, so the chosen parent may not be
+        # in the returned set. The workspace owner must always be the primary.
+        if not any(p.is_primary for p in parents):
+            parents = (
+                ParentContext(
+                    candidate_id=parent_entry.candidate_id,
+                    version=parent_entry.version,
+                    is_primary=True,
+                    score_summary={
+                        t_id: cell.mean
+                        for (t_id, _m), cell in parent_entry.score_tensor.items()
+                    },
+                ),
+                *(p for p in parents if not p.is_primary),
+            )
+
         request = EditorRequest(
             base_workspace=workspace,
             task=task,
@@ -1158,9 +1217,23 @@ class SequentialGepaRunner:
             issue_id=issue.issue_id,
             write_set=write_set,
             current_artifacts=dict(current),
+            parents=parents,
+            creatable_prefix=getattr(self.adapter, "creatable_prefix", ""),
+            pool_created_count=self._pool_created_count(),
         )
         repair = repair_once_then_classify(self.editor, request)
-        return workspace, repair.response, repair.correction_requests
+        observed = tuple(getattr(self.editor, "last_parents_read", ()))
+        return workspace, repair.response, repair.correction_requests, observed
+
+    def _pool_created_count(self) -> int:
+        """Generated artifacts already present, for the creation cap."""
+        counter = getattr(self.adapter, "created_artifact_count", None)
+        if counter is None:
+            return 0
+        return max(
+            (counter(entry.version) for entry in self.pool.all_entries()),
+            default=0,
+        )
 
     # ------------------------------------------------------------------ #
     # validate
@@ -1202,6 +1275,33 @@ class SequentialGepaRunner:
     # ------------------------------------------------------------------ #
     # commit_to_pool
     # ------------------------------------------------------------------ #
+    def _commit_single_parent_for_test(self) -> PoolEntry:
+        """Test seam: commit the base's workspace with no extra parents."""
+        return self._commit_for_test(())
+
+    def _commit_with_extra_parents_for_test(
+        self, extra_parent_ids: Sequence[str]
+    ) -> PoolEntry:
+        """Test seam: commit with observed donor parents."""
+        return self._commit_for_test(extra_parent_ids)
+
+    def _commit_for_test(self, extra_parent_ids: Sequence[str]) -> PoolEntry:
+        from agent_evolve.core.editor import (
+            FocusedValidationReport as _Report,
+        )
+
+        parent = self.pool.base
+        attempt_id = self._next_attempt_id()
+        workspace = self.adapter.materialize_candidate(parent.version, attempt_id)
+        return self.commit_to_pool(
+            parent,
+            workspace,
+            attempt_id,
+            _Report(origin=(), worked=(), regression=()),
+            empty_analysis(),
+            extra_parent_ids=extra_parent_ids,
+        )
+
     def commit_to_pool(
         self,
         parent_entry: PoolEntry,
@@ -1209,8 +1309,17 @@ class SequentialGepaRunner:
         attempt_id: str,
         report: FocusedValidationReport,
         analysis: CausalAnalysis,
+        extra_parent_ids: Sequence[str] = (),
     ) -> PoolEntry:
-        """Publish an accepted candidate with its post-edit score evidence."""
+        """Publish an accepted candidate with its post-edit score evidence.
+
+        ``extra_parent_ids`` carries donor parents the editor actually read.
+        They come from tool-execution evidence, never from editor narration, so
+        lineage cannot claim a donor the editor merely had access to.
+        """
+        parent_ids = tuple(
+            sorted({parent_entry.candidate_id, *extra_parent_ids})
+        )
         candidate = EvolutionCandidate(
             candidate_id=workspace.version,
             version=workspace.version,
@@ -1218,9 +1327,10 @@ class SequentialGepaRunner:
                 d.artifact_id: d.version_hash
                 for d in self.adapter.artifact_inventory(workspace.version)
             },
-            parent_ids=(parent_entry.candidate_id,),
-            ancestor_ids=parent_entry.candidate.ancestor_ids
-            + (parent_entry.candidate_id,),
+            parent_ids=parent_ids,
+            ancestor_ids=tuple(
+                sorted(set(parent_entry.candidate.ancestor_ids) | set(parent_ids))
+            ),
             attempt_ids=(attempt_id,),
         )
         entry = self.pool.add_candidate(candidate, origin_attempt_ids=(attempt_id,))
@@ -1271,7 +1381,7 @@ class SequentialGepaRunner:
         attempt_id = self._next_attempt_id()
         _, analysis = self.observe(parent, task)
 
-        workspace, response, corrections = self.propose_edits(
+        workspace, response, corrections, observed_parents = self.propose_edits(
             parent, issue, task, analysis, attempt_id
         )
         if response is None:
@@ -1301,7 +1411,12 @@ class SequentialGepaRunner:
         result_candidate_id: str | None = None
         if decision.accepted:
             committed = self.commit_to_pool(
-                parent, workspace, attempt_id, validation, analysis
+                parent,
+                workspace,
+                attempt_id,
+                validation,
+                analysis,
+                extra_parent_ids=observed_parents,
             )
             result_candidate_id = committed.candidate_id
 

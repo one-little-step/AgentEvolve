@@ -51,6 +51,42 @@ from agent_evolve.core.memory import (
 # ---------------------------------------------------------------------- #
 # Editor request / response
 # ---------------------------------------------------------------------- #
+class EditorOutcome(str, Enum):
+    """How one editor invocation terminated.
+
+    ``NO_TOOL_CALL`` must stay distinct from ``NO_OP``. Collapsing them would
+    let "the agent did not engage" masquerade as "the agent judged no edit
+    warranted" -- the same category of error that produced the retracted
+    Phase 8 E2E PASS.
+    """
+
+    VALID = "valid"
+    NO_TOOL_CALL = "no_tool_call"
+    NO_OP = "no_op"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True, slots=True)
+class ParentContext:
+    """One candidate exposed to the editor as an edit source.
+
+    The primary parent owns the workspace being written. Donors are read-only:
+    the editor may draw content from a donor but always writes into the
+    primary's workspace.
+    """
+
+    candidate_id: str
+    version: str
+    is_primary: bool
+    score_summary: Mapping[str, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.candidate_id:
+            raise ValueError("candidate_id is required")
+        if not self.version:
+            raise ValueError("version is required")
+
+
 @dataclass(frozen=True, slots=True)
 class EditorRequest:
     """Inputs handed to the editor for one attempt."""
@@ -68,6 +104,13 @@ class EditorRequest:
     # When non-empty, this request is a correction request carrying a plain
     # description of the validation defect in the prior (malformed) response.
     correction_request: str = ""
+    # Candidates the editor may draw from. Empty means single-parent editing.
+    # Exactly one entry must be primary when non-empty.
+    parents: tuple[ParentContext, ...] = ()
+    # Prefix new artifact ids must carry. Empty disables creation.
+    creatable_prefix: str = ""
+    # Generated artifacts already present pool-wide, for the creation cap.
+    pool_created_count: int = 0
 
     def __post_init__(self) -> None:
         if not self.write_set:
@@ -80,6 +123,13 @@ class EditorRequest:
             raise ValueError(
                 f"current_artifacts references ids outside write_set: {sorted(extra)}"
             )
+        if self.parents:
+            primaries = [p for p in self.parents if p.is_primary]
+            if len(primaries) != 1:
+                raise ValueError(
+                    "parents must contain exactly one primary parent, "
+                    f"got {len(primaries)}"
+                )
 
 
 @dataclass(frozen=True, slots=True)

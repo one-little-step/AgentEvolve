@@ -46,6 +46,9 @@ class CugaAdapter:
 
     wrapper: CugaWrapper
     adapter_name: str = "cuga"
+    # Created artifacts must carry the CUGA group first so ``_harness_slot``
+    # accepts them; a flat ``generated/<name>`` would raise ValueError.
+    creatable_prefix: str = "skills/generated-"
     _workspaces: dict[str, dict[str, str]] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ #
@@ -104,15 +107,38 @@ class CugaAdapter:
     ) -> Mapping[str, str]:
         artifacts = self._workspaces[workspace.version]
         for edit in edits:
-            if edit.operation != "replace":
-                raise ValueError(f"unsupported CUGA wrapper edit operation: {edit.operation}")
-            if edit.artifact_id not in artifacts:
-                raise KeyError(edit.artifact_id)
             content = edit.payload.get("content")
             if not isinstance(content, str):
-                raise ValueError("replace edits require a string payload.content")
+                raise ValueError(
+                    f"{edit.operation} edits require a string payload.content"
+                )
+            if edit.operation == "replace":
+                if edit.artifact_id not in artifacts:
+                    raise KeyError(edit.artifact_id)
+            elif edit.operation == "create":
+                if edit.artifact_id in artifacts:
+                    raise ValueError(
+                        f"artifact {edit.artifact_id!r} already exists; "
+                        "use operation='replace'"
+                    )
+                # Fail loudly on an id CUGA cannot receive. A silently dropped
+                # creation would report a successful edit that never reached
+                # the agent.
+                self._harness_slot(edit.artifact_id)
+            else:
+                raise ValueError(
+                    f"unsupported CUGA wrapper edit operation: {edit.operation}"
+                )
             artifacts[edit.artifact_id] = content
         return dict(artifacts)
+
+    def created_artifact_count(self, version: str) -> int:
+        """How many artifacts in this version came from editor creation."""
+        return sum(
+            1
+            for artifact_id in self._artifacts_for(version)
+            if artifact_id.startswith(self.creatable_prefix)
+        )
 
     # ------------------------------------------------------------------ #
     # Harness mapping

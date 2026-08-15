@@ -78,6 +78,9 @@ class FakeAdapter:
     """In-memory, offline, no-replay adapter for the AgentEvolve contract."""
 
     adapter_name: str = "fake"
+    # Creation authority mirrors CugaAdapter so offline wiring tests
+    # exercise the same creation path the real adapter uses.
+    creatable_prefix: str = "skills/generated-"
 
     def __init__(self, base_artifacts: Sequence[tuple[str, str, str]] = _BASE_ARTIFACTS) -> None:
         # version -> {artifact_id: content}
@@ -184,7 +187,7 @@ class FakeAdapter:
 
         for edit in edits:
             aid = edit.artifact_id
-            if aid not in staging:
+            if aid not in staging and edit.operation != "create":
                 # The core must never request edits outside an adapter-declared
                 # write set; raise so a contract bug is loud.
                 raise KeyError(f"unknown artifact in edit: {aid!r}")
@@ -196,6 +199,29 @@ class FakeAdapter:
                 new_content = str(payload["content"])
                 staging[aid] = new_content
                 changed[aid] = new_content
+            elif operation == "create":
+                if aid in staging:
+                    raise ValueError(
+                        f"artifact {aid!r} already exists; use 'replace'"
+                    )
+                if not aid.startswith(self.creatable_prefix):
+                    raise ValueError(
+                        f"created artifact {aid!r} must start with "
+                        f"{self.creatable_prefix!r}"
+                    )
+                new_content = str(payload["content"])
+                staging[aid] = new_content
+                changed[aid] = new_content
+                self._inventory[workspace.version] = self._inventory[
+                    workspace.version
+                ] + (
+                    ArtifactDescriptor(
+                        artifact_id=aid,
+                        kind="skill",
+                        version_hash=_hash_content(new_content),
+                        writable=True,
+                    ),
+                )
             elif operation == "append":
                 sep = "\n" if not staging[aid].endswith("\n") else ""
                 new_content = staging[aid] + sep + str(payload["content"])
