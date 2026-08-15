@@ -156,6 +156,53 @@ def test_restaging_the_same_id_replaces_the_content() -> None:
 
 
 # ------------------------------------------------------------------ #
+# authored-content normalization
+# ------------------------------------------------------------------ #
+# An agent that writes artifact bodies from inside an indented Python string
+# literal carries that indentation into the artifact. Observed live: every line
+# after the first arrived prefixed with four spaces, which Markdown renders as
+# a code block, so the skill body silently degrades into a literal listing.
+def test_staged_content_is_dedented_when_uniformly_indented() -> None:
+    area = _area()
+    body = "# Title\n    \n    Step one.\n    Step two.\n"
+    area.stage_create("skills/generated-a", body)
+    content = area.edits()[0].payload["content"]
+    assert "\n    Step one." not in content
+    assert "Step one." in content and "Step two." in content
+
+
+def test_staged_replacement_content_is_dedented_too() -> None:
+    area = _area()
+    area.stage_replace("skills/retrieval", "# T\n    body line\n")
+    assert area.edits()[0].payload["content"] == "# T\nbody line"
+
+
+def test_dedent_preserves_relative_markdown_indentation() -> None:
+    """Nested list structure is meaning, not accidental indentation."""
+    area = _area()
+    body = "# Title\n\n1. Outer step.\n   - nested detail\n2. Second step.\n"
+    area.stage_create("skills/generated-a", body)
+    assert "   - nested detail" in area.edits()[0].payload["content"]
+
+
+def test_dedent_leaves_already_flush_content_unchanged() -> None:
+    area = _area()
+    body = "# Title\n\n1. One.\n2. Two.\n"
+    area.stage_replace("skills/retrieval", body)
+    assert area.edits()[0].payload["content"] == body.strip()
+
+
+def test_dedent_preserves_indented_fenced_code_block_contents() -> None:
+    """A fenced block's own indentation must survive relative to the fence."""
+    area = _area()
+    body = "# T\n    \n    ```python\n    x = 1\n    if x:\n        pass\n    ```\n"
+    area.stage_create("skills/generated-a", body)
+    content = area.edits()[0].payload["content"]
+    assert "```python\nx = 1" in content
+    assert "    pass" in content
+
+
+# ------------------------------------------------------------------ #
 # parent read ledger (provenance, spec §9)
 # ------------------------------------------------------------------ #
 def test_parents_read_is_empty_before_any_read() -> None:

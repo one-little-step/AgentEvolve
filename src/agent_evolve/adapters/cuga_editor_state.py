@@ -10,9 +10,34 @@ into a lost attempt.
 """
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 
 from agent_evolve.core.contracts import ArtifactEdit
+
+
+def normalize_authored_content(content: str) -> str:
+    """Strip the indentation an agent's source formatting adds to an artifact.
+
+    The editor authors artifact bodies inside Python string literals in a
+    sandbox. A body written in an indented block arrives with that indentation
+    baked in: observed live, every line after the first carried four leading
+    spaces. Markdown reads uniformly indented lines as a code block, so the
+    skill would be materialized as a literal listing rather than instructions,
+    and the agent that loads it gets prose it cannot follow.
+
+    ``inspect.cleandoc`` rather than ``textwrap.dedent``: dedent computes the
+    common prefix across *all* lines, and the first line of a triple-quoted
+    literal is flush, so the common prefix is "" and dedent is a no-op on
+    exactly the shape observed. cleandoc ignores the first line when computing
+    the margin, which is the docstring convention that produced the defect.
+
+    Relative indentation is preserved, so nested list items and fenced code
+    blocks keep their structure.
+    """
+    if not content:
+        return content
+    return inspect.cleandoc(content)
 
 # Created ids must carry the CUGA group first. ``_harness_slot`` in
 # cuga_adapter.py accepts only ``instructions`` or a
@@ -56,7 +81,7 @@ class EditStagingArea:
             )
         if not isinstance(content, str):
             return StageOutcome(False, "content must be a string")
-        self._replaced[artifact_id] = content
+        self._replaced[artifact_id] = normalize_authored_content(content)
         return StageOutcome(True, f"staged replacement for {artifact_id!r}")
 
     def stage_create(self, artifact_id: str, content: str) -> StageOutcome:
@@ -89,7 +114,7 @@ class EditStagingArea:
                 False,
                 f"pool-wide creation cap of {self.pool_create_cap} reached",
             )
-        self._created[artifact_id] = content
+        self._created[artifact_id] = normalize_authored_content(content)
         return StageOutcome(True, f"staged creation of {artifact_id!r}")
 
     def unstage(self, artifact_id: str) -> StageOutcome:

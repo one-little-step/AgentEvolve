@@ -783,3 +783,238 @@ constructor. Filtering the config to only `instructions`/`tools` (an old
 loads even though the files were materialized correctly. Verify by spying on
 `cuga.backend.cuga_graph.nodes.cuga_lite.adapter.prepare_node.discover_skills`
 to confirm it is actually called with your skills folder.
+
+## Building A CUGA Agent As A Tool-Driven Worker (verified)
+
+These findings come from building an *editor* agent: a CUGA agent whose whole
+job is to read evidence through tools and write results back through tools,
+with its prose answer deliberately ignored. Everything below was found by live
+runs after a full offline test suite passed, which is the point — none of it is
+reachable from unit tests that stub the agent.
+
+### `@tool` requires a docstring on every callable
+
+`langchain_core.tools.tool` raises at construction:
+
+```text
+Function must have a docstring if description not provided.
+```
+
+A tool body with no docstring fails the whole agent build, so the first live run
+dies before inference. The docstring is not decoration: it is the **tool
+description the model reads when deciding whether to call the tool**. Write it
+as a usage trigger, not a restatement of the name.
+
+Pin it with a test; it costs nothing and the failure is otherwise live-only:
+
+```python
+missing = [n for n, f in build_tool_callables(ctx).items() if not f.__doc__]
+assert missing == []
+```
+
+### A wrapper around a tool body must use `functools.wraps`
+
+Wrapping tool callables (for call recording, timing, auth) with a bare
+`*args, **kwargs` function breaks two things at once:
+
+- `__doc__` is lost, so `@tool` raises the error above.
+- The signature is lost, so `@tool` builds an **empty args schema** and the
+  model is told the tool takes no arguments.
+
+`functools.wraps` carries `__doc__` and sets `__wrapped__`, which is what
+`inspect.signature` follows to recover the real parameters:
+
+```python
+@functools.wraps(fn)
+def recorded(*args, **kwargs):
+    names.append(name)
+    return fn(*args, **kwargs)
+```
+
+### Instrumented callables must actually reach the agent
+
+A wrapper that builds recorded callables, then constructs its tools from the
+*original* source instead of the recorded dict, reports zero tool calls on runs
+where tools demonstrably executed. This is the dangerous class of bug: the
+machinery reports success while measuring nothing. Assert that the supplied
+callable is the one invoked:
+
+```python
+built = build_editor_tools(ctx, {"get_mechanism": recorded})
+built[0].invoke({})
+assert calls == ["get_mechanism"]
+```
+
+Use `invoke(..., track_tool_calls=True)` as independent corroboration of your
+own ledger; two sources disagreeing is a signal worth investigating.
+
+### Emit ONE fenced Python block per turn, and say so in the prompt
+
+CUGA executes only the **first** fenced block in a model response and silently
+discards the rest (`extract_code_from_model_response` → single `code` →
+`goto execute_node`). Observed live: the model emitted 8 blocks in one turn,
+only the first ran, and it then concluded from the missing variables that *"the
+tool execution did not return the required results"* and refused to finish.
+
+The failure is self-reinforcing — the model blames the tools and gives up — so
+state the contract explicitly in the system instructions:
+
+```text
+* Emit exactly ONE fenced Python block per turn. CUGA executes only the first
+  block in a response and discards the rest.
+* Put every call you want executed in that single block, then print results.
+* Wait for execution output before deciding the next step. A missing variable
+  means the call did not run; re-issue it rather than concluding the tools
+  are unavailable.
+```
+
+This single addition turned a `no_tool_call` run into a 7-tool run that
+completed its terminal submit call.
+
+### Also demand code on the *first* turn
+
+Even with the one-block rule, a multi-step task invites the model to narrate a
+plan first. A run that opened with seven prose steps and no fence produced zero
+tool calls and was routed straight to `FinalAnswerAgent`. Adding an explicit
+first-turn directive fixed it:
+
+```text
+Start now: make your very next message a single fenced Python block that awaits
+the evidence tools you need first. Narration without a fenced block executes
+nothing, so do not describe a plan before running it.
+```
+
+Keep the verified *"Write and execute Python code that calls ..."* phrasing as
+well — the two are complementary, and removing the former regressed a run.
+
+### `cuga_folder=None` silently loads *other people's* skills
+
+This is the most damaging silent failure found. Passing `enable_skills=True`
+with `cuga_folder=None` and no `skills_folder` does not disable skills — CUGA
+resolves its skill root to `<cwd>/.cuga/skills` and loads whatever any previous
+run, or any other component of the repo, left there:
+
+```text
+Loaded 1 agent skill(s) from /path/to/repo/.cuga/skills   # a stale, unrelated skill
+```
+
+The agent received an unrelated `web-research` skill and **none of its own
+four**, while the log line looked like success. Always bind an explicit
+workspace, and set all three surfaces (they are read by different consumers):
+
+```python
+kwargs = {"cuga_folder": ws, "skills_folder": ws, "enable_skills": True}
+os.environ["CUGA_FOLDER"] = ws     # sandbox + prepare_node read the env var
+```
+
+Verify by asserting the **count and the path** in the log, not merely that some
+skill loaded: `Loaded 4 agent skill(s) from <your temp ws>/skills`.
+
+### A `#`-leading derived description yields `description: None`
+
+Deriving a skill/policy description from the first line of a Markdown body is a
+trap: the first line is usually `# Heading`, and an unquoted `#` in YAML starts
+a comment. The frontmatter parses with `description: None`, and CUGA's loader
+then rejects the skill for a missing description — file on disk, invisible to
+the model.
+
+Strip Markdown markers **and** emit a quoted scalar:
+
+```python
+first = line.strip().lstrip("#").strip()
+frontmatter = f'---\nname: {name}\ndescription: "{safe(first)}"\n---\n'
+```
+
+Assert with `yaml.safe_load` that `description` is a non-empty string. A test
+asserting the *unquoted* form (`'description: Use the catalog.' in text`) is
+worse than no test: it locks in the shape that breaks on `#` and `:`.
+
+### Skill descriptions are selection criteria, not titles
+
+The model chooses a skill from its description alone. Passive titles
+(`"Refining an existing artifact"`) leave it guessing; trigger-oriented
+descriptions get invoked:
+
+```text
+"Use when blame points at an artifact the primary parent already owns."
+```
+
+Verified: with trigger-oriented descriptions the model called
+`load_skill("refine-artifact")` unprompted, 8 times in one run.
+
+### A capability absent from the prompt is a capability the agent will not use
+
+Structural availability is not enough. Two live runs offered a *better* donor
+candidate whose artifact already contained the missing logic, with working
+`list_parents` / `read_parent_artifact` tools — and the agent never called
+either, because nothing in the prompt said donors existed. It refined the
+primary from scratch instead.
+
+Adding one line of inventory to the prompt changed the behavior immediately:
+
+```text
+PARENTS: 1 donor parent(s) available: donor (scores {'task-token': 1.0}).
+Inspect a donor's artifact before deciding to refine.
+```
+
+Generalization: when measuring whether an agent *can* do something, first prove
+the option is stated in the rendered prompt. Otherwise a negative result
+measures your prompt, not the model.
+
+### Track per-tool reachability, not just success
+
+An agent can return a valid result while never touching most of its toolset.
+Measured across two scenarios: 11 of 16 tools reached; 5 never invoked. Report
+which tools were never reached — that list is the honest scope of what a live
+verification actually covered.
+
+### Sandbox-authored text arrives with the code's indentation
+
+An agent that writes file/artifact content from inside the Python sandbox writes
+it as a string literal, and an indented literal carries its indentation into the
+value. Observed: a Markdown skill body whose every line after the first began
+with four spaces, because the model wrote it inside an indented block.
+
+This is silent and consequential for Markdown, where uniformly indented lines
+are a code block, so an instruction document degrades into a literal listing
+that the consuming agent cannot follow.
+
+Normalize at the single choke point where authored text enters your system, and
+use `inspect.cleandoc`, **not** `textwrap.dedent`:
+
+```python
+import inspect
+
+def normalize_authored_content(content: str) -> str:
+    # dedent computes the common prefix across ALL lines. A triple-quoted
+    # literal's first line is flush, so the common prefix is "" and dedent is
+    # a no-op on exactly this shape. cleandoc ignores the first line when
+    # computing the margin -- the docstring convention that caused the defect.
+    return inspect.cleandoc(content) if content else content
+```
+
+`cleandoc` preserves *relative* indentation, so nested list items and fenced
+code blocks inside the authored text keep their structure. Test that explicitly:
+a normalizer that flattens everything trades one corruption for another.
+
+### The same prompt is not the same run
+
+Re-running an identical scenario against the same model after a no-op refactor
+changed observed behavior: the agent consulted its history tool in one run and
+skipped it in the next. Nothing in the input differed.
+
+Consequence for verification: a single live run demonstrates a capability is
+*reachable*, never that it is *reliable*. Report n, and do not upgrade "it
+worked once" into "it works". Conversely, do not treat one negative run as proof
+a path is broken — check reachability across varied prompts before concluding.
+
+### Reaching the agent and improving the agent are different claims
+
+It is worth verifying end-to-end that a generated artifact survives every stage
+of the pipeline: authorization, adapter application, inventory, harness config,
+and on-disk materialization into a loadable file with valid frontmatter. Each
+stage can silently drop it (see the `description: None` entry above).
+
+But note precisely what that proves: the artifact *reaches* the agent. Whether
+it makes the agent better is a separate measurement requiring a rerun and a
+score. Keep the two claims apart in reporting.

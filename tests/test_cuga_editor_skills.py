@@ -1,6 +1,8 @@
 """Editor agent instructions and skills (spec §6)."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from agent_evolve.adapters.cuga_editor_skills import (
     EDITOR_INSTRUCTIONS,
     EDITOR_SKILLS,
@@ -80,3 +82,52 @@ def test_instructions_state_the_one_code_block_per_turn_contract() -> None:
     flat = " ".join(EDITOR_INSTRUCTIONS.lower().split())
     assert "one fenced python block per turn" in flat
     assert "executes only the first" in flat
+
+
+def test_prompt_demands_code_on_the_very_first_turn() -> None:
+    """Narrating a plan before executing it produced a 0-tool-call run.
+
+    The model announced seven investigation steps in prose, emitted no fenced
+    block, never reached the sandbox, and was routed straight to a final
+    answer. The prompt must make the first concrete action a code block.
+    """
+    flat = " ".join(build_editor_prompt("EVIDENCE").lower().split())
+    assert "very next message" in flat
+    assert "narration without a fenced block" in flat
+
+
+def test_editor_skills_materialize_with_loadable_frontmatter(tmp_path) -> None:
+    """Every editor skill must reach disk with frontmatter CUGA can load.
+
+    Two silent failures this pins, both observed:
+      1. The skills were never materialized at all, so a live editor run
+         loaded a stale global web-research skill and none of its own.
+      2. A body starting with '# Heading' yielded `description: None`, because
+         an unquoted '#' opens a YAML comment. CUGA's loader rejects a skill
+         with no description, so the file existed but never reached the model.
+    """
+    import yaml
+
+    from agent_evolve.adapters.cuga_editor import materialize_editor_skills
+
+    root = Path(materialize_editor_skills(tmp_path)) / "skills"
+    found = {p.parent.name for p in root.rglob("SKILL.md")}
+    assert found == set(EDITOR_SKILLS)
+
+    for path in root.rglob("SKILL.md"):
+        text = path.read_text(encoding="utf-8")
+        meta = yaml.safe_load(text.split("---")[1])
+        assert meta.get("name"), f"{path} has no name"
+        assert meta.get("description"), f"{path} has no description"
+        assert text.split("---")[2].strip(), f"{path} has an empty body"
+
+
+def test_editor_agent_kwargs_bind_the_editor_skills_folder(tmp_path) -> None:
+    """cuga_folder must never be None: CUGA then resolves its skill root to
+    <cwd>/.cuga and picks up whatever a previous run left there."""
+    from agent_evolve.adapters.cuga_editor import editor_agent_kwargs
+
+    kwargs = editor_agent_kwargs(str(tmp_path))
+    assert kwargs["cuga_folder"] == str(tmp_path)
+    assert kwargs["skills_folder"] == str(tmp_path)
+    assert kwargs["enable_skills"] is True

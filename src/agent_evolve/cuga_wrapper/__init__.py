@@ -159,12 +159,29 @@ def _safe_segment(name: str) -> str:
 
 
 def _derive_description(body: str) -> str:
-    """Derive a short skill/policy description from the first body line."""
+    """Derive a short skill/policy description from the first body line.
+
+    Markdown heading markers are stripped and the result is safe to emit as a
+    quoted YAML scalar. An unquoted value beginning with ``#`` is a YAML
+    comment, which silently yields ``description: None`` and makes CUGA's
+    skill loader reject the file ("missing name or description") -- the skill
+    then never reaches the model even though the file exists on disk.
+    """
     for line in body.splitlines():
-        stripped = line.strip()
+        stripped = line.strip().lstrip("#").strip()
         if stripped:
-            return stripped[:120]
+            return _yaml_scalar(stripped[:120])
     return "Harness artifact"
+
+
+def _yaml_scalar(text: str) -> str:
+    """Make arbitrary text safe as a double-quoted YAML scalar.
+
+    Colons, quotes and backslashes in derived text otherwise produce invalid
+    frontmatter, and CUGA drops the whole artifact while the run still
+    succeeds -- a silent capability loss.
+    """
+    return text.replace("\\", " ").replace('"', "'")
 
 
 def materialize_harness(
@@ -191,7 +208,7 @@ def materialize_harness(
             skill_dir = workspace / "skills" / segment
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "SKILL.md").write_text(
-                f"---\nname: {segment}\ndescription: {_derive_description(str(body))}\n---\n{body}\n",
+                f'---\nname: {segment}\ndescription: "{_derive_description(str(body))}"\n---\n{body}\n',
                 encoding="utf-8",
             )
 

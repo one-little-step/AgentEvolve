@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import functools
 import os
+import tempfile
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -22,6 +24,7 @@ from agent_evolve.adapters.cuga_editor_evidence import (
 )
 from agent_evolve.adapters.cuga_editor_skills import (
     EDITOR_INSTRUCTIONS,
+    EDITOR_SKILLS,
     build_editor_prompt,
 )
 from agent_evolve.adapters.cuga_editor_state import EditStagingArea
@@ -49,7 +52,7 @@ class EditorDeclined(RuntimeError):
         self.outcome = outcome
 
 
-def prepare_editor_environment() -> None:
+def prepare_editor_environment(skills_dir: str | None = None) -> None:
     """Unbind any rollout workspace and point CUGA at the configured model.
 
     Two independent responsibilities, both required before construction:
@@ -68,19 +71,55 @@ def prepare_editor_environment() -> None:
 
     prepare_cuga_environment()
     RuntimeSettings.from_env().configure_cuga_environment()
+    if skills_dir:
+        # The constructor argument does not reach every consumer on this build:
+        # create_sandbox_tools and prepare_node read CUGA_FOLDER directly.
+        os.environ["CUGA_FOLDER"] = str(skills_dir)
 
 
-def editor_agent_kwargs() -> dict[str, object]:
-    """Construction arguments that keep the editor out of rollout traces."""
-    return {
+def materialize_editor_skills(workspace_dir: Path | str) -> str:
+    """Write the editor's own skills into an isolated CUGA workspace.
+
+    Required for the skills to exist at all. ``enable_skills=True`` with
+    ``cuga_folder=None`` makes CUGA resolve its skill root to ``<cwd>/.cuga``,
+    where it loads whatever unrelated skills a previous run left behind -- a
+    live run was observed loading a stale ``web-research`` skill and none of
+    the editor's four. Skills only reach the model when they are on disk under
+    a folder CUGA is pointed at.
+    """
+    from agent_evolve.cuga_wrapper import materialize_harness
+
+    workspace = Path(workspace_dir)
+    workspace.mkdir(parents=True, exist_ok=True)
+    materialize_harness({"skills": EDITOR_SKILLS}, workspace)
+    return str(workspace)
+
+
+def editor_agent_kwargs(skills_dir: str | None = None) -> dict[str, object]:
+    """Construction arguments that keep the editor out of rollout traces.
+
+    ``skills_dir`` must be the folder CONTAINING ``skills/``, not the
+    ``skills/`` directory itself: CUGA discovers ``<skills_folder>/skills/**
+    /SKILL.md``. Both ``cuga_folder`` and ``skills_folder`` are set because
+    CUGA resolves its skill root from ``cuga_folder`` in some paths and reads
+    ``skills_folder`` in others.
+    """
+    kwargs: dict[str, object] = {
         # No callbacks: the GraphEventCollector must never see editor LLM calls,
         # or the editor would pollute the evidence the analyzer reads.
         "callbacks": [],
-        "cuga_folder": None,
         "special_instructions": EDITOR_INSTRUCTIONS,
-        "enable_skills": True,
+        "enable_skills": bool(skills_dir),
         "auto_load_policies": False,
+        # Reset the process-global policy store: a playbook written by any
+        # earlier run keeps matching for the editor otherwise.
+        "reset_policy_storage": True,
     }
+    # cuga_folder must point at the editor's own workspace, never be left None
+    # (which resolves to <cwd>/.cuga and picks up stale global skills).
+    kwargs["cuga_folder"] = skills_dir
+    kwargs["skills_folder"] = skills_dir
+    return kwargs
 
 
 def _evidence_summary(view: EvidenceView) -> str:
@@ -93,6 +132,26 @@ def _evidence_summary(view: EvidenceView) -> str:
         f"SEVERITY: {mechanism['severity']}\n"
         f"BLAMED ACTORS: {actors}\n"
         f"TASK: {view.task_input()}"
+    )
+
+
+def _parent_summary(request: EditorRequest) -> str:
+    """State the donor inventory in the prompt.
+
+    Without this the editor has no signal that crossover is even possible: two
+    live runs with a donor whose artifact already contained the missing
+    capability never called list_parents, because nothing in the prompt said a
+    donor existed.
+    """
+    donors = [p for p in request.parents if not p.is_primary]
+    if not donors:
+        return "PARENTS: primary only, no donors available."
+    described = "; ".join(
+        f"{d.candidate_id} (scores {dict(d.score_summary)})" for d in donors
+    )
+    return (
+        f"PARENTS: {len(donors)} donor parent(s) available: {described}. "
+        "Inspect a donor's artifact before deciding to refine."
     )
 
 
@@ -119,7 +178,9 @@ class CugaEditorAgent:
         self._active_ctx = ctx
         callables = build_tool_callables(ctx)
         recorded, names = self._recording_wrapper(callables)
-        prompt = build_editor_prompt(_evidence_summary(ctx.evidence))
+        prompt = build_editor_prompt(
+            _evidence_summary(ctx.evidence) + "\n" + _parent_summary(request)
+        )
 
         try:
             self._run_agent(recorded, prompt)
@@ -237,8 +298,11 @@ class CugaEditorAgent:
         from agent_evolve.adapters.cuga_editor_tools import build_editor_tools
         from cuga import CugaAgent
 
-        prepare_editor_environment()
-        kwargs = editor_agent_kwargs()
+        skills_dir = materialize_editor_skills(
+            Path(tempfile.mkdtemp(prefix="agent-evolve-editor-"))
+        )
+        prepare_editor_environment(skills_dir)
+        kwargs = editor_agent_kwargs(skills_dir)
         # Pass the RECORDED callables: rebuilding from ctx would drop the
         # call-recording wrappers, so a run that really executed tools would
         # still report zero tool calls.

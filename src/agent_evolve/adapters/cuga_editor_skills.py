@@ -38,6 +38,13 @@ evidence:
 * Combine: take content from a donor parent that performs better on the failing
   task. Choose this when a donor already solves what the primary cannot.
 
+When the evidence reports that donor parents are available, call list_parents
+and read_parent_artifact on the relevant artifact BEFORE you decide to refine.
+A donor that scores higher on the failing task may already contain the exact
+capability the primary lacks, and copying a proven solution is stronger than
+inventing a new one. Refining without looking at an available donor is a choice
+you must be able to justify from what the donor actually contained.
+
 You may also create a new artifact when no existing artifact covers the failure
 at all. Use each mechanism when the evidence calls for it; do not default to one
 because it is easier.
@@ -60,7 +67,7 @@ Read before you write. Consult past attempts before repeating a strategy.
 """
 
 _REFINE = """\
-# Refining an existing artifact
+Use when blame points at an artifact the primary parent already owns and its content must change.
 
 Use when the blame graph points at an artifact the primary parent already owns.
 
@@ -83,7 +90,7 @@ Procedure:
 """
 
 _COMBINE = """\
-# Combining content from a donor parent
+Use when a donor parent scores better on the failing task and may already contain the missing capability.
 
 Use when a donor parent performs better than the primary on the failing task.
 
@@ -107,7 +114,7 @@ Reading a donor is recorded as provenance, so read the donors you actually use.
 """
 
 _CREATE = """\
-# Creating a new artifact
+Use when no existing artifact covers the failure at all and a new skill is required.
 
 Use only when no existing artifact addresses the failure mechanism. This is a
 strong claim: check list_artifacts and read the plausible candidates first.
@@ -132,7 +139,7 @@ answer is to refine instead.
 """
 
 _HISTORY = """\
-# Learning from previous attempts
+Use before staging any edit, to check which strategies were already tried and rejected for this issue.
 
 Consult history before proposing a strategy that may already have been tried.
 
@@ -178,4 +185,9 @@ def build_editor_prompt(evidence_summary: str) -> str:
         "investigate, then calls the staging tools to change the harness so "
         "this failure is less likely. Finish by executing a call to "
         "submit_edit_plan, including if you decide no change is warranted."
+        "\n\n"
+        "Start now: make your very next message a single fenced Python "
+        "block that awaits the evidence tools you need first. Narration "
+        "without a fenced block executes nothing and advances the task "
+        "not at all, so do not describe a plan before running it."
     )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import yaml
+
 import types
 
 from agent_evolve.cuga_wrapper import CugaSdkRuntime, _construct_agent, materialize_harness
@@ -14,7 +16,11 @@ def test_materialize_harness_writes_skill_with_frontmatter(tmp_path):
     assert result == str(ws)
     text = skill_file.read_text(encoding="utf-8")
     assert "name: retrieval" in text
-    assert "description: Use the catalog." in text
+    # Quoted scalar: an unquoted description starting with "#" is a YAML
+    # comment, and one containing ":" is invalid YAML. Either drops the
+    # skill silently while the run still succeeds.
+    assert 'description: "Use the catalog."' in text
+    assert yaml.safe_load(text.split("---")[1])["description"] == "Use the catalog."
     assert "Use the catalog." in text
 
 
@@ -125,3 +131,30 @@ def test_cuga_sdk_runtime_ingests_memory_before_invoke(tmp_path):
 
     assert len(ingested) == 1
     assert ingested[0].endswith("memory/city.md")
+
+
+def test_skill_description_survives_markdown_heading_and_colon(tmp_path) -> None:
+    """Derived descriptions must load as YAML regardless of body text.
+
+    A body starting with "# Heading" produced `description: None` (unquoted "#"
+    opens a YAML comment) and CUGA's loader then rejects the skill for a missing
+    description -- the file exists on disk but never reaches the model.
+    """
+    from agent_evolve.cuga_wrapper import materialize_harness
+
+    ws = tmp_path / "ws"
+    materialize_harness(
+        {
+            "skills": {
+                "heading": "# Refining an artifact\n\nBody.\n",
+                "colon": "Rule: always verify before reporting.\n\nBody.\n",
+            }
+        },
+        ws,
+    )
+    for name in ("heading", "colon"):
+        text = (ws / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
+        meta = yaml.safe_load(text.split("---")[1])
+        assert meta["name"] == name
+        assert meta["description"], f"{name} lost its description"
+        assert "#" not in str(meta["description"])[:1]
