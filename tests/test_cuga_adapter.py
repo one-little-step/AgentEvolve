@@ -8,7 +8,12 @@ from agent_evolve.core.contracts import CandidateWorkspace, EvolutionTask
 
 class WrapperStub:
     def run_task(self, task_id, harness_config):
-        assert harness_config == {"input": "compute"}
+        # The adapter must deliver the candidate's artifacts to CUGA, not just
+        # the task input. ``skills/default`` maps onto the ``skills`` group.
+        assert harness_config == {
+            "input": "compute",
+            "skills": {"default": "be helpful"},
+        }
         return {
             "task_id": task_id,
             "status": "success",

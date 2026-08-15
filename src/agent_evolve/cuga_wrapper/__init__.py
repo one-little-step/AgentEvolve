@@ -104,21 +104,50 @@ def _construct_agent(
     default_instructions: str | None,
     workspace_dir: str | None = None,
 ) -> object:
-    """Build a CUGA agent using only the verified constructor surface."""
+    """Build a CUGA agent using only the verified constructor surface.
+
+    Candidate isolation requires BOTH the constructor argument and the
+    ``CUGA_FOLDER`` environment variable:
+
+    * ``cuga_folder`` must be bound whenever a workspace exists, not only for
+      policies. CUGA resolves its skills directory from ``cuga_folder``
+      (``skills.loader.get_skill_root``), so leaving it ``None`` makes a
+      skills-only candidate fall back to ``<cwd>/.cuga/skills``.
+    * ``CUGA_FOLDER`` must be exported because the constructor argument does
+      not reach two consumers on this build: ``build_runtime_tools`` calls
+      ``create_sandbox_tools(thread_id=...)`` without ``cuga_folder``, and
+      ``prepare_node`` reads the env var directly to load playbooks.
+    * ``reset_policy_storage`` must be set for candidate runs. CUGA persists
+      policies in a process-global store at ``<cuga package>/dbs/cuga.db``
+      (``config.DBS_DIR``) that survives every run and ignores
+      ``cuga_folder``. Without a reset, a playbook written by any earlier run
+      keeps matching for every later candidate. Reset clears the store, then
+      ``auto_load_policies`` reloads only this candidate's playbooks.
+
+    Without all three, candidates silently share stale state and behave
+    identically -- evolution would measure nothing while appearing to run
+    correctly.
+    """
     from cuga import CugaAgent
 
     instructions = harness_config.get("instructions")
     config_tools = harness_config.get("tools")
     has_skills = bool(harness_config.get("skills"))
     has_policies = bool(harness_config.get("policies"))
+    if workspace_dir:
+        os.environ["CUGA_FOLDER"] = str(workspace_dir)
+    else:
+        # Never let a previous candidate's workspace leak into this run.
+        os.environ.pop("CUGA_FOLDER", None)
     return CugaAgent(
         tools=config_tools if isinstance(config_tools, list) and config_tools else default_tools,
         special_instructions=str(instructions) if instructions else default_instructions,
         enable_knowledge=True,
         enable_skills=has_skills,
         skills_folder=workspace_dir if has_skills else None,
-        cuga_folder=workspace_dir if has_policies else None,
+        cuga_folder=workspace_dir,
         auto_load_policies=has_policies,
+        reset_policy_storage=bool(workspace_dir),
     )
 
 
@@ -238,7 +267,21 @@ async def _execute(
     memory_docs: list[str],
     invoke_kwargs: dict[str, object],
 ) -> object:
-    """Ingest any memory documents, then invoke the agent once."""
+    """Initialize the agent, ingest any memory documents, then invoke once.
+
+    ``initialize()`` must be awaited explicitly: ``CugaAgent.invoke()`` does
+    not initialize the policy system on this build (that lazy init lives in
+    ``CugaSupervisor.invoke()``, a different class). Since the policy reset
+    only runs inside ``initialize()``, skipping it leaves CUGA's
+    process-global policy store carrying playbooks from earlier candidates.
+
+    Failures propagate deliberately: a rollout contaminated by another
+    candidate's policy is worse than a failed rollout, because it looks
+    like valid evidence.
+    """
+    initialize = getattr(agent, "initialize", None)
+    if callable(initialize):
+        await initialize()
     knowledge = getattr(agent, "knowledge", None)
     for doc in memory_docs:
         if knowledge is None:
