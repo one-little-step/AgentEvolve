@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-50ec8903",
+  "gaia_task_id": "50ec8903-b81f-4257-9450-1085afd2c319",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "A standard Rubik’s cube has been broken into cubes making up its sides. The cubes are jumbled, and one is removed. There are 6 cubes with one colored face, 12 edge cubes with two colored faces, and 8 corner cubes with three colored faces. All blue cubes have been found. All cubes directly left, right, above, and below the orange center cube have been found, along with the center cube. The green corners have all been found, along with all green that borders yellow. For all orange cubes found, the opposite face’s cubes have been found. The removed cube has two colors on its faces. What are they? Answer using a comma separated list, with the colors ordered alphabetically.",
+  "expected_regex": "(?i)\\bgreen,\\ white\\b",
+  "started_at": "2026-08-12T14:10:12.305870+00:00",
+  "ended_at": "2026-08-12T14:12:16.185010+00:00",
+  "elapsed_seconds": 123.86522066709585,
+  "elapsed": "00:02:03.87",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "0250d3f2-4f73-4c3a-bb2f-3a7d4c65f101",
+  "answer": "I’ve translated the clues into cube-piece categories; the remaining task is a count check after identifying the single uncovered edge position. I’ll verify the arithmetic with the calculator before giving the colors.\ngreen, white",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/0250d3f2-4f73-4c3a-bb2f-3a7d4c65f101.json",
+  "direct_regex": {
+    "available": true,
+    "passed": true,
+    "pattern": "(?i)\\bgreen,\\ white\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-50ec8903",
+    "verdict": "correct",
+    "reason": "The answer gives the required colors, alphabetically and in the requested comma-separated format.",
+    "answer_span": "green, white"
+  },
+  "status": "passed_llm"
+}

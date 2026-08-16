@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-7d4a7d1d",
+  "gaia_task_id": "7d4a7d1d-cac6-44a8-96e8-ea9584a70825",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "According to Girls Who Code, how long did it take in years for the percentage of computer scientists that were women to change by 13% from a starting point of 37%?",
+  "expected_regex": "(?i)\\b22\\b",
+  "started_at": "2026-08-12T14:09:30.017555+00:00",
+  "ended_at": "2026-08-12T14:10:12.303966+00:00",
+  "elapsed_seconds": 42.28639737505,
+  "elapsed": "00:00:42.29",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "f4b6b797-754a-4db5-b32c-3d9e6faed78e",
+  "answer": "I’ll search for the Girls Who Code source containing the 37% starting point and 13% change, then verify the dates before calculating the elapsed years.\nThe initial search needs a broader query to identify the exact Girls Who Code page and the two time points.\nI’m checking the broader web results now for the specific statistic and its dates.\nI’ll run one targeted search for the wording about the percentage changing by 13 percentage points.\nThe statistic appears to refer to a drop from 37% to 24%; I’m verifying the reported years so the elapsed-time calculation is grounded in the source.\nAccording to Girls Who Code, it took **22 years**—the percentage fell from **37% in 1995 to 24% in 2017**, a decrease of **13 percentage points**.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/f4b6b797-754a-4db5-b32c-3d9e6faed78e.json",
+  "direct_regex": {
+    "available": true,
+    "passed": true,
+    "pattern": "(?i)\\b22\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "passed_direct"
+}

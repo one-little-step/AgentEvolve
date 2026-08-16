@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-305ac316",
+  "gaia_task_id": "305ac316-eef6-4446-960a-92d80d542f82",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "Who did the actor who played Ray in the Polish-language version of Everybody Loves Raymond play in Magda M.? Give only the first name.",
+  "expected_regex": "(?i)\\bWojciech\\b",
+  "started_at": "2026-08-12T14:08:58.381186+00:00",
+  "ended_at": "2026-08-12T14:09:29.190196+00:00",
+  "elapsed_seconds": 30.809013166930526,
+  "elapsed": "00:00:30.81",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "61bd5063-f201-4f64-85bf-718df187452c",
+  "answer": "I need to identify the actor credited as Ray in the Polish-language adaptation, then verify that actor’s character in *Magda M.* and return only the character’s first name. I’ll search the web for both credits.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/61bd5063-f201-4f64-85bf-718df187452c.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\bWojciech\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "failed_direct"
+}

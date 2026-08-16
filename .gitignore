@@ -29,3 +29,8 @@ cuga_workspace/
 # knowledge documents CUGA ingests from them. Both are regenerated every run.
 data/workspaces/
 **/.cuga/knowledge/files/
+
+# Per-worker knowledge and policy stores created by CugaProcessPool for a
+# process-isolated parallel run. Each is a seeded copy of .cuga/knowledge plus
+# whatever that worker ingested, so it is regenerated state, never source.
+data/workers/

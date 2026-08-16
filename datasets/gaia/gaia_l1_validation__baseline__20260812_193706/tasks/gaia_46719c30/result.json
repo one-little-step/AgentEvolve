@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-46719c30",
+  "gaia_task_id": "46719c30-f4c3-4cad-be07-d5cb21eee6bb",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "Of the authors (First M. Last) that worked on the paper \"Pie Menus or Linear Menus, Which Is Better?\" in 2015, what was the title of the first paper authored by the one that had authored prior papers?",
+  "expected_regex": "(?i)\\bMapping\\ Human\\ Oriented\\ Information\\ to\\ Software\\ Agents\\ for\\ Online\\ Systems\\ Usage\\b",
+  "started_at": "2026-08-12T14:07:06.560691+00:00",
+  "ended_at": "2026-08-12T14:07:50.336572+00:00",
+  "elapsed_seconds": 43.77536504203454,
+  "elapsed": "00:00:43.78",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "54c80e7e-67c3-41d7-953d-e400b5579ac2",
+  "answer": "I’ll identify the 2015 paper and its authors, then verify each author’s publication history and determine the earliest prior paper and its title.\nI’m sorry, but I wasn’t able to complete the research reliably.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/54c80e7e-67c3-41d7-953d-e400b5579ac2.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\bMapping\\ Human\\ Oriented\\ Information\\ to\\ Software\\ Agents\\ for\\ Online\\ Systems\\ Usage\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-46719c30",
+    "verdict": "wrong",
+    "reason": "The agent did not answer the question.",
+    "answer_span": "I’m sorry, but I wasn’t able to complete the research reliably."
+  },
+  "status": "failed_llm"
+}

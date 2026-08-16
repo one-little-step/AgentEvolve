@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-e1fc63a2",
+  "gaia_task_id": "e1fc63a2-da7a-432f-be78-7c4a95598703",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "If Eliud Kipchoge could maintain his record-making marathon pace indefinitely, how many thousand hours would it take him to run the distance between the Earth and the Moon its closest approach? Please use the minimum perigee value on the Wikipedia page for the Moon when carrying out your calculation. Round your result to the nearest 1000 hours and do not use any comma separators if necessary.",
+  "expected_regex": "(?i)\\b17\\b",
+  "started_at": "2026-08-12T22:22:33.655647+00:00",
+  "ended_at": "2026-08-12T22:23:06.646625+00:00",
+  "elapsed_seconds": 32.991289417026564,
+  "elapsed": "00:00:32.99",
+  "return_code": -2,
+  "timed_out": false,
+  "error": "run2.py exited with code -2",
+  "run_id": null,
+  "answer": "",
+  "tool_calls": [],
+  "trace": null,
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\b17\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "errored"
+}

@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-cf106601",
+  "gaia_task_id": "cf106601-ab4f-4af9-b045-5295fe67b37d",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "What country had the least number of athletes at the 1928 Summer Olympics? If there's a tie for a number of athletes, return the first in alphabetical order. Give the IOC country code as your answer.",
+  "expected_regex": "(?i)\\bCUB\\b",
+  "started_at": "2026-08-12T14:10:27.643740+00:00",
+  "ended_at": "2026-08-12T14:11:08.430374+00:00",
+  "elapsed_seconds": 40.77867437491659,
+  "elapsed": "00:00:40.78",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "af3e70a6-8b3b-434d-9238-b1b475750046",
+  "answer": "I’ll verify the 1928 participant counts from a reliable Olympic reference, identify the minimum, then apply the alphabetical tie-break and return the IOC code.\nI’m searching for the complete 1928 Summer Olympics delegation list and athlete counts; the key constraint is avoiding a partial country list.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/af3e70a6-8b3b-434d-9238-b1b475750046.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\bCUB\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "failed_direct"
+}

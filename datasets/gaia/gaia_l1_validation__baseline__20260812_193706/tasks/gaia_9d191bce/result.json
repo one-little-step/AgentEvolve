@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-9d191bce",
+  "gaia_task_id": "9d191bce-651d-4746-be2d-7ef8ecadb9c2",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "Examine the video at https://www.youtube.com/watch?v=1htKBjuUWec.\n\nWhat does Teal'c say in response to the question \"Isn't that hot?\"",
+  "expected_regex": "(?i)\\bExtremely\\b",
+  "started_at": "2026-08-12T14:08:48.232753+00:00",
+  "ended_at": "2026-08-12T14:09:17.509681+00:00",
+  "elapsed_seconds": 29.276799333048984,
+  "elapsed": "00:00:29.28",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "2a4675c6-f8ae-4181-90a2-8fba3451bc5f",
+  "answer": "I’ll look up the video’s transcript or reliable transcript excerpts, then identify Teal’c’s exact reply to that line.\nI’m unable to access or retrieve the YouTube video’s transcript with the available tools.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/2a4675c6-f8ae-4181-90a2-8fba3451bc5f.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\bExtremely\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-9d191bce",
+    "verdict": "wrong",
+    "reason": "The agent did not provide Teal’c’s response.",
+    "answer_span": "I’m unable to access or retrieve the YouTube video’s transcript with the available tools."
+  },
+  "status": "failed_llm"
+}

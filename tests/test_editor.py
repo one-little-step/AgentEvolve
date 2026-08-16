@@ -166,8 +166,75 @@ def test_weighted_net_gain_default_weights():
         regression=(_vr(ValidationKind.REGRESSION, "t", 0.9),),
         generalization=(_vr(ValidationKind.GENERALIZATION, "t", 0.5),),
     )
-    # 1.0*0.8 + 0.5*0.6 + (-1.0)*0.9 + 0.25*0.5 = 0.8 + 0.3 - 0.9 + 0.125 = 0.325
-    assert r.weighted_net_gain() == pytest.approx(0.325)
+    # The regression probe PASSED, so it is not charged: it exists to confirm the
+    # edit broke nothing, and passing it is evidence for the edit, not against.
+    # 1.0*0.8 + 0.5*0.6 + 0 + 0.25*0.5 = 0.8 + 0.3 + 0.125 = 1.225
+    assert r.weighted_net_gain() == pytest.approx(1.225)
+
+
+def test_a_perfect_edit_is_not_rejected_by_its_own_passing_regression_probes():
+    """The defect that made evolution arithmetically inert at >=2 tasks.
+
+    With ``-1.0 * score`` applied to every regression probe, each PASSING probe
+    subtracted up to 1.0. An edit that fixed its origin case and regressed
+    nothing hit 1.0 - 1.0 = 0.0 as soon as a second task existed, so no edit
+    could ever be accepted and every self-improvement delta was exactly zero for
+    arithmetic reasons rather than agent quality.
+    """
+    for probe_count in range(0, 4):
+        r = FocusedValidationReport(
+            origin=(_vr(ValidationKind.ORIGIN, "t0", 1.0),),
+            worked=(),
+            regression=tuple(
+                _vr(ValidationKind.REGRESSION, f"r{i}", 1.0)
+                for i in range(probe_count)
+            ),
+        )
+        gain = r.weighted_net_gain()
+        decision = decide_acceptance(r)
+        assert gain > 0.0, (
+            f"{probe_count} passing regression probes made gain {gain}; "
+            "passing probes must never push a good edit negative"
+        )
+        assert decision.accepted is True, (
+            f"a perfect edit was rejected with {probe_count} passing probes"
+        )
+
+
+def test_failing_regression_probe_still_penalizes_net_gain():
+    """The penalty must survive the fix, or real regressions become free.
+
+    Acceptance is NOT asserted here: ``decide_acceptance`` deliberately tolerates
+    a small regression when net gain stays positive (see
+    ``test_decide_acceptance_allows_small_regression_when_net_gain_positive``).
+    This test pins the magnitude only.
+    """
+    clean = FocusedValidationReport(
+        origin=(_vr(ValidationKind.ORIGIN, "t0", 1.0),),
+        worked=(),
+        regression=(_vr(ValidationKind.REGRESSION, "r0", 1.0),),
+    )
+    regressed = FocusedValidationReport(
+        origin=(_vr(ValidationKind.ORIGIN, "t0", 1.0),),
+        worked=(),
+        regression=(_vr(ValidationKind.REGRESSION, "r0", 0.1, passed=False),),
+    )
+    assert regressed.weighted_net_gain() < clean.weighted_net_gain()
+
+
+def test_worse_regression_costs_more_than_a_mild_one():
+    """The penalty scales with how far the probe fell."""
+    mild = FocusedValidationReport(
+        origin=(_vr(ValidationKind.ORIGIN, "t0", 1.0),),
+        worked=(),
+        regression=(_vr(ValidationKind.REGRESSION, "r0", 0.9, passed=False),),
+    )
+    severe = FocusedValidationReport(
+        origin=(_vr(ValidationKind.ORIGIN, "t0", 1.0),),
+        worked=(),
+        regression=(_vr(ValidationKind.REGRESSION, "r0", 0.1, passed=False),),
+    )
+    assert severe.weighted_net_gain() < mild.weighted_net_gain()
 
 
 # ---------------------------------------------------------------------- #
@@ -196,13 +263,22 @@ def test_decide_acceptance_rejects_when_origin_fails():
 
 
 def test_decide_acceptance_allows_small_regression_when_net_gain_positive():
-    """Per architecture: small regressions allowed when net gain > 0 and no floor."""
+    """Per architecture: small regressions allowed when net gain > 0 and no floor.
+
+    Probe ``score`` is the task score (higher is better) and real producers set
+    ``passed = score >= 0.5`` (`orchestrator.py:486,1735`). A *small* regression
+    is therefore a probe that dipped just below the bar, e.g. 0.45 -- not 0.1,
+    which is a collapse. The original values (0.1 with a comment reading
+    ``(-1.0)*0.1 = -0.1``) only looked small because the old formula charged the
+    score itself, so the worse a probe scored the less it cost.
+    """
     r = FocusedValidationReport(
         origin=(_vr(ValidationKind.ORIGIN, "t", 0.9),),
         worked=(),
-        regression=(_vr(ValidationKind.REGRESSION, "t", 0.1, passed=False),),
+        regression=(_vr(ValidationKind.REGRESSION, "t", 0.45, passed=False),),
     )
-    # net gain = 1.0*0.9 + (-1.0)*0.1 = 0.8 > 0; no floors; origin passed.
+    # net gain = 1.0*0.9 + (-1.0)*(1-0.45) = 0.9 - 0.55 = 0.35 > 0
+    assert r.weighted_net_gain() == pytest.approx(0.35)
     d = decide_acceptance(r)
     assert d.accepted is True
     assert d.status == AttemptStatus.ACCEPTED
@@ -245,13 +321,21 @@ def test_decide_acceptance_rejects_when_protected_floor_violated():
 
 
 def test_decide_acceptance_rejects_when_net_gain_below_threshold():
+    """A gain that does not clear the threshold is rejected.
+
+    The regression probe here PASSED, so it contributes nothing (it is evidence
+    the edit broke nothing). The gain therefore comes from the origin probe
+    alone, and the threshold is set above it. Previously this test relied on a
+    passing regression probe cancelling the origin exactly -- the arithmetic that
+    made acceptance impossible once a second task existed.
+    """
     r = FocusedValidationReport(
         origin=(_vr(ValidationKind.ORIGIN, "t", 0.1, passed=True),),
         worked=(),
         regression=(_vr(ValidationKind.REGRESSION, "t", 0.1, passed=True),),
     )
-    # 1.0*0.1 + (-1.0)*0.1 = 0.0; threshold 0.0 requires strictly greater.
-    d = decide_acceptance(r, net_gain_threshold=0.0)
+    assert r.weighted_net_gain() == pytest.approx(0.1)
+    d = decide_acceptance(r, net_gain_threshold=0.5)
     assert d.accepted is False
 
 

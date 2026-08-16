@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-50ec8903",
+  "gaia_task_id": "50ec8903-b81f-4257-9450-1085afd2c319",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "A standard Rubik’s cube has been broken into cubes making up its sides. The cubes are jumbled, and one is removed. There are 6 cubes with one colored face, 12 edge cubes with two colored faces, and 8 corner cubes with three colored faces. All blue cubes have been found. All cubes directly left, right, above, and below the orange center cube have been found, along with the center cube. The green corners have all been found, along with all green that borders yellow. For all orange cubes found, the opposite face’s cubes have been found. The removed cube has two colors on its faces. What are they? Answer using a comma separated list, with the colors ordered alphabetically.",
+  "expected_regex": "(?i)\\bgreen,\\ white\\b",
+  "started_at": "2026-08-12T22:28:24.677011+00:00",
+  "ended_at": "2026-08-12T22:31:11.643472+00:00",
+  "elapsed_seconds": 166.96726641699206,
+  "elapsed": "00:02:46.97",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "1694fd64-cbc6-4d92-99ec-874660e07ee4",
+  "answer": "green, white",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/1694fd64-cbc6-4d92-99ec-874660e07ee4.json",
+  "direct_regex": {
+    "available": true,
+    "passed": true,
+    "pattern": "(?i)\\bgreen,\\ white\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-50ec8903",
+    "verdict": "correct",
+    "reason": "The missing two-colored cube must be the green-white edge cube, and the colors are listed alphabetically as requested.",
+    "answer_span": "green, white"
+  },
+  "status": "passed_llm"
+}

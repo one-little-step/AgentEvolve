@@ -588,6 +588,369 @@ class RecordedEnvironmentReplayError(RuntimeError):
     """Raised when recorded-environment tool replay fails closed on a mismatch."""
 
 
+class SingleCallReplayError(RuntimeError):
+    """Raised when a single recorded LLM call cannot be re-issued or decoded."""
+
+
+# Recorded LangChain message discriminators mapped onto OpenAI chat roles. The
+# recorded blobs carry both ``__type__`` (``SystemMessage``) and a lowercase
+# ``type`` (``system``); the lowercase discriminator is authoritative here.
+_RECORDED_ROLE_BY_TYPE = {
+    "system": "system",
+    "human": "user",
+    "ai": "assistant",
+    "tool": "tool",
+    "function": "function",
+}
+_RECORDED_ROLE_BY_CLASS = {
+    "SystemMessage": "system",
+    "HumanMessage": "user",
+    "AIMessage": "assistant",
+    "AIMessageChunk": "assistant",
+    "ToolMessage": "tool",
+    "FunctionMessage": "function",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedCall:
+    """One recorded LLM call, reduced to the inputs needed to re-issue it.
+
+    ``messages`` is a provider-ready ``[{"role": ..., "content": ...}]`` list
+    rebuilt from the recorded LangChain message batch, including the system
+    prompt. ``baseline_response`` is the text the recorded run produced, when a
+    paired ``llm_call_end`` event carried a resolvable ``response_ref``.
+    """
+
+    event_id: str
+    model: str | None
+    messages: list[dict[str, str]]
+    baseline_response: str | None = None
+
+    @property
+    def has_system_message(self) -> bool:
+        return any(message.get("role") == "system" for message in self.messages)
+
+    @property
+    def total_content_chars(self) -> int:
+        return sum(len(message.get("content", "")) for message in self.messages)
+
+
+def _trace_document(trace_dir: Path) -> dict[str, object]:
+    path = trace_dir / "causal-trace.json"
+    if not path.exists():
+        raise FileNotFoundError(f"no causal-trace.json under {trace_dir}")
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise ValueError(f"causal-trace.json in {trace_dir} is not an object")
+    return document
+
+
+def _load_payload_blob(trace_dir: Path, ref: str) -> object:
+    """Resolve one content-addressed payload blob.
+
+    The on-disk layout written by ``TraceWriter`` is ``payloads/<sha256>.json``
+    where ``<sha256>`` is exactly the ``*_ref`` digest recorded in the event
+    payload.
+    """
+    path = trace_dir / "payloads" / f"{ref}.json"
+    if not path.exists():
+        raise FileNotFoundError(f"payload blob {ref} is missing under {trace_dir / 'payloads'}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _recorded_message_batch(blob: object) -> list[Mapping[str, object]]:
+    """Flatten a recorded ``messages_ref`` blob into a single message list.
+
+    LangChain's ``on_chat_model_start`` callback receives a list of message
+    *batches* (one per prompt), so the recorded blob is ``[[msg, msg, ...]]``.
+    Only the first batch is replayable as a single call.
+    """
+    if isinstance(blob, Mapping):
+        return [blob]
+    if not isinstance(blob, Sequence) or isinstance(blob, (str, bytes)):
+        return []
+    items = list(blob)
+    if items and isinstance(items[0], Sequence) and not isinstance(items[0], (str, bytes)):
+        items = list(items[0])
+    return [item for item in items if isinstance(item, Mapping)]
+
+
+def _recorded_role(message: Mapping[str, object]) -> str:
+    explicit = message.get("role")
+    if isinstance(explicit, str) and explicit:
+        return explicit
+    discriminator = message.get("type")
+    if isinstance(discriminator, str) and discriminator in _RECORDED_ROLE_BY_TYPE:
+        return _RECORDED_ROLE_BY_TYPE[discriminator]
+    class_name = message.get("__type__")
+    if isinstance(class_name, str) and class_name in _RECORDED_ROLE_BY_CLASS:
+        return _RECORDED_ROLE_BY_CLASS[class_name]
+    return "user"
+
+
+def _recorded_content(message: Mapping[str, object]) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if content is None:
+        return ""
+    # Multimodal/blocked content is recorded as a list of parts; keep the text.
+    if isinstance(content, Sequence) and not isinstance(content, (str, bytes)):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, Mapping):
+                text = part.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            elif isinstance(part, str):
+                parts.append(part)
+        return "".join(parts)
+    return str(content)
+
+
+def _baseline_response_text(blob: object) -> str | None:
+    """Extract the assistant text from a recorded ``LLMResult`` payload blob."""
+    if isinstance(blob, str):
+        return blob
+    if not isinstance(blob, Mapping):
+        return None
+    generations = blob.get("generations")
+    if not isinstance(generations, Sequence):
+        return None
+    for group in generations:
+        candidates = group if isinstance(group, Sequence) and not isinstance(group, str) else [group]
+        for candidate in candidates:
+            if not isinstance(candidate, Mapping):
+                continue
+            text = candidate.get("text")
+            if isinstance(text, str) and text:
+                return text
+            message = candidate.get("message")
+            if isinstance(message, Mapping):
+                content = _recorded_content(message)
+                if content:
+                    return content
+    return None
+
+
+def list_recorded_llm_calls(trace_dir: Path | str) -> tuple[str, ...]:
+    """Return the ``event_id`` of every ``llm_call_start`` event, in trace order."""
+    directory = Path(trace_dir)
+    events = _trace_document(directory).get("events")
+    if not isinstance(events, Sequence):
+        return ()
+    starts = [
+        event
+        for event in events
+        if isinstance(event, Mapping) and event.get("kind") == "llm_call_start"
+    ]
+    starts.sort(key=lambda event: (event.get("sequence") or 0))
+    return tuple(str(event.get("event_id")) for event in starts)
+
+
+def load_recorded_call(trace_dir: Path | str, event_id: str) -> RecordedCall:
+    """Load one recorded LLM call's replay inputs from a persisted trace directory.
+
+    Resolves the ``llm_call_start`` event's ``messages_ref`` payload blob into a
+    provider-ready message list, and pairs the event with its ``llm_call_end``
+    sibling (matched on ``payload["run_id"]``) to recover the baseline response
+    text from ``response_ref`` when one was recorded.
+
+    The model is taken from the trace document's top-level ``model`` field, and
+    falls back to ``manifest.json`` when the trace omits it. Individual events do
+    not record a model in this trace format.
+    """
+    directory = Path(trace_dir)
+    document = _trace_document(directory)
+    events = document.get("events")
+    if not isinstance(events, Sequence):
+        raise KeyError(f"{event_id} not found: trace has no events")
+
+    start: Mapping[str, object] | None = None
+    for event in events:
+        if not isinstance(event, Mapping):
+            continue
+        if str(event.get("event_id")) == event_id and event.get("kind") == "llm_call_start":
+            start = event
+            break
+    if start is None:
+        raise KeyError(f"{event_id} is not an llm_call_start event in {directory}")
+
+    payload = start.get("payload")
+    payload = payload if isinstance(payload, Mapping) else {}
+    messages_ref = payload.get("messages_ref")
+    if not isinstance(messages_ref, str) or not messages_ref:
+        raise ValueError(f"{event_id} has no messages_ref and carries no messages")
+
+    recorded = _recorded_message_batch(_load_payload_blob(directory, messages_ref))
+    if not recorded:
+        raise ValueError(f"{event_id} resolved to no messages")
+    messages = [
+        {"role": _recorded_role(message), "content": _recorded_content(message)}
+        for message in recorded
+    ]
+
+    baseline: str | None = None
+    run_id = payload.get("run_id")
+    if run_id is not None:
+        for event in events:
+            if not isinstance(event, Mapping) or event.get("kind") != "llm_call_end":
+                continue
+            end_payload = event.get("payload")
+            end_payload = end_payload if isinstance(end_payload, Mapping) else {}
+            if end_payload.get("run_id") != run_id:
+                continue
+            response_ref = end_payload.get("response_ref")
+            if isinstance(response_ref, str) and response_ref:
+                try:
+                    baseline = _baseline_response_text(
+                        _load_payload_blob(directory, response_ref)
+                    )
+                except (FileNotFoundError, ValueError):
+                    baseline = None
+            break
+
+    model = document.get("model")
+    if not isinstance(model, str) or not model:
+        manifest_path = directory / "manifest.json"
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except ValueError:
+                manifest = {}
+            candidate = manifest.get("model") if isinstance(manifest, Mapping) else None
+            model = candidate if isinstance(candidate, str) and candidate else None
+        else:
+            model = None
+
+    return RecordedCall(
+        event_id=event_id,
+        model=model,
+        messages=messages,
+        baseline_response=baseline,
+    )
+
+
+def _completion_choice_texts(response: object) -> tuple[str, ...]:
+    """Read assistant texts out of an OpenAI/litellm-shaped completion response."""
+    choices = (
+        response.get("choices")
+        if isinstance(response, Mapping)
+        else getattr(response, "choices", None)
+    )
+    if not choices:
+        raise SingleCallReplayError("completion response carried no choices")
+    texts: list[str] = []
+    for choice in choices:
+        message = (
+            choice.get("message")
+            if isinstance(choice, Mapping)
+            else getattr(choice, "message", None)
+        )
+        content = (
+            message.get("content")
+            if isinstance(message, Mapping)
+            else getattr(message, "content", None)
+        )
+        if content is None and not isinstance(choice, Mapping):
+            content = getattr(choice, "text", None)
+        texts.append("" if content is None else str(content))
+    return tuple(texts)
+
+
+def replay_single_llm_call(
+    call: RecordedCall,
+    *,
+    messages: Sequence[Mapping[str, object]] | None = None,
+    model: str | None = None,
+    temperature: float | None = None,
+    n: int = 1,
+    completion_fn: Callable[..., object] | None = None,
+) -> tuple[str, ...]:
+    """Re-issue ONE recorded LLM call. This is NOT agent-state or checkpoint replay.
+
+    This function replays a single LLM call reconstructed from a recorded
+    ``messages_ref`` blob. It does not reconstruct agent state, does not restore
+    a LangGraph checkpoint, and does not resume a trajectory. Nothing here makes
+    counterfactual agent replay available: the recorded checkpoint payloads carry
+    no ``channel_values``, so agent state cannot be rebuilt from this trace
+    format. ``supports_counterfactual_replay`` must stay ``False``.
+
+    Messages and model default to the recorded values so the baseline call is
+    reproduced; pass ``messages``/``model`` to substitute counterfactual prompt
+    content or a different model. ``temperature`` is forwarded only when supplied
+    so provider defaults are otherwise untouched.
+
+    ``n`` samples are requested with the provider's ``n`` parameter. Providers
+    that ignore ``n`` and return a single choice are topped up with additional
+    sequential calls until ``n`` texts are collected, so ``n`` may cost up to
+    ``n`` separate requests.
+
+    Connection settings come from ``RuntimeSettings.from_env`` (``CUGA_BASE_URL``
+    / ``CUGA_API_KEY`` and their ``LITELLM_*`` aliases); the recorded model is
+    still used unless overridden. Credentials are never returned or logged. Pass
+    ``completion_fn`` to inject a completion callable for offline tests; the
+    default performs a live ``litellm.completion`` call.
+    """
+    if n < 1:
+        raise ValueError("n must be a positive integer")
+
+    payload_messages = [dict(message) for message in (messages or call.messages)]
+    if not payload_messages:
+        raise ValueError("replay requires at least one message")
+    target_model = model or call.model
+    if not target_model:
+        raise SingleCallReplayError(
+            "no model available for replay: trace recorded none and no override was given"
+        )
+
+    request: dict[str, object] = {"model": target_model, "messages": payload_messages}
+    if temperature is not None:
+        request["temperature"] = temperature
+
+    # Reuse the wrapper's configured connection settings. ``RuntimeSettings``
+    # requires a model in the environment, but a replay is governed by the
+    # recorded model, so an unconfigured model must not block it.
+    try:
+        settings: RuntimeSettings | None = RuntimeSettings.from_env()
+    except RuntimeError:
+        settings = None
+    base_url = settings.base_url if settings else (
+        os.environ.get("CUGA_BASE_URL") or os.environ.get("LITELLM_BASE_URL")
+    )
+    api_key = settings.api_key if settings else (
+        os.environ.get("CUGA_API_KEY") or os.environ.get("LITELLM_API_KEY")
+    )
+    if base_url:
+        request["api_base"] = base_url
+    if api_key:
+        request["api_key"] = api_key
+
+    invoke = completion_fn if completion_fn is not None else _litellm_completion
+    collected: list[str] = []
+    attempts = 0
+    while len(collected) < n and attempts < n:
+        attempts += 1
+        remaining = n - len(collected)
+        call_request = dict(request)
+        if remaining > 1 or n > 1:
+            call_request["n"] = remaining
+        collected.extend(_completion_choice_texts(invoke(**call_request))[:remaining])
+    if len(collected) < n:
+        raise SingleCallReplayError(
+            f"requested {n} completions but the provider returned {len(collected)}"
+        )
+    return tuple(collected[:n])
+
+
+def _litellm_completion(**request: object) -> object:
+    """Perform the live single-call completion. Imported lazily to keep tests offline."""
+    import litellm
+
+    return litellm.completion(**request)
+
+
 class PayloadStore:
     """Content-addressed store for verbatim callback payloads.
 

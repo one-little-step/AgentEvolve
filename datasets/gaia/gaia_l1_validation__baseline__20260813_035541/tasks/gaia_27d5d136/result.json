@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-27d5d136",
+  "gaia_task_id": "27d5d136-8563-469e-92bf-fd103c28b57c",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "¬(A ∧ B) ↔ (¬A ∨ ¬B)\n¬(A ∨ B) ↔ (¬A ∧ ¬B)\n(A → B) ↔ (¬B → ¬A)\n(A → B) ↔ (¬A ∨ B)\n(¬A → B) ↔ (A ∨ ¬B)\n¬(A → B) ↔ (A ∧ ¬B)\n\nWhich of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.",
+  "expected_regex": "(?i)\\(¬A\\ →\\ B\\)\\ ↔\\ \\(A\\ ∨\\ ¬B\\)",
+  "started_at": "2026-08-12T22:25:41.675517+00:00",
+  "ended_at": "2026-08-12T22:26:36.957486+00:00",
+  "elapsed_seconds": 55.2823414580198,
+  "elapsed": "00:00:55.28",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "6c7619d3-10c7-4657-a47f-2a312b100d4b",
+  "answer": "(¬A → B) ↔ (A ∨ ¬B)",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/6c7619d3-10c7-4657-a47f-2a312b100d4b.json",
+  "direct_regex": {
+    "available": true,
+    "passed": true,
+    "pattern": "(?i)\\(¬A\\ →\\ B\\)\\ ↔\\ \\(A\\ ∨\\ ¬B\\)",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-27d5d136",
+    "verdict": "correct",
+    "reason": "The response gives the full statement that is not logically equivalent to the others.",
+    "answer_span": "(¬A → B) ↔ (A ∨ ¬B)"
+  },
+  "status": "passed_llm"
+}

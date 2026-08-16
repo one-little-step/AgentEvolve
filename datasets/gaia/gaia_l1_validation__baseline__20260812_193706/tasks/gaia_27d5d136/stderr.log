@@ -1,0 +1,382 @@
+2026-08-12 19:37:11.237 | INFO     | cuga.config:<module>:249 - Running cuga in *balanced* mode
+2026-08-12 19:37:11.237 | WARNING  | cuga.config:<module>:253 - tracker disabled - logs and trajectory data will not be saved
+2026-08-12 19:37:11.237 | INFO     | cuga.config:<module>:274 - loaded llm settings *settings.openai.toml*
+2026-08-12 19:37:11.237 | INFO     | cuga.config:<module>:280 - Models config path: /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/.venv/lib/python3.14/site-packages/cuga/configurations/models/settings.openai.toml
+2026-08-12 19:37:11.237 | INFO     | cuga.config:<module>:281 - Mode config path:   /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/.venv/lib/python3.14/site-packages/cuga/configurations/modes/balanced.toml
+2026-08-12 19:37:12.392 | WARNING  | cuga.backend.activity_tracker.tracker:<module>:28 - Ignoring agent analytics
+2026-08-12 19:37:12.442 | WARNING  | cuga.backend.cuga_graph.nodes.shared.base_agent:<module>:15 - Langchain Google GenAI not installed, using OpenAI instead
+2026-08-12 19:37:15.672 | INFO     | cuga.sdk:__init__:1827 - Created DirectLangChainToolsProvider with 5 tools
+2026-08-12 19:37:15.672 | INFO     | cuga.backend.llm.models:_get_model_name:593 - Using MODEL_NAME from environment: azure/gpt-5.6-luna
+2026-08-12 19:37:15.673 | INFO     | cuga.backend.llm.models:_get_base_url:831 - Using OPENAI_BASE_URL from environment: https://ete-litellm.ai-models.vpc-int.res.ibm.com
+2026-08-12 19:37:15.673 | INFO     | cuga.backend.llm.models:_get_model_name:593 - Using MODEL_NAME from environment: azure/gpt-5.6-luna
+2026-08-12 19:37:15.673 | INFO     | cuga.backend.llm.models:_get_base_url:831 - Using OPENAI_BASE_URL from environment: https://ete-litellm.ai-models.vpc-int.res.ibm.com
+2026-08-12 19:37:15.673 | DEBUG    | cuga.backend.llm.models:get_model:1417 - Creating new model: openai/azure/gpt-5.6-luna (api_version=None, base_url=https://ete-litellm.ai-models.vpc-int.res.ibm.com)
+2026-08-12 19:37:15.673 | INFO     | cuga.backend.llm.models:_get_model_name:593 - Using MODEL_NAME from environment: azure/gpt-5.6-luna
+2026-08-12 19:37:15.673 | INFO     | cuga.backend.llm.models:_get_base_url:831 - Using OPENAI_BASE_URL from environment: https://ete-litellm.ai-models.vpc-int.res.ibm.com
+2026-08-12 19:37:15.673 | INFO     | cuga.backend.llm.models:_create_llm_instance:1008 - Sampling config for openai/azure/gpt-5.6-luna: temperature=None, top_p=None, max_tokens=16000
+2026-08-12 19:37:15.673 | DEBUG    | cuga.backend.llm.models:_create_llm_instance:1057 - Skipping temperature for reasoning model: azure/gpt-5.6-luna
+2026-08-12 19:37:16.046 | DEBUG    | cuga.backend.llm.models:_update_model_parameters:359 - Skipping temperature update for reasoning model: azure/gpt-5.6-luna
+2026-08-12 19:37:16.046 | DEBUG    | cuga.backend.llm.models:_update_model_parameters:393 - Updated model parameters: temperature=0.1, max_tokens=16000, max_completion_tokens=16000
+2026-08-12 19:37:16.046 | INFO     | cuga.sdk:__init__:1850 - Using default model: ReasoningChatOpenAI
+2026-08-12 19:37:16.046 | INFO     | cuga.backend.cuga_graph.nodes.cuga_lite.providers.langchain:initialize:75 - Initializing DirectLangChainToolsProvider with 5 tools
+2026-08-12 19:37:16.046 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.providers.langchain:initialize:81 -   - calculator: Evaluate a mathematical expression safely.
+2026-08-12 19:37:16.046 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.providers.langchain:initialize:81 -   - web_search: Search the public web using SearXNG, Tavily, or DuckDuckGo fallback.
+2026-08-12 19:37:16.046 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.providers.langchain:initialize:81 -   - web_fetch: Fetch a public HTTP/HTTPS page and return extracted text; JavaScript is not executed.
+2026-08-12 19:37:16.046 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.providers.langchain:initialize:81 -   - wikipedia_search: Search Wikipedia using the official English Wikipedia MediaWiki API.
+
+Returns matching article title
+2026-08-12 19:37:16.046 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.providers.langchain:initialize:81 -   - save_note: Save a small local research note for this demo run.
+2026-08-12 19:37:20.001 | WARNING  | cuga.sdk:_ensure_initialized:1999 - Knowledge auto-injection failed (will retry): Knowledge engine already running in another process. Start with --workers 1
+2026-08-12 19:37:20.029 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:140 - Initializing policy system with:
+2026-08-12 19:37:20.029 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:141 -   Collection: cuga_policies
+2026-08-12 19:37:20.029 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:142 -   Embedding: provider=local, dim=384
+2026-08-12 19:37:20.198 | INFO     | cuga.backend.storage.embedding.embedding_service:_create_local:143 - Loading local embedding model: BAAI/bge-small-en-v1.5
+2026-08-12 19:37:20.999 | INFO     | cuga.backend.storage.embedding.embedding_service:_create_local:151 - ✅ Local embedding model loaded (dim=384)
+2026-08-12 19:37:21.000 | INFO     | cuga.backend.cuga_graph.policy.storage:_initialize_embedding_function:90 - ✅ Embedding function initialized (provider: local, dim: 384)
+2026-08-12 19:37:21.000 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:161 - PolicyStorage initialized with embedding function
+2026-08-12 19:37:21.000 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:171 - ✅ Using embedding function from storage (provider: local)
+2026-08-12 19:37:21.004 | INFO     | cuga.backend.llm.models:_get_model_name:593 - Using MODEL_NAME from environment: azure/gpt-5.6-luna
+2026-08-12 19:37:21.006 | INFO     | cuga.backend.llm.models:_get_base_url:831 - Using OPENAI_BASE_URL from environment: https://ete-litellm.ai-models.vpc-int.res.ibm.com
+2026-08-12 19:37:21.006 | INFO     | cuga.backend.llm.models:_get_model_name:593 - Using MODEL_NAME from environment: azure/gpt-5.6-luna
+2026-08-12 19:37:21.006 | INFO     | cuga.backend.llm.models:_get_base_url:831 - Using OPENAI_BASE_URL from environment: https://ete-litellm.ai-models.vpc-int.res.ibm.com
+2026-08-12 19:37:21.006 | DEBUG    | cuga.backend.llm.models:get_model:1403 - Returning cached model: openai/azure/gpt-5.6-luna (api_version=None, base_url=https://ete-litellm.ai-models.vpc-int.res.ibm.com)
+2026-08-12 19:37:21.006 | DEBUG    | cuga.backend.llm.models:_update_model_parameters:359 - Skipping temperature update for reasoning model: azure/gpt-5.6-luna
+2026-08-12 19:37:21.007 | DEBUG    | cuga.backend.llm.models:_update_model_parameters:393 - Updated model parameters: temperature=0.1, max_tokens=16000, max_completion_tokens=16000
+2026-08-12 19:37:21.007 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:183 - LLM initialized for policy matching
+2026-08-12 19:37:21.007 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:195 - PolicyAgent initialized
+2026-08-12 19:37:21.007 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:198 - ✅ Policy system fully initialized
+2026-08-12 19:37:21.007 | DEBUG    | cuga.sdk:_ensure_policy_system:222 - Initialized filesystem sync for .cuga
+2026-08-12 19:37:21.007 | DEBUG    | cuga.sdk:_ensure_policy_system:248 - Checking for policy folder: .cuga
+2026-08-12 19:37:21.007 | DEBUG    | cuga.sdk:_ensure_policy_system:249 -   Current working directory: /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper
+2026-08-12 19:37:21.007 | DEBUG    | cuga.sdk:_ensure_policy_system:250 -   Resolved absolute path: /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/.cuga
+2026-08-12 19:37:21.008 | INFO     | cuga.sdk:load_from_folder:1344 - Loading policies from .cuga (clear_existing=False)
+2026-08-12 19:37:21.008 | DEBUG    | cuga.backend.cuga_graph.policy.folder_loader:load_policies_from_folder:383 - Subfolder .cuga/playbooks does not exist, skipping
+2026-08-12 19:37:21.008 | DEBUG    | cuga.backend.cuga_graph.policy.folder_loader:load_policies_from_folder:383 - Subfolder .cuga/output_formatters does not exist, skipping
+2026-08-12 19:37:21.009 | DEBUG    | cuga.backend.cuga_graph.policy.folder_loader:load_policies_from_folder:383 - Subfolder .cuga/tool_guides does not exist, skipping
+2026-08-12 19:37:21.009 | DEBUG    | cuga.backend.cuga_graph.policy.folder_loader:load_policies_from_folder:383 - Subfolder .cuga/intent_guards does not exist, skipping
+2026-08-12 19:37:21.009 | DEBUG    | cuga.backend.cuga_graph.policy.folder_loader:load_policies_from_folder:383 - Subfolder .cuga/tool_approvals does not exist, skipping
+2026-08-12 19:37:21.009 | DEBUG    | cuga.backend.cuga_graph.policy.configurable:initialize:113 - Policy system already initialized
+2026-08-12 19:37:21.009 | INFO     | cuga.sdk:load_from_folder:1361 - ✅ Loaded 0 policies from 0 files in .cuga
+2026-08-12 19:37:21.009 | INFO     | cuga.sdk:_ensure_policy_system:254 - Auto-loaded policies from .cuga (resolved: /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/.cuga)
+2026-08-12 19:37:21.050 | DEBUG    | cuga.sdk:stream:2841 - Policy system auto-initialized during first stream()
+2026-08-12 19:37:21.051 | DEBUG    | cuga.sdk:stream:2901 - Auto-generated thread_id: sdk_d8c31629
+2026-08-12 19:37:21.446 | DEBUG    | cuga.sdk:_build_callbacks:1909 - Built callbacks: TokenUsageTracker only
+2026-08-12 19:37:21.447 | DEBUG    | cuga.sdk:stream:2927 - Streaming agent with 1 messages
+2026-08-12 19:37:21.457 | SUCCESS  | cuga.configurations.instructions_manager:_log_initialization_summary:108 - 📋 Instructions configuration loaded successfully
+2026-08-12 19:37:21.457 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:109 -    📁 Config file: configurations/instructions/instructions.toml
+2026-08-12 19:37:21.457 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:110 -    📏 File size: 854 bytes
+2026-08-12 19:37:21.462 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:117 -    🔑 Instruction sections: 8
+2026-08-12 19:37:21.462 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:121 -    🔗 Key mappings available: 7
+2026-08-12 19:37:21.462 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:128 -    🏷️  Sample mappings: APICodePlannerAgent→api_code_planner, PlanControllerAgent→plan_controller, TaskDecompositionAgent→task_decomposition... (+4 more)
+2026-08-12 19:37:21.464 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:149 -    📝 Inline instructions: 0
+2026-08-12 19:37:21.464 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:150 -    📄 File-based instructions: 8
+2026-08-12 19:37:21.464 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:151 -    📊 Total content length: 0 characters
+2026-08-12 19:37:21.464 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:156 -    🏷️  Available keys: PLAN_CONTROLLER, TASK_DECOMPOSITION, API_PLANNER, SHORTLISTER, CODE_AGENT, API_REFLECTION, API_CODE_PLANNER, ANSWER
+2026-08-12 19:37:21.490 | DEBUG    | cuga.sdk:_build_callbacks:1909 - Built callbacks: TokenUsageTracker only
+2026-08-12 19:37:21.522 | WARNING  | cuga.configurations.instructions_manager:get_all_instructions_formatted:322 - No markdown sections found
+2026-08-12 19:37:21.590 | INFO     | cuga.backend.llm.models:_get_model_name:593 - Using MODEL_NAME from environment: azure/gpt-5.6-luna
+2026-08-12 19:37:21.590 | INFO     | cuga.backend.llm.models:_get_base_url:831 - Using OPENAI_BASE_URL from environment: https://ete-litellm.ai-models.vpc-int.res.ibm.com
+2026-08-12 19:37:21.590 | INFO     | cuga.backend.llm.models:_get_model_name:593 - Using MODEL_NAME from environment: azure/gpt-5.6-luna
+2026-08-12 19:37:21.590 | INFO     | cuga.backend.llm.models:_get_base_url:831 - Using OPENAI_BASE_URL from environment: https://ete-litellm.ai-models.vpc-int.res.ibm.com
+2026-08-12 19:37:21.590 | DEBUG    | cuga.backend.llm.models:get_model:1403 - Returning cached model: openai/azure/gpt-5.6-luna (api_version=None, base_url=https://ete-litellm.ai-models.vpc-int.res.ibm.com)
+2026-08-12 19:37:21.590 | DEBUG    | cuga.backend.llm.models:_update_model_parameters:359 - Skipping temperature update for reasoning model: azure/gpt-5.6-luna
+2026-08-12 19:37:21.590 | DEBUG    | cuga.backend.llm.models:_update_model_parameters:393 - Updated model parameters: temperature=0.1, max_tokens=16000, max_completion_tokens=16000
+2026-08-12 19:37:21.596 | DEBUG    | cuga.sdk:_create_hitl_wrapper_graph:2167 - Created HITL wrapper graph with SuggestHumanActions and WaitForResponse
+2026-08-12 19:37:21.596 | DEBUG    | cuga.sdk:_create_graph:2011 - Created CugaLite graph with HITL wrapper
+2026-08-12 19:37:21.601 | DEBUG    | cuga.sdk:graph:2301 - Compiled graph with checkpointer and HITL support
+2026-08-12 19:37:21.618 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.prepare_node:prepare_tools_and_apps:108 - [APPROVAL DEBUG] prepare_tools_and_apps received cuga_lite_metadata: {}
+2026-08-12 19:37:21.619 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:74 - PolicyEnactment: Got policy system: <cuga.backend.cuga_graph.policy.configurable.PolicyConfigurable object at 0x150441400>
+2026-08-12 19:37:21.619 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:81 - PolicyEnactment: Created context with user_input='¬(A ∧ B) ↔ (¬A ∨ ¬B)
+¬(A ∨ B) ↔ (¬A ∧ ¬B)
+(A → B) ↔ (¬B → ¬A)
+(A → B) ↔ (¬A ∨ B)
+(¬A → B) ↔ (A ∨ ¬B)
+¬(A → B) ↔ (A ∧ ¬B)
+
+Which of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.', inferred target='intent'
+2026-08-12 19:37:21.619 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:950 - 🔍 Starting policy matching for target: 'intent'
+2026-08-12 19:37:21.620 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:957 -   - Filtering by policy types: [<PolicyType.INTENT_GUARD: 'intent_guard'>, <PolicyType.PLAYBOOK: 'playbook'>, <PolicyType.TOOL_GUIDE: 'tool_guide'>]
+2026-08-12 19:37:21.620 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:959 -   - user_input: ¬(A ∧ B) ↔ (¬A ∨ ¬B)
+¬(A ∨ B) ↔ (¬A ∧ ¬B)
+(A → B) ↔ (¬B → ¬A)
+(A → B) ↔ (¬A ∨ B)
+(¬A → B) ↔ (A ∨ ¬B)
+¬(A → B) ↔ (A ∧ ¬B)
+
+Which of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.
+2026-08-12 19:37:21.620 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:960 -   - chat_messages: ["¬(A ∧ B) ↔ (¬A ∨ ¬B)\n¬(A ∨ B) ↔ (¬A ∧ ¬B)\n(A → B) ↔ (¬B → ¬A)\n(A → B) ↔ (¬A ∨ B)\n(¬A → B) ↔ (A ∨ ¬B)\n¬(A → B) ↔ (A ∧ ¬B)\n\nWhich of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit."]
+2026-08-12 19:37:21.620 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:701 - 🔍 Evaluating keyword-triggered policies for target: 'intent'
+2026-08-12 19:37:21.621 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:728 - No policies with keyword triggers for target 'intent'
+2026-08-12 19:37:21.621 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:785 - 🔍 Evaluating natural language policies for target: 'intent'
+2026-08-12 19:37:21.622 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:817 - No policies with NL triggers for target 'intent'
+2026-08-12 19:37:21.622 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:87 - PolicyEnactment: Policy match result: matched=False, reasoning=No policies matched the current context
+2026-08-12 19:37:21.622 | DEBUG    | cuga.backend.cuga_graph.policy.agent:check_tool_guide_policies:1246 - Checking Tool Guide policies
+2026-08-12 19:37:21.623 | DEBUG    | cuga.backend.cuga_graph.policy.agent:check_tool_guide_policies:1253 - Found 0 enabled Tool Guide policies
+2026-08-12 19:37:21.623 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:96 - PolicyEnactment: Found 0 Tool Guide policies
+2026-08-12 19:37:21.623 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.prepare_node:prepare_tools_and_apps:259 - Bundled MCP few-shots (prompts/find_tools_few_shot_examples.json) not loaded: find_tools is off (total_tool_count=5 <= shortlisting_tool_threshold=35). Lower the threshold via configurable or add apps/tools.
+2026-08-12 19:37:21.626 | DEBUG    | cuga.backend.tools_env.registry.utils.api_utils:get_apps:119 - Calling get apps
+2026-08-12 19:37:21.626 | DEBUG    | cuga.backend.tools_env.registry.utils.api_utils:get_apps:135 - External apps are []
+2026-08-12 19:37:21.638 | ERROR    | cuga.backend.tools_env.registry.utils.api_utils:get_apps:157 - Error while calling registry to get apps
+2026-08-12 19:37:21.638 | DEBUG    | cuga.backend.evolve.integration:_call_tool:231 - Evolve registry call failed, falling back to direct SSE: Cannot connect to host localhost:8001 ssl:default [Multiple exceptions: [Errno 61] Connect call failed ('::1', 8001, 0, 0), [Errno 61] Connect call failed ('127.0.0.1', 8001)]
+2026-08-12 19:37:22.058 | WARNING  | cuga.backend.evolve.integration:get_guidelines:85 - Evolve get_guidelines failed (non-fatal): Client failed to connect: All connection attempts failed
+2026-08-12 19:37:24.281 | WARNING  | cuga.backend.server.main:<module>:306 - Failed to import agent_analytics: No module named 'agent_analytics'
+2026-08-12 19:37:24.338 | INFO     | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.prepare_node:prepare_tools_and_apps:643 - Prepared CugaLite prompt: enable_find_tools=False few_shot_message_turns=0 few_shots_as_messages=False prompt_chars=18085
+2026-08-12 19:37:24.342 | DEBUG    | cuga.backend.cuga_graph.utils.token_counter:ensure_model_context_profile:442 - Set model profile: max_input_tokens=400000 for azure/gpt-5.6-luna
+2026-08-12 19:37:24.342 | INFO     | cuga.backend.cuga_graph.utils.context_summarizer:_setup_model_profile:93 - Set model profile: max_input_tokens=400000 for azure/gpt-5.6-luna
+2026-08-12 19:37:24.347 | INFO     | cuga.backend.cuga_graph.utils.context_summarizer:_init_middleware:80 - Context summarization initialized: trigger=('fraction', 0.7), keep=('messages', 10), model=azure/gpt-5.6-luna
+2026-08-12 19:37:24.348 | DEBUG    | cuga.backend.cuga_graph.utils.token_counter:count_total_context_tokens:612 - Total context tokens: 4829 (messages: 61, tools: 0, prompt: 4759, overhead: 9)
+2026-08-12 19:37:24.348 | INFO     | cuga.backend.cuga_graph.nodes.cuga_agent_core.graph.shared_nodes:call_model:178 - call_model: 2 messages → model (CugaLite)
+2026-08-12 19:37:46.124 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_agent_core.policy.tool_approval_handler:check_and_create_approval_interrupt:116 - Checking if code requires tool approval (code length: 127 chars)
+2026-08-12 19:37:46.124 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_agent_core.policy.tool_approval_handler:check_and_create_approval_interrupt:119 - Got policy system: <cuga.backend.cuga_graph.policy.configurable.PolicyConfigurable object at 0x150441400>
+2026-08-12 19:37:46.125 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_agent_core.policy.tool_approval_handler:check_and_create_approval_interrupt:122 - Created context with user_input: '¬(A ∧ B) ↔ (¬A ∨ ¬B)
+¬(A ∨ B) ↔ (¬A ∧ ¬B)
+(A → B) ↔ (¬B → ¬A)
+(A → B) ↔ (¬A ∨ B)
+(¬A → B) ↔ (A ∨ ¬B)
+¬(A → B) ↔ (A ∧ ¬B)
+
+Which of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.'
+2026-08-12 19:37:46.125 | DEBUG    | cuga.backend.cuga_graph.policy.agent:check_tool_approval_for_code:1302 - check_tool_approval_for_code called with code: reference_check = await web_search("logical equivalence negated antecedent implication not A implies...
+2026-08-12 19:37:46.125 | DEBUG    | cuga.backend.cuga_graph.policy.agent:check_tool_approval_for_code:1309 - Found 0 enabled ToolApproval policies
+2026-08-12 19:37:46.125 | DEBUG    | cuga.backend.cuga_graph.policy.agent:check_tool_approval_for_code:1312 - No ToolApproval policies configured
+2026-08-12 19:37:46.125 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_agent_core.policy.tool_approval_handler:check_and_create_approval_interrupt:125 - Policy match result: None
+2026-08-12 19:37:46.125 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_agent_core.policy.tool_approval_handler:check_and_create_approval_interrupt:128 - No ToolApproval policy matched the generated code
+2026-08-12 19:37:46.131 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.tracking.tracker:start_tracking:92 - Tool call tracking started
+2026-08-12 19:37:46.131 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.sandbox_node:sandbox:131 - 
+
+------
+
+📝 Generated code:
+
+reference_check = await web_search("logical equivalence negated antecedent implication not A implies B")
+print(reference_check)
+
+------
+
+
+2026-08-12 19:37:46.259 | DEBUG    | cuga.backend.cuga_graph.policy.tool_guard.tool_invoker:__init__:40 - Initialized ToolGuardInvoker with CUGA tool provider
+2026-08-12 19:37:46.259 | DEBUG    | cuga.backend.cuga_graph.policy.tool_guard.tool_guard_runtime:__init__:70 - Created ToolGuardRuntime instance (enable_policies=True)
+2026-08-12 19:37:46.259 | INFO     | cuga.backend.cuga_graph.policy.tool_guard.tool_guard_runtime:initialize:86 - Initializing ToolGuardRuntime...
+2026-08-12 19:37:46.259 | DEBUG    | cuga.backend.cuga_graph.policy.tool_guard.tool_guard_runtime:_validate_policy_storage:150 - ✅ Policy storage interface validation passed
+2026-08-12 19:37:46.259 | INFO     | cuga.backend.cuga_graph.policy.tool_guard.tool_guard_runtime:initialize:104 - ✅ Connected policy storage for ToolGuardRuntime
+2026-08-12 19:37:46.260 | DEBUG    | cuga.backend.cuga_graph.policy.tool_guard.tool_guard_runtime:initialize:116 - Found 0 ToolGuide policies
+2026-08-12 19:37:46.260 | INFO     | cuga.backend.cuga_graph.policy.tool_guard.tool_guard_runtime:_log_initialization_summary:225 - ✅ ToolGuardRuntime initialized with guards for 0 tools
+2026-08-12 19:37:46.260 | DEBUG    | cuga.backend.cuga_graph.policy.tool_guard.tool_guard_runtime:guard_tool_call:800 - No guards registered for tool 'web_search'
+2026-08-12 19:37:50.721 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.sandbox_node:sandbox:153 - 
+
+------
+
+📝 Execution output:
+
+1. Why does the negation of an implication result in a conjunction rather than another conditional?
+   URL: https://www.thesanlupeproject.org/negation-implication-logic
+   The negation of an implication is logically equivalent to the conjunction of the antecedent and the negation of the consequent, represented as P ∧ ¬Q. Most people intuitively assume that negating an 'if-then' statement results in another 'if-then' statement, but formal logic proves this ...
+2. Contraposition - Wikipedia
+   URL: https://en.wikipedia.org/wiki/Contraposition
+   In logic and mathematics, ... conditional statement into its logically equivalent contrapositive, and an associated proof method known as § Proof by contrapositive. The contrapositive of a statement has its antecedent and consequent negated and swapped....
+3. Logical biconditional - Wikipedia
+   URL: https://en.wikipedia.org/wiki/Logical_biconditional
+   In logic and mathematics, the logical biconditional, also known as material biconditional or equivalence or bidirectional implication or biimplication or bientailment or exclusive nor, is the logical connective used to conjoin two statements and to form the statement " if and only if " (often abbreviated as " iff " [1]), where is known as the antecedent, and the consequent. [2][3] Nowadays ...
+4. Logical equivalence - Wikipedia
+   URL: https://en.wikipedia.org/wiki/Logical_equivalence
+   {\displaystyle q} are said to be logically equivalent if they have the same truth value in every model. The logical equivalence of ... {\displaystyle p\iff q} , depending on the notation being used. However, these symbols are also used for material equivalence, so proper interpretation would ...
+5. r/learnmath on Reddit: Is 'A implies B' equivalent to 'not B implies to not A'
+   URL: https://www.reddit.com/r/learnmath/comments/dl3ja4/is_a_implies_b_equivalent_to_not_b_implies_to_not/
+
+## New Variables Created:
+# Variables Summary
+
+## reference_check
+- Type: str
+- Items: 1892
+- Description: Created during code execution
+- Created: 2026-08-12 19:37:50
+- Value Preview: '1. Why does the negation of an implication result in a conjunction rather than another conditional?\n   URL: https://www.thesanlupeproject.org/negation-implication-logic\n   The negation of an implication is logically equivalent to the conjunction of the antecedent and the negation of the consequent, represented as P ∧ ¬Q. Most people intuitively assume that negating an \'if-then\' statement results in another \'if-then\' statement, but formal logic proves this ...\n2. Contraposition - Wikipedia\n   URL: https://en.wikipedia.org/wiki/Contraposition\n   In logic and mathematics, ... conditional statement into its logically equivalent contrapositive, and an associated proof method known as § Proof by contrapositive. The contrapositive of a statement has its antecedent and consequent negated and swapped....\n3. Logical biconditional - Wikipedia\n   URL: https://en.wikipedia.org/wiki/Logical_biconditional\n   In logic and mathematics, the logical biconditional, also known as material biconditional or equivalence or bidirectional implication or biimplication or bientailment or exclusive nor, is the logical connective used to conjoin two statements and to form the statement " if and only if " (often abbreviated as " iff " [1]), where is known as the antecedent, and the consequent. [2][3] Nowadays ...\n4. Logical equivalence - Wikipedia\n   URL: https://en.wikipedia.org/wiki/Logical_equivalence\n   {\\displaystyle q} are said to be logically equivalent if they have the same truth value in every model. The logical equivalence of ... {\\displaystyle p\\iff q} , depending on the notation being used. However, these symbols are also used for material equivalence, so proper interpretation would ...\n5. r/learnmath on Reddit: Is \'A implies B\' equivalent to \'not B implies to not A\'\n   URL: https://www.reddit.com/r/learnmath/comments/dl3ja4/is_a_implies_b_equivalent_to_not_b_implies_to_not/\n   '
+
+
+------
+
+
+2026-08-12 19:37:50.722 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_agent_core.graph.graph_nodes:append_chat_messages_with_step_limit:198 - Step count: 2/70
+2026-08-12 19:37:50.722 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.tracking.tracker:stop_tracking:103 - Tool call tracking stopped, collected 1 calls
+2026-08-12 19:37:50.726 | INFO     | cuga.backend.cuga_graph.utils.context_summarizer:_setup_model_profile:93 - Set model profile: max_input_tokens=400000 for azure/gpt-5.6-luna
+2026-08-12 19:37:50.726 | INFO     | cuga.backend.cuga_graph.utils.context_summarizer:_init_middleware:80 - Context summarization initialized: trigger=('fraction', 0.7), keep=('messages', 10), model=azure/gpt-5.6-luna
+2026-08-12 19:37:50.726 | DEBUG    | cuga.backend.cuga_graph.utils.token_counter:count_total_context_tokens:612 - Total context tokens: 6938 (messages: 1340, tools: 0, prompt: 5397, overhead: 201)
+2026-08-12 19:37:50.727 | INFO     | cuga.backend.cuga_graph.nodes.cuga_agent_core.graph.shared_nodes:call_model:178 - call_model: 4 messages → model (CugaLite)
+2026-08-12 19:38:10.162 | INFO     | cuga.sdk:sdk_callback_node:2079 - SDK callback node - processing subgraph results
+2026-08-12 19:38:10.164 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:74 - PolicyEnactment: Got policy system: <cuga.backend.cuga_graph.policy.configurable.PolicyConfigurable object at 0x150441400>
+2026-08-12 19:38:10.164 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:81 - PolicyEnactment: Created context with user_input='¬(A ∧ B) ↔ (¬A ∨ ¬B)
+¬(A ∨ B) ↔ (¬A ∧ ¬B)
+(A → B) ↔ (¬B → ¬A)
+(A → B) ↔ (¬A ∨ B)
+(¬A → B) ↔ (A ∨ ¬B)
+¬(A → B) ↔ (A ∧ ¬B)
+
+Which of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.', inferred target='agent_response'
+2026-08-12 19:38:10.164 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:950 - 🔍 Starting policy matching for target: 'agent_response'
+2026-08-12 19:38:10.164 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:957 -   - Filtering by policy types: [<PolicyType.OUTPUT_FORMATTER: 'output_formatter'>]
+2026-08-12 19:38:10.164 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:959 -   - user_input: ¬(A ∧ B) ↔ (¬A ∨ ¬B)
+¬(A ∨ B) ↔ (¬A ∧ ¬B)
+(A → B) ↔ (¬B → ¬A)
+(A → B) ↔ (¬A ∨ B)
+(¬A → B) ↔ (A ∨ ¬B)
+¬(A → B) ↔ (A ∧ ¬B)
+
+Which of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.
+2026-08-12 19:38:10.164 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:960 -   - chat_messages: ["¬(A ∧ B) ↔ (¬A ∨ ¬B)\n¬(A ∨ B) ↔ (¬A ∧ ¬B)\n(A → B) ↔ (¬B → ¬A)\n(A → B) ↔ (¬A ∨ B)\n(¬A → B) ↔ (A ∨ ¬B)\n¬(A → B) ↔ (A ∧ ¬B)\n\nWhich of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.", 'I’ll verify the equivalences by checking their standard implication transformations and the one suspect negated antecedent form.\nThe key check is whether \\((\\neg A \\to B)\\) transforms to \\(A \\lor B\\) or to the listed \\(A \\lor \\neg B\\); I’m checking that identity directly.\nI’m using a brief reference lookup to confirm the implication identity before stating the odd one out.\n\nI’ll verify the relevant implication law against a reference, then compare it with the listed statement.\n\n\nThe potentially mismatched line is the fifth; I’m checking the standard equivalence for an implication with a negated antecedent.\n\n```python\nreference_check = await web_search("logical equivalence negated antecedent implication not A implies B")\nprint(reference_check)\n```\n```python\nreference_check = await web_search("logical equivalence negated antecedent implication not A implies B")\nprint(reference_check)\n```\n\\((\\neg A \\to B) \\leftrightarrow (A \\lor \\neg B)\\)\n\nThis is the one that does not fit. Since \\(\\neg A \\to B\\) is equivalent to \\(A \\lor B\\), not \\(A \\lor \\neg B\\).', 'Execution output:\n1. Why does the negation of an implication result in a conjunction rather than another conditional?\n   URL: https://www.thesanlupeproject.org/negation-implication-logic\n   The negation of an implication is logically equivalent to the conjunction of the antecedent and the negation of the consequent, represented as P ∧ ¬Q. Most people intuitively assume that negating an \'if-then\' statement results in another \'if-then\' statement, but formal logic proves this ...\n2. Contraposition - Wikipedia\n   URL: https://en.wikipedia.org/wiki/Contraposition\n   In logic and mathematics, ... conditional statement into its logically equivalent contrapositive, and an associated proof method known as § Proof by contrapositive. The contrapositive of a statement has its antecedent and consequent negated and swapped....\n3. Logical biconditional - Wikipedia\n   URL: https://en.wikipedia.org/wiki/Logical_biconditional\n   In logic and mathematics, the logical biconditional, also known as material biconditional or equivalence or bidirectional implication or biimplication or bientailment or exclusive nor, is the logical connective used to conjoin two statements and to form the statement " if and only if " (often abbreviated as " iff " [1]), where is known as the antecedent, and the consequent. [2][3] Nowadays ...\n4. Logical equivalence - Wikipedia\n   URL: https://en.wikipedia.org/wiki/Logical_equivalence\n   {\\displaystyle q} are said to be logically equivalent if they have the same truth value in every model. The logical equivalence of ... {\\displaystyle p\\iff q} , depending on the notation being used. However, these symbols are also used for material equivalence, so proper interpretation would ...\n5. r/learnmath on Reddit: Is \'A implies B\' equivalent to \'not B implies to not A\'\n   URL: https://www.reddit.com/r/learnmath/comments/dl3ja4/is_a_implies_b_equivalent_to_not_b_implies_to_not/\n\n## New Variables Created:\n# Variables Summary\n\n## reference_check\n- Type: str\n- Items: 1892\n- Description: Created during code execution\n- Created: 2026-08-12 19:37:50\n- Value Preview: \'1. Why does the negation of an implication result in a conjunction rather than another conditional?\\n   URL: https://www.thesanlupeproject.org/negation-implication-logic\\n   The negation of an implication is logically equivalent to the conjunction of the antecedent and the negation of the consequent, represented as P ∧ ¬Q. Most people intuitively assume that negating an \\\'if-then\\\' statement results in another \\\'if-then\\\' statement, but formal logic proves this ...\\n2. Contraposition - Wikipedia\\n   URL: https://en.wikipedia.org/wiki/Contraposition\\n   In logic and mathematics, ... conditional statement into its logically equivalent contrapositive, and an associated proof method known as § Proof by contrapositive. The contrapositive of a statement has its antecedent and consequent negated and swapped....\\n3. Logical biconditional - Wikipedia\\n   URL: https://en.wikipedia.org/wiki/Logical_biconditional\\n   In logic and mathematics, the logical biconditional, also known as material biconditional or equivalence or bidirectional implication or biimplication or bientailment or exclusive nor, is the logical connective used to conjoin two statements and to form the statement " if and only if " (often abbreviated as " iff " [1]), where is known as the antecedent, and the consequent. [2][3] Nowadays ...\\n4. Logical equivalence - Wikipedia\\n   URL: https://en.wikipedia.org/wiki/Logical_equivalence\\n   {\\\\displaystyle q} are said to be logically equivalent if they have the same truth value in every model. The logical equivalence of ... {\\\\displaystyle p\\\\iff q} , depending on the notation being used. However, these symbols are also used for material equivalence, so proper interpretation would ...\\n5. r/learnmath on Reddit: Is \\\'A implies B\\\' equivalent to \\\'not B implies to not A\\\'\\n   URL: https://www.reddit.com/r/learnmath/comments/dl3ja4/is_a_implies_b_equivalent_to_not_b_implies_to_not/\\n   \'\n\n\n## Available Variables\n\n# Variables Summary\n\n## reference_check\n- Type: str\n- Items: 1892\n- Description: Created during code execution\n- Created: 2026-08-12 19:37:50\n- Value Preview: \'1. Why does the negation of an implication result in a conjunction rather than another conditional?\\n   URL: https://www.thesanlupeproject.org/negation-implication-logic\\n   The negation of an implication is logically equivalent to the conjunction of the antecedent and the negation of the consequent, represented as P ∧ ¬Q. Most people intuitively assume that negating an \\\'if-then\\\' statement results in another \\\'if-then\\\' statement, but formal logic proves this ...\\n2. Contraposition - Wikipedia\\n   URL: https://en.wikipedia.org/wiki/Contraposition\\n   In logic and mathematics, ... conditional statement into its logically equivalent contrapositive, and an associated proof method known as § Proof by contrapositive. The contrapositive of a statement has its antecedent and consequent negated and swapped....\\n3. Logical biconditional - Wikipedia\\n   URL: https://en.wikipedia.org/wiki/Logical_biconditional\\n   In logic and mathematics, the logical biconditional, also known as material biconditional or equivalence or bidirectional implication or biimplication or bientailment or exclusive nor, is the logical connective used to conjoin two statements and to form the statement " if and only if " (often abbreviated as " iff " [1]), where is known as the antecedent, and the consequent. [2][3] Nowadays ...\\n4. Logical equivalence - Wikipedia\\n   URL: https://en.wikipedia.org/wiki/Logical_equivalence\\n   {\\\\displaystyle q} are said to be logically equivalent if they have the same truth value in every model. The logical equivalence of ... {\\\\displaystyle p\\\\iff q} , depending on the notation being used. However, these symbols are also used for material equivalence, so proper interpretation would ...\\n5. r/learnmath on Reddit: Is \\\'A implies B\\\' equivalent to \\\'not B implies to not A\\\'\\n   URL: https://www.reddit.com/r/learnmath/comments/dl3ja4/is_a_implies_b_equivalent_to_not_b_implies_to_not/\\n   \'\n\nYou can use these variables directly by their names.', 'The statement that does not fit is:\n\n\\[\n\\boxed{(\\neg A \\to B) \\leftrightarrow (A \\lor \\neg B)}\n\\]\n\nThe correct equivalence is:\n\n\\[\n(\\neg A \\to B) \\leftrightarrow (A \\lor B)\n\\]\n\nbecause \\(P \\to Q\\) is equivalent to \\(\\neg P \\lor Q\\). Setting \\(P=\\neg A\\) gives \\(A\\lor B\\), not \\(A\\lor\\neg B\\).']
+2026-08-12 19:38:10.164 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:701 - 🔍 Evaluating keyword-triggered policies for target: 'agent_response'
+2026-08-12 19:38:10.165 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:728 - No policies with keyword triggers for target 'agent_response'
+2026-08-12 19:38:10.165 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:785 - 🔍 Evaluating natural language policies for target: 'agent_response'
+2026-08-12 19:38:10.165 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:817 - No policies with NL triggers for target 'agent_response'
+2026-08-12 19:38:10.165 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:87 - PolicyEnactment: Policy match result: matched=False, reasoning=No policies matched the current context
+2026-08-12 19:38:10.165 | INFO     | cuga.sdk:sdk_callback_node:2129 - Routing to FinalAnswerAgent with answer: The statement that does not fit is:
+
+\[
+\boxed{(\neg A \to B) \leftrightarrow (A \lor \neg B)}
+\]
+
+The correct equivalence is:
+
+\[
+(\neg A \to B) \leftrightarrow (A \lor B)
+\]
+
+because \(P \to Q\) is equivalent to \(\neg P \lor Q\). Setting \(P=\neg A\) gives \(A\lor B\), not \(A\lor\neg B\).
+2026-08-12 19:38:10.175 | WARNING  | cuga.sdk:_ensure_initialized:1999 - Knowledge auto-injection failed (will retry): Knowledge engine already running in another process. Start with --workers 1
+2026-08-12 19:38:10.176 | DEBUG    | cuga.sdk:invoke:2549 - Auto-generated thread_id: sdk_75297f52
+2026-08-12 19:38:10.186 | DEBUG    | cuga.sdk:invoke:2630 - Created new state for thread_id: sdk_75297f52
+2026-08-12 19:38:10.188 | DEBUG    | cuga.sdk:_build_callbacks:1909 - Built callbacks: TokenUsageTracker only
+2026-08-12 19:38:10.188 | DEBUG    | cuga.sdk:invoke:2647 - Invoking agent with 1 total message(s) in conversation
+2026-08-12 19:38:10.200 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.prepare_node:prepare_tools_and_apps:108 - [APPROVAL DEBUG] prepare_tools_and_apps received cuga_lite_metadata: {}
+2026-08-12 19:38:10.200 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:74 - PolicyEnactment: Got policy system: <cuga.backend.cuga_graph.policy.configurable.PolicyConfigurable object at 0x150441400>
+2026-08-12 19:38:10.200 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:81 - PolicyEnactment: Created context with user_input='¬(A ∧ B) ↔ (¬A ∨ ¬B)
+¬(A ∨ B) ↔ (¬A ∧ ¬B)
+(A → B) ↔ (¬B → ¬A)
+(A → B) ↔ (¬A ∨ B)
+(¬A → B) ↔ (A ∨ ¬B)
+¬(A → B) ↔ (A ∧ ¬B)
+
+Which of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.', inferred target='intent'
+2026-08-12 19:38:10.200 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:950 - 🔍 Starting policy matching for target: 'intent'
+2026-08-12 19:38:10.200 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:957 -   - Filtering by policy types: [<PolicyType.INTENT_GUARD: 'intent_guard'>, <PolicyType.PLAYBOOK: 'playbook'>, <PolicyType.TOOL_GUIDE: 'tool_guide'>]
+2026-08-12 19:38:10.200 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:959 -   - user_input: ¬(A ∧ B) ↔ (¬A ∨ ¬B)
+¬(A ∨ B) ↔ (¬A ∧ ¬B)
+(A → B) ↔ (¬B → ¬A)
+(A → B) ↔ (¬A ∨ B)
+(¬A → B) ↔ (A ∨ ¬B)
+¬(A → B) ↔ (A ∧ ¬B)
+
+Which of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.
+2026-08-12 19:38:10.200 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:960 -   - chat_messages: ["¬(A ∧ B) ↔ (¬A ∨ ¬B)\n¬(A ∨ B) ↔ (¬A ∧ ¬B)\n(A → B) ↔ (¬B → ¬A)\n(A → B) ↔ (¬A ∨ B)\n(¬A → B) ↔ (A ∨ ¬B)\n¬(A → B) ↔ (A ∧ ¬B)\n\nWhich of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit."]
+2026-08-12 19:38:10.200 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:701 - 🔍 Evaluating keyword-triggered policies for target: 'intent'
+2026-08-12 19:38:10.201 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:728 - No policies with keyword triggers for target 'intent'
+2026-08-12 19:38:10.201 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:785 - 🔍 Evaluating natural language policies for target: 'intent'
+2026-08-12 19:38:10.201 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:817 - No policies with NL triggers for target 'intent'
+2026-08-12 19:38:10.201 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:87 - PolicyEnactment: Policy match result: matched=False, reasoning=No policies matched the current context
+2026-08-12 19:38:10.201 | DEBUG    | cuga.backend.cuga_graph.policy.agent:check_tool_guide_policies:1246 - Checking Tool Guide policies
+2026-08-12 19:38:10.201 | DEBUG    | cuga.backend.cuga_graph.policy.agent:check_tool_guide_policies:1253 - Found 0 enabled Tool Guide policies
+2026-08-12 19:38:10.201 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:96 - PolicyEnactment: Found 0 Tool Guide policies
+2026-08-12 19:38:10.202 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.prepare_node:prepare_tools_and_apps:259 - Bundled MCP few-shots (prompts/find_tools_few_shot_examples.json) not loaded: find_tools is off (total_tool_count=5 <= shortlisting_tool_threshold=35). Lower the threshold via configurable or add apps/tools.
+2026-08-12 19:38:10.203 | DEBUG    | cuga.backend.tools_env.registry.utils.api_utils:get_apps:119 - Calling get apps
+2026-08-12 19:38:10.204 | DEBUG    | cuga.backend.tools_env.registry.utils.api_utils:get_apps:135 - External apps are []
+2026-08-12 19:38:10.228 | ERROR    | cuga.backend.tools_env.registry.utils.api_utils:get_apps:157 - Error while calling registry to get apps
+2026-08-12 19:38:10.229 | DEBUG    | cuga.backend.evolve.integration:_call_tool:231 - Evolve registry call failed, falling back to direct SSE: Cannot connect to host localhost:8001 ssl:default [Multiple exceptions: [Errno 61] Connect call failed ('::1', 8001, 0, 0), [Errno 61] Connect call failed ('127.0.0.1', 8001)]
+2026-08-12 19:38:10.241 | WARNING  | cuga.backend.evolve.integration:get_guidelines:85 - Evolve get_guidelines failed (non-fatal): Client failed to connect: All connection attempts failed
+2026-08-12 19:38:10.257 | INFO     | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.prepare_node:prepare_tools_and_apps:643 - Prepared CugaLite prompt: enable_find_tools=False few_shot_message_turns=0 few_shots_as_messages=False prompt_chars=18085
+2026-08-12 19:38:10.258 | INFO     | cuga.backend.cuga_graph.utils.context_summarizer:_setup_model_profile:93 - Set model profile: max_input_tokens=400000 for azure/gpt-5.6-luna
+2026-08-12 19:38:10.258 | INFO     | cuga.backend.cuga_graph.utils.context_summarizer:_init_middleware:80 - Context summarization initialized: trigger=('fraction', 0.7), keep=('messages', 10), model=azure/gpt-5.6-luna
+2026-08-12 19:38:10.259 | DEBUG    | cuga.backend.cuga_graph.utils.token_counter:count_total_context_tokens:612 - Total context tokens: 4899 (messages: 61, tools: 0, prompt: 4829, overhead: 9)
+2026-08-12 19:38:10.259 | INFO     | cuga.backend.cuga_graph.nodes.cuga_agent_core.graph.shared_nodes:call_model:178 - call_model: 2 messages → model (CugaLite)
+2026-08-12 19:38:35.225 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_agent_core.policy.tool_approval_handler:check_and_create_approval_interrupt:116 - Checking if code requires tool approval (code length: 79 chars)
+2026-08-12 19:38:35.225 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_agent_core.policy.tool_approval_handler:check_and_create_approval_interrupt:119 - Got policy system: <cuga.backend.cuga_graph.policy.configurable.PolicyConfigurable object at 0x150441400>
+2026-08-12 19:38:35.226 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_agent_core.policy.tool_approval_handler:check_and_create_approval_interrupt:122 - Created context with user_input: '¬(A ∧ B) ↔ (¬A ∨ ¬B)
+¬(A ∨ B) ↔ (¬A ∧ ¬B)
+(A → B) ↔ (¬B → ¬A)
+(A → B) ↔ (¬A ∨ B)
+(¬A → B) ↔ (A ∨ ¬B)
+¬(A → B) ↔ (A ∧ ¬B)
+
+Which of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.'
+2026-08-12 19:38:35.226 | DEBUG    | cuga.backend.cuga_graph.policy.agent:check_tool_approval_for_code:1302 - check_tool_approval_for_code called with code: calculation_check = await calculator("(1 and 0) == 0")
+print(calculation_check)...
+2026-08-12 19:38:35.226 | DEBUG    | cuga.backend.cuga_graph.policy.agent:check_tool_approval_for_code:1309 - Found 0 enabled ToolApproval policies
+2026-08-12 19:38:35.226 | DEBUG    | cuga.backend.cuga_graph.policy.agent:check_tool_approval_for_code:1312 - No ToolApproval policies configured
+2026-08-12 19:38:35.226 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_agent_core.policy.tool_approval_handler:check_and_create_approval_interrupt:125 - Policy match result: None
+2026-08-12 19:38:35.226 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_agent_core.policy.tool_approval_handler:check_and_create_approval_interrupt:128 - No ToolApproval policy matched the generated code
+2026-08-12 19:38:35.228 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.tracking.tracker:start_tracking:92 - Tool call tracking started
+2026-08-12 19:38:35.228 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.sandbox_node:sandbox:131 - 
+
+------
+
+📝 Generated code:
+
+calculation_check = await calculator("(1 and 0) == 0")
+print(calculation_check)
+
+------
+
+
+2026-08-12 19:38:35.229 | DEBUG    | cuga.backend.cuga_graph.policy.tool_guard.tool_guard_runtime:guard_tool_call:800 - No guards registered for tool 'calculator'
+2026-08-12 19:38:35.232 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.sandbox_node:sandbox:153 - 
+
+------
+
+📝 Execution output:
+
+Calculator error: Unsupported calculator expression
+
+## New Variables Created:
+# Variables Summary
+
+## calculation_check
+- Type: str
+- Items: 51
+- Description: Created during code execution
+- Created: 2026-08-12 19:38:35
+- Value Preview: 'Calculator error: Unsupported calculator expression'
+
+
+------
+
+
+2026-08-12 19:38:35.232 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_agent_core.graph.graph_nodes:append_chat_messages_with_step_limit:198 - Step count: 2/70
+2026-08-12 19:38:35.232 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.tracking.tracker:stop_tracking:103 - Tool call tracking stopped, collected 1 calls
+2026-08-12 19:38:35.234 | INFO     | cuga.backend.cuga_graph.utils.context_summarizer:_setup_model_profile:93 - Set model profile: max_input_tokens=400000 for azure/gpt-5.6-luna
+2026-08-12 19:38:35.234 | INFO     | cuga.backend.cuga_graph.utils.context_summarizer:_init_middleware:80 - Context summarization initialized: trigger=('fraction', 0.7), keep=('messages', 10), model=azure/gpt-5.6-luna
+2026-08-12 19:38:35.234 | DEBUG    | cuga.backend.cuga_graph.utils.token_counter:count_total_context_tokens:612 - Total context tokens: 5501 (messages: 485, tools: 0, prompt: 4944, overhead: 72)
+2026-08-12 19:38:35.234 | INFO     | cuga.backend.cuga_graph.nodes.cuga_agent_core.graph.shared_nodes:call_model:178 - call_model: 4 messages → model (CugaLite)
+2026-08-12 19:38:56.229 | INFO     | cuga.sdk:sdk_callback_node:2079 - SDK callback node - processing subgraph results
+2026-08-12 19:38:56.229 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:74 - PolicyEnactment: Got policy system: <cuga.backend.cuga_graph.policy.configurable.PolicyConfigurable object at 0x150441400>
+2026-08-12 19:38:56.229 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:81 - PolicyEnactment: Created context with user_input='¬(A ∧ B) ↔ (¬A ∨ ¬B)
+¬(A ∨ B) ↔ (¬A ∧ ¬B)
+(A → B) ↔ (¬B → ¬A)
+(A → B) ↔ (¬A ∨ B)
+(¬A → B) ↔ (A ∨ ¬B)
+¬(A → B) ↔ (A ∧ ¬B)
+
+Which of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.', inferred target='agent_response'
+2026-08-12 19:38:56.229 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:950 - 🔍 Starting policy matching for target: 'agent_response'
+2026-08-12 19:38:56.229 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:957 -   - Filtering by policy types: [<PolicyType.OUTPUT_FORMATTER: 'output_formatter'>]
+2026-08-12 19:38:56.229 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:959 -   - user_input: ¬(A ∧ B) ↔ (¬A ∨ ¬B)
+¬(A ∨ B) ↔ (¬A ∧ ¬B)
+(A → B) ↔ (¬B → ¬A)
+(A → B) ↔ (¬A ∨ B)
+(¬A → B) ↔ (A ∨ ¬B)
+¬(A → B) ↔ (A ∧ ¬B)
+
+Which of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.
+2026-08-12 19:38:56.229 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:960 -   - chat_messages: ["¬(A ∧ B) ↔ (¬A ∨ ¬B)\n¬(A ∨ B) ↔ (¬A ∧ ¬B)\n(A → B) ↔ (¬B → ¬A)\n(A → B) ↔ (¬A ∨ B)\n(¬A → B) ↔ (A ∨ ¬B)\n¬(A → B) ↔ (A ∧ ¬B)\n\nWhich of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.", 'I’ll verify the six formulas by evaluating their truth conditions symbolically; the key is to identify which one differs from the common equivalence pattern.\nI’m using the calculator tool as the available computation check, then I’ll compare the resulting truth conditions.\n```python\ncalculation_check = await calculator("(1 and 0) == 0")\nprint(calculation_check)\n```\nThe formulas can be checked directly by their standard truth conditions: the first four are standard equivalences, while the last two are negation/contraposition transformations. I’ll run a compact truth-table check for all six.\n```python\nlogic_check = await web_search("which of these logical equivalences is not equivalent De Morgan implication negation (¬A → B) ↔ (A ∨ ¬B)", 3)\nprint(logic_check)\n```\nNeed an external verification of the logical identities; I’m searching for the standard equivalence rules before identifying the outlier.\n```python\nlogic_check = await web_search("logical equivalences De Morgan laws implication contrapositive negation of implication", 3)\nprint(logic_check)\n```\n```python\nlogic_check = await web_search("logical equivalences De Morgan laws implication contrapositive negation of implication", 3)\nprint(logic_check)\n```\nThe statement that does not fit is:\n\n**(¬A → B) ↔ (A ∨ ¬B)**\n\nSince **¬A → B** is equivalent to **A ∨ B**, not **A ∨ ¬B**.', "Execution output:\nCalculator error: Unsupported calculator expression\n\n## New Variables Created:\n# Variables Summary\n\n## calculation_check\n- Type: str\n- Items: 51\n- Description: Created during code execution\n- Created: 2026-08-12 19:38:35\n- Value Preview: 'Calculator error: Unsupported calculator expression'\n\n\n## Available Variables\n\n# Variables Summary\n\n## calculation_check\n- Type: str\n- Items: 51\n- Description: Created during code execution\n- Created: 2026-08-12 19:38:35\n- Value Preview: 'Calculator error: Unsupported calculator expression'\n\nYou can use these variables directly by their names.", 'The statement that does not fit is:\n\n**(¬A → B) ↔ (A ∨ ¬B)**\n\nBecause:\n\n**¬A → B ≡ A ∨ B**, not **A ∨ ¬B**.\n\nThe other five statements are logically valid equivalences.']
+2026-08-12 19:38:56.229 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:701 - 🔍 Evaluating keyword-triggered policies for target: 'agent_response'
+2026-08-12 19:38:56.229 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:728 - No policies with keyword triggers for target 'agent_response'
+2026-08-12 19:38:56.229 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:785 - 🔍 Evaluating natural language policies for target: 'agent_response'
+2026-08-12 19:38:56.230 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:817 - No policies with NL triggers for target 'agent_response'
+2026-08-12 19:38:56.230 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:87 - PolicyEnactment: Policy match result: matched=False, reasoning=No policies matched the current context
+2026-08-12 19:38:56.230 | INFO     | cuga.sdk:sdk_callback_node:2129 - Routing to FinalAnswerAgent with answer: The statement that does not fit is:
+
+**(¬A → B) ↔ (A ∨ ¬B)**
+
+Because:
+
+**¬A → B ≡ A ∨ B**, not **A ∨ ¬B**.
+
+The other five statements are logically valid equivalences.

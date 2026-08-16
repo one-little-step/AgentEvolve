@@ -96,6 +96,7 @@ _POSITIVE_INT_FIELDS = (
     "entropy_min_comparable_candidates",
     "entropy_min_rollouts_per_candidate",
     "max_clusters_per_task",
+    "max_analyzer_workers",
 )
 
 
@@ -117,6 +118,11 @@ class ResolvedConfig:
     entropy_min_rollouts_per_candidate: int = 2
     cluster_similarity_threshold: float = 0.80
     max_clusters_per_task: int = 12
+    # Bounded fan-out for trajectory analysis. Analyzing distinct
+    # (candidate, task) rollout groups is independent, read-only work, so it
+    # parallelizes; analysis is LLM-latency-bound. 1 means inline/sequential.
+    # This bounds analyzer concurrency only -- never artifact writes.
+    max_analyzer_workers: int = 1
     generalization_probe_mode: Literal["deferred", "enabled"] = "deferred"
     probe_budget_fraction: float = 0.15
     champion_alpha: float = 0.55
@@ -186,6 +192,7 @@ class ResolvedConfig:
             "entropy_min_rollouts_per_candidate": self.entropy_min_rollouts_per_candidate,
             "cluster_similarity_threshold": self.cluster_similarity_threshold,
             "max_clusters_per_task": self.max_clusters_per_task,
+            "max_analyzer_workers": self.max_analyzer_workers,
             "generalization_probe_mode": self.generalization_probe_mode,
             "probe_budget_fraction": self.probe_budget_fraction,
             "champion_alpha": self.champion_alpha,
@@ -233,6 +240,7 @@ _VALID_OVERRIDES = {
     "entropy_min_rollouts_per_candidate",
     "cluster_similarity_threshold",
     "max_clusters_per_task",
+    "max_analyzer_workers",
     "generalization_probe_mode",
     "probe_budget_fraction",
     "champion_alpha",

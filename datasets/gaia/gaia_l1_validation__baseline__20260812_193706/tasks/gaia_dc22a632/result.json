@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-dc22a632",
+  "gaia_task_id": "dc22a632-937f-4e6a-b72f-ba0ff3f5ff97",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "What was the complete title of the book in which two James Beard Award winners recommended the restaurant where Ali Khan enjoyed a New Mexican staple in his cost-conscious TV show that started in 2015? Write the numbers in plain text if there are some in the title.",
+  "expected_regex": "(?i)\\bFive\\ Hundred\\ Things\\ To\\ Eat\\ Before\\ It's\\ Too\\ Late:\\ and\\ the\\ Very\\ Best\\ Places\\ to\\ Eat\\ Them\\b",
+  "started_at": "2026-08-12T14:09:51.562009+00:00",
+  "ended_at": "2026-08-12T14:10:40.526835+00:00",
+  "elapsed_seconds": 48.96489779197145,
+  "elapsed": "00:00:48.96",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "0fa07a2b-e8f1-4fcd-a693-756d14496e3d",
+  "answer": "I’ll trace the clues from Ali Khan’s show and the New Mexican dish to the restaurant, then verify which book’s complete title contains the two James Beard Award winners’ recommendation.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/0fa07a2b-e8f1-4fcd-a693-756d14496e3d.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\bFive\\ Hundred\\ Things\\ To\\ Eat\\ Before\\ It's\\ Too\\ Late:\\ and\\ the\\ Very\\ Best\\ Places\\ to\\ Eat\\ Them\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "failed_direct"
+}

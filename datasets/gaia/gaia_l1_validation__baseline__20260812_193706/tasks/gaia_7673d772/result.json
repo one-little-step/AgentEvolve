@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-7673d772",
+  "gaia_task_id": "7673d772-ef80-4f0f-a602-1bf4485c9b43",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "On Cornell Law School website's legal information institute, under the fifth section of federal rules alphabetically, what word was deleted in the last amendment to the first rule in the article that has \"witnesses\" in the most titles as of 2021?",
+  "expected_regex": "(?i)\\binference\\b",
+  "started_at": "2026-08-12T14:09:28.439652+00:00",
+  "ended_at": "2026-08-12T14:10:43.894762+00:00",
+  "elapsed_seconds": 75.4553847090574,
+  "elapsed": "00:01:15.46",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "9c6df957-68bf-43bd-8073-4172cc7f8661",
+  "answer": "I’ll identify the relevant Cornell LII rules section and article by searching the site, then verify the amendment history of its first rule and the deleted word.\nI’m sorry, but I couldn’t complete the web lookup needed to answer this reliably.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/9c6df957-68bf-43bd-8073-4172cc7f8661.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\binference\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "failed_direct"
+}

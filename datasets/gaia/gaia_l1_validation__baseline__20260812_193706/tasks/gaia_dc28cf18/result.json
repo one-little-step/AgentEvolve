@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-dc28cf18",
+  "gaia_task_id": "dc28cf18-6431-458b-83ef-64b3ce566c10",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "My family reunion is this week, and I was assigned the mashed potatoes to bring. The attendees include my married mother and father, my twin brother and his family, my aunt and her family, my grandma and her brother, her brother's daughter, and his daughter's family. All the adults but me have been married, and no one is divorced or remarried, but my grandpa and my grandma's sister-in-law passed away last year. All living spouses are attending. My brother has two children that are still kids, my aunt has one six-year-old, and my grandma's brother's daughter has three kids under 12. I figure each adult will eat about 1.5 potatoes of mashed potatoes and each kid will eat about 1/2 a potato of mashed potatoes, except my second cousins don't eat carbs. The average potato is about half a pound, and potatoes are sold in 5-pound bags. How many whole bags of potatoes do I need? Just give the number.",
+  "expected_regex": "(?i)\\b2\\b",
+  "started_at": "2026-08-12T14:07:06.564291+00:00",
+  "ended_at": "2026-08-12T14:07:51.171793+00:00",
+  "elapsed_seconds": 44.60748541704379,
+  "elapsed": "00:00:44.61",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "d3532160-2ca0-4f24-950a-0e952fcabb0f",
+  "answer": "Need calculate the attendee portions and round up to whole 5-pound bags. I count 11 adults and 3 carb-eating children; the three second cousins are excluded.\n2",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/d3532160-2ca0-4f24-950a-0e952fcabb0f.json",
+  "direct_regex": {
+    "available": true,
+    "passed": true,
+    "pattern": "(?i)\\b2\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-dc28cf18",
+    "verdict": "correct",
+    "reason": "The agent gives the correct required number of 2 whole bags.",
+    "answer_span": "2"
+  },
+  "status": "passed_llm"
+}

@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-8e867cd7",
+  "gaia_task_id": "8e867cd7-cff9-4e6c-867a-ff5ddc2550be",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "How many studio albums were published by Mercedes Sosa between 2000 and 2009 (included)? You can use the latest 2022 version of english wikipedia.",
+  "expected_regex": "(?i)\\b3\\b",
+  "started_at": "2026-08-12T22:22:33.655710+00:00",
+  "ended_at": "2026-08-12T22:23:06.536747+00:00",
+  "elapsed_seconds": 32.88090841600206,
+  "elapsed": "00:00:32.88",
+  "return_code": -2,
+  "timed_out": false,
+  "error": "run2.py exited with code -2",
+  "run_id": null,
+  "answer": "",
+  "tool_calls": [],
+  "trace": null,
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\b3\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "errored"
+}

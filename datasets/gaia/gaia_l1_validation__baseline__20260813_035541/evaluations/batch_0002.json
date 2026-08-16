@@ -1,0 +1,62 @@
+[
+  {
+    "task_id": "gaia-72e110e7",
+    "verdict": "wrong",
+    "reason": "The expected country is Guatemala, but the agent answered China.",
+    "answer_span": "The article was from China."
+  },
+  {
+    "task_id": "gaia-4fc2f1ae",
+    "verdict": "correct",
+    "reason": "The agent identifies FunkMonk as the nominator, matching the expected answer.",
+    "answer_span": "it was nominated by **FunkMonk**."
+  },
+  {
+    "task_id": "gaia-4b650a35",
+    "verdict": "correct",
+    "reason": "The agent followed the instruction to write only “Guava.”",
+    "answer_span": "Guava"
+  },
+  {
+    "task_id": "gaia-e1fc63a2",
+    "verdict": "wrong",
+    "reason": "The question asks for the number of thousand hours, whose expected response is 17; the agent gave 17000 hours instead.",
+    "answer_span": "Rounded to the nearest 1000 hours: **17000 hours**"
+  },
+  {
+    "task_id": "gaia-42576abe",
+    "verdict": "wrong",
+    "reason": "The expected Tizin translation is “Maktay Mato Apple”; the agent used the wrong forms, “Zapple Pa.”",
+    "answer_span": "Maktay Zapple Pa."
+  },
+  {
+    "task_id": "gaia-6f37996b",
+    "verdict": "correct",
+    "reason": "The only unequal pair in reversed order is b and e, so the requested subset is b,e.",
+    "answer_span": "b,e"
+  },
+  {
+    "task_id": "gaia-b415aba4",
+    "verdict": "wrong",
+    "reason": "The agent explicitly declined to provide an answer and did not identify the nano-compound, which is diamond.",
+    "answer_span": "I’m sorry, but I couldn’t complete the verification reliably"
+  },
+  {
+    "task_id": "gaia-9d191bce",
+    "verdict": "correct",
+    "reason": "The agent gives “Extremely,” matching Teal’c’s response and the expected answer.",
+    "answer_span": "Teal’c says, “Extremely.”"
+  },
+  {
+    "task_id": "gaia-dc28cf18",
+    "verdict": "correct",
+    "reason": "The calculated requirement rounds up to two 5-pound bags, matching the answer.",
+    "answer_span": "2"
+  },
+  {
+    "task_id": "gaia-c714ab3a",
+    "verdict": "correct",
+    "reason": "If everyone gives the statement and vampires always lie, the statement must be false, meaning all 100 residents are vampires.",
+    "answer_span": "all 100 residents are vampires"
+  }
+]

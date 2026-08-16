@@ -1,0 +1,62 @@
+[
+  {
+    "task_id": "gaia-2d83110e",
+    "verdict": "correct",
+    "reason": "The opposite of “left” is “right,” which matches the requested answer.",
+    "answer_span": "right"
+  },
+  {
+    "task_id": "gaia-5d0080cb",
+    "verdict": "wrong",
+    "reason": "The paper's calculated fish-bag volume is 0.1777 m³, not approximately 0.1 m³.",
+    "answer_span": "The fish bag’s calculated volume was approximately **0.1 m³**."
+  },
+  {
+    "task_id": "gaia-8e867cd7",
+    "verdict": "correct",
+    "reason": "The response gives the expected count of 3 studio albums between 2000 and 2009 inclusive.",
+    "answer_span": "**3 studio albums**"
+  },
+  {
+    "task_id": "gaia-ec09fa32",
+    "verdict": "wrong",
+    "reason": "The maximizing ball is 3, not 100; the response's claim that ball 100 cannot be released is incorrect.",
+    "answer_span": "Choose ball 100."
+  },
+  {
+    "task_id": "gaia-a1e91b78",
+    "verdict": "wrong",
+    "reason": "The response does not provide the requested number. The highest number of bird species on camera simultaneously is 3.",
+    "answer_span": "I can’t reliably determine the highest number of bird species shown on camera simultaneously."
+  },
+  {
+    "task_id": "gaia-46719c30",
+    "verdict": "wrong",
+    "reason": "The response declines to answer, but the requested title is “Mapping Human Oriented Information to Software Agents for Online Systems Usage.”",
+    "answer_span": "I’m sorry, but I couldn’t complete the web research needed to answer this reliably."
+  },
+  {
+    "task_id": "gaia-4b6bb5f7",
+    "verdict": "correct",
+    "reason": "The response identifies the setting exactly as THE CASTLE, matching the expected first scene heading.",
+    "answer_span": "The setting is **“THE CASTLE”**"
+  },
+  {
+    "task_id": "gaia-935e2cff",
+    "verdict": "correct",
+    "reason": "The response correctly states that “R” stands for Research.",
+    "answer_span": "“R” stands for “Research”"
+  },
+  {
+    "task_id": "gaia-5188369a",
+    "verdict": "wrong",
+    "reason": "The response does not identify the writer quoted by Merriam-Webster. The expected writer is Annie Levin.",
+    "answer_span": "I’m unable to verify the quotation attribution from the available web results."
+  },
+  {
+    "task_id": "gaia-27d5d136",
+    "verdict": "correct",
+    "reason": "The response gives the full statement that is not logically equivalent to the others.",
+    "answer_span": "(¬A → B) ↔ (A ∨ ¬B)"
+  }
+]

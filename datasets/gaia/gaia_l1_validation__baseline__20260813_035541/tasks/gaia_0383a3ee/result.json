@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-0383a3ee",
+  "gaia_task_id": "0383a3ee-47a7-41a4-b493-519bdefe0488",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "On the BBC Earth YouTube video of the Top 5 Silliest Animal Moments, what species of bird is featured?",
+  "expected_regex": "(?i)\\bRockhopper\\ penguin\\b",
+  "started_at": "2026-08-12T22:26:57.019848+00:00",
+  "ended_at": "2026-08-12T22:28:43.841723+00:00",
+  "elapsed_seconds": 106.82131100003608,
+  "elapsed": "00:01:46.82",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "d290ec57-b82c-4535-8c27-aaf5bbbda27a",
+  "answer": "The indexed description only says “penguin,” not the exact species. I’m checking additional references to the specific clip so I don’t overstate a species-level identification.\nThe bird featured is a penguin. The available BBC Earth description does not specify the penguin species.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/d290ec57-b82c-4535-8c27-aaf5bbbda27a.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\bRockhopper\\ penguin\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-0383a3ee",
+    "verdict": "wrong",
+    "reason": "The question asks for the species, specifically a rockhopper penguin, while the answer only says penguin.",
+    "answer_span": "The bird featured is a penguin."
+  },
+  "status": "failed_llm"
+}

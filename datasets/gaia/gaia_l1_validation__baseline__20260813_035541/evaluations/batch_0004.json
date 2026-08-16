@@ -1,0 +1,62 @@
+[
+  {
+    "task_id": "gaia-dc22a632",
+    "verdict": "wrong",
+    "reason": "The answer gives a different book title than the requested title, which is Five Hundred Things to Eat Before It's Too Late: and the Very Best Places to Eat Them.",
+    "answer_span": "The book was *Roadfood: The Coast-to-Coast Guide to Nine Hundred of the Best Barbecue Joints, Lobster Shacks, Ice-Cream Parlors, Highway Diners, and Much, Much More* by Jane and Michael Stern."
+  },
+  {
+    "task_id": "gaia-b816bfce",
+    "verdict": "wrong",
+    "reason": "The requested quoted word was “fluffy,” not “ruining.”",
+    "answer_span": "The word was “ruining.”"
+  },
+  {
+    "task_id": "gaia-23dd907f",
+    "verdict": "wrong",
+    "reason": "The response does not provide the stanza number; the correct stanza is stanza 2.",
+    "answer_span": "I’m unable to verify the poem’s stanza formatting from the available sources."
+  },
+  {
+    "task_id": "gaia-0383a3ee",
+    "verdict": "wrong",
+    "reason": "The question asks for the species, specifically a rockhopper penguin, while the answer only says penguin.",
+    "answer_span": "The bird featured is a penguin."
+  },
+  {
+    "task_id": "gaia-3f57289b",
+    "verdict": "wrong",
+    "reason": "The response does not give the requested at-bat count, which is 519.",
+    "answer_span": "I’m unable to retrieve the source page in this turn, so I can’t reliably resolve the conflicting figures."
+  },
+  {
+    "task_id": "gaia-a0c07678",
+    "verdict": "wrong",
+    "reason": "The response does not identify the pitchers before and after Taishō Tamai; the requested answer is Yoshida, Uehara.",
+    "answer_span": "I’m sorry, but I wasn’t able to verify the July 2023 roster details reliably from the available sources."
+  },
+  {
+    "task_id": "gaia-840bfca7",
+    "verdict": "wrong",
+    "reason": "The stated NASA award number is incorrect; the expected award number is 80GSFC21M0002.",
+    "answer_span": "R. G. Arendt’s work was supported by NASA award number 80NSSC20K0644."
+  },
+  {
+    "task_id": "gaia-bda648d7",
+    "verdict": "wrong",
+    "reason": "The question explicitly requests the city name without abbreviations; the answer uses “St.” instead of “Saint.”",
+    "answer_span": "St. Petersburg"
+  },
+  {
+    "task_id": "gaia-a0068077",
+    "verdict": "correct",
+    "reason": "The answer correctly states that the actual enrollment was 90 participants.",
+    "answer_span": "The actual enrollment was 90 participants"
+  },
+  {
+    "task_id": "gaia-5a0c1adf",
+    "verdict": "wrong",
+    "reason": "The requested first name is Claus, not Zvonimir.",
+    "answer_span": "Therefore, the requested first name is **Zvonimir**."
+  }
+]

@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-5d0080cb",
+  "gaia_task_id": "5d0080cb-90d7-4712-bc33-848150e917d3",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "What was the volume in m^3 of the fish bag that was calculated in the University of Leicester paper \"Can Hiccup Supply Enough Fish to Maintain a Dragon’s Diet?\"",
+  "expected_regex": "(?i)\\b0\\.1777\\b",
+  "started_at": "2026-08-12T22:22:33.655465+00:00",
+  "ended_at": "2026-08-12T22:23:06.273942+00:00",
+  "elapsed_seconds": 32.61793837498408,
+  "elapsed": "00:00:32.62",
+  "return_code": -2,
+  "timed_out": false,
+  "error": "run2.py exited with code -2",
+  "run_id": null,
+  "answer": "",
+  "tool_calls": [],
+  "trace": null,
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\b0\\.1777\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "errored"
+}

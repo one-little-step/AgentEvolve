@@ -11,54 +11,26 @@ Because tool_call payloads are exposed and a tool result can contain
 answer-shaped free text, a fail-closed contamination guard drops any payload
 containing an expected-contract value. The guard consumes expected_contract to
 build its term list; it never emits it.
+
+The guard primitives (``contamination_terms_from``, ``is_contaminated``,
+``strip_blob_refs``) live in :mod:`agent_evolve.core.evidence` and are imported
+here. The analyzer boundary needs the identical logic, and two copies of a
+security guard is one copy that will drift. ``contamination_terms_from`` is
+re-exported for existing callers of this module.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from agent_evolve.core.blame import CausalAnalysis
 from agent_evolve.core.contracts import EvolutionTask, ExecutionTrace
+from agent_evolve.core.evidence import (
+    contamination_terms_from,
+    is_contaminated,
+    strip_blob_refs,
+)
 
-# Content-addressed blob references. Forwarded nowhere: blob bodies carry raw
-# prompts and AgentState.
-_REF_SUFFIX = "_ref"
-
-# Terms shorter than this are unsafe to scan for: they match incidental text and
-# would redact legitimate evidence.
-_MIN_TERM_LENGTH = 3
-
-
-def contamination_terms_from(task: EvolutionTask) -> tuple[str, ...]:
-    """Extract every scannable string in a task's expected contract, at any depth.
-
-    Recursion is load-bearing, not defensive generality. A shallow
-    ``.values()`` scan sees ``{"expected_substring": "tok"}`` but misses
-    ``{"expected_any": ["tok"]}`` and ``{"grader": {"expected": "tok"}}``,
-    yielding zero terms -- and a guard with zero terms passes every payload
-    through. A contract shape the extractor cannot see is a contract the guard
-    cannot enforce, so the extractor must not assume a flat mapping.
-    """
-    terms: list[str] = []
-    _collect_terms(task.expected_contract, terms)
-    # Deduplicate while preserving first-seen order for deterministic output.
-    return tuple(dict.fromkeys(terms))
-
-
-def _collect_terms(value: object, out: list[str]) -> None:
-    """Walk an arbitrary contract value, appending scannable strings."""
-    if isinstance(value, str):
-        if len(value) >= _MIN_TERM_LENGTH:
-            out.append(value)
-        return
-    if isinstance(value, Mapping):
-        for item in value.values():
-            _collect_terms(item, out)
-        return
-    # Sequences of values, excluding the str case handled above.
-    if isinstance(value, (list, tuple, set, frozenset)):
-        for item in value:
-            _collect_terms(item, out)
+__all__ = ["EvidenceView", "contamination_terms_from"]
 
 
 @dataclass(slots=True)
@@ -146,18 +118,11 @@ class EvidenceView:
         # Only tool_call payloads carry environment evidence worth exposing.
         if kind != "tool_call":
             return {}, False
-        cleaned = {
-            key: value
-            for key, value in payload.items()
-            if not key.endswith(_REF_SUFFIX)
-        }
+        cleaned = strip_blob_refs(payload)
         if self._is_contaminated(cleaned):
             self._redactions += 1
             return {}, True
         return cleaned, False
 
     def _is_contaminated(self, payload: dict[str, object]) -> bool:
-        if not self.contamination_terms:
-            return False
-        blob = repr(payload)
-        return any(term in blob for term in self.contamination_terms)
+        return is_contaminated(payload, self.contamination_terms)

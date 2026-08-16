@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-4fc2f1ae",
+  "gaia_task_id": "4fc2f1ae-8625-45b5-ab34-ad4433bc21f8",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "Who nominated the only Featured Article on English Wikipedia about a dinosaur that was promoted in November 2016?",
+  "expected_regex": "(?i)\\bFunkMonk\\b",
+  "started_at": "2026-08-12T14:08:02.315463+00:00",
+  "ended_at": "2026-08-12T14:08:54.563305+00:00",
+  "elapsed_seconds": 52.24791629204992,
+  "elapsed": "00:00:52.25",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "929d259d-84f6-48a8-96a9-54e62fa63c04",
+  "answer": "I’ll search for the November 2016 Featured Article promotion record, identify the dinosaur article, then verify its nomination details from the relevant Wikipedia pages.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/929d259d-84f6-48a8-96a9-54e62fa63c04.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\bFunkMonk\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-4fc2f1ae",
+    "verdict": "wrong",
+    "reason": "The agent did not identify who nominated the Featured Article.",
+    "answer_span": "I’ll search for the November 2016 Featured Article promotion record..."
+  },
+  "status": "failed_llm"
+}

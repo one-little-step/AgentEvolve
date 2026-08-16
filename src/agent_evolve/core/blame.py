@@ -228,6 +228,174 @@ def empty_analysis() -> CausalAnalysis:
     )
 
 
+# ---------------------------------------------------------------------- #
+# Placeholder mechanisms
+# ---------------------------------------------------------------------- #
+# ``CausalAnalysis.mechanism`` is required to be non-empty, so a caller with no
+# mechanism to report must still put *something* there. Anything plausible-looking
+# would be indistinguishable from a real analyzer verdict once it reaches
+# clustering, entropy and DPP selection -- which is exactly how the old
+# ``f"failed-to-match-{task_id}"`` template produced degenerate clusters. These
+# reserved values are deliberately not natural language: they share one prefix
+# that no analyzer output can collide with, so downstream code can filter them
+# with :func:`is_placeholder_mechanism` instead of pattern-matching prose.
+PLACEHOLDER_MECHANISM_PREFIX = "__placeholder__:"
+
+#: The analyzer ran and declined to conclude. The status is appended so the
+#: reason for the abstention survives into the mechanism string.
+ABSTAINED_MECHANISM_PREFIX = f"{PLACEHOLDER_MECHANISM_PREFIX}abstained:"
+
+#: No analyzer ran at all (the ``minimal`` profile has none). Constant, not
+#: task-derived: a per-task value would imply a per-task diagnosis that nobody
+#: made.
+UNANALYZED_MECHANISM = f"{PLACEHOLDER_MECHANISM_PREFIX}unanalyzed"
+
+
+def is_placeholder_mechanism(mechanism: str) -> bool:
+    """True when ``mechanism`` is a reserved non-mechanism sentinel.
+
+    Clustering, entropy and selection must be able to tell "no semantic
+    mechanism was produced" from "a mechanism was produced". ``"none"`` is not a
+    placeholder: it is the analyzer's real verdict that a successful rollout has
+    no failure mechanism.
+    """
+    return mechanism.startswith(PLACEHOLDER_MECHANISM_PREFIX)
+
+
+def abstained_analysis(
+    reason: str,
+    *,
+    score: float,
+    evidence: Sequence[str] = (),
+    analyzer_model_id: str = "",
+    judge_model_id: str = "",
+) -> CausalAnalysis:
+    """An analysis recording that no conclusion was reached.
+
+    Zero severity and an empty blame graph, always: severity is a *judged*
+    impact and blame is an *attribution*, and neither is claimable without a
+    conclusion. ``score`` is still carried, because failing to diagnose a
+    rollout does not un-measure it.
+    """
+    if not reason:
+        raise ValueError("reason is required")
+    return CausalAnalysis(
+        mechanism=f"{ABSTAINED_MECHANISM_PREFIX}{reason}",
+        severity=0.0,
+        score=score,
+        blame_graph=BlameGraph(nodes=()),
+        counterfactual_evidence=tuple(evidence),
+        analyzer_model_id=analyzer_model_id,
+        judge_model_id=judge_model_id,
+    )
+
+
+def unanalyzed_analysis(
+    *,
+    score: float,
+    actor_id: str,
+    analyzer_model_id: str = "",
+    judge_model_id: str = "",
+) -> CausalAnalysis:
+    """An analysis for a rollout that no analyzer examined.
+
+    Used by the ``minimal`` profile, which scores rollouts against the task
+    contract but configures no analyzer+judge. The blamed actor is kept because
+    it is directly observed in the trace (it is the first actor that acted); the
+    *mechanism* is the reserved :data:`UNANALYZED_MECHANISM` sentinel because no
+    mechanism was ever inferred. Severity is 1.0 only in the sense of "this
+    rollout did not satisfy the contract"; callers that need a judged severity
+    must supply an analyzer.
+    """
+    return CausalAnalysis(
+        mechanism=UNANALYZED_MECHANISM,
+        severity=1.0,
+        score=score,
+        blame_graph=BlameGraph(
+            nodes=(BlameNode(actor_id=actor_id, blame=1.0, artifacts=()),)
+        ),
+        analyzer_model_id=analyzer_model_id,
+        judge_model_id=judge_model_id,
+    )
+
+
+# ---------------------------------------------------------------------- #
+# CausalFinding -> CausalAnalysis
+# ---------------------------------------------------------------------- #
+def analysis_from_finding(
+    finding: CausalFinding,
+    *,
+    score: float,
+    analyzer_model_id: str = "",
+    judge_model_id: str = "",
+) -> CausalAnalysis:
+    """Project a report-based :class:`CausalFinding` onto a :class:`CausalAnalysis`.
+
+    Why ``score`` is a required keyword argument
+    --------------------------------------------
+    A finding is a **diagnosis**: it says what went wrong and how confident the
+    analyzer is. A score is a **measurement**: it says whether the rollout
+    satisfied the task contract. :class:`CausalFinding` deliberately has no
+    score, so the converter has nothing to read one from. Deriving it -- from
+    ``severity``, from ``confidence``, or from ``status`` -- would manufacture a
+    measurement out of an opinion. It therefore comes from the caller's own
+    evaluation step, and is keyword-only so it can never be supplied by
+    accident.
+
+    Status mapping
+    --------------
+    ==========================  ==========================================  ========  ===========
+    ``finding.status``          ``mechanism``                               severity  blame_graph
+    ==========================  ==========================================  ========  ===========
+    ``observed``                ``finding.mechanism_description``           finding's  finding's
+    ``uncertain``               ``__placeholder__:abstained:uncertain``     0.0       empty
+    ``insufficient_evidence``   ``...:abstained:insufficient_evidence``     0.0       empty
+    ``malformed``               ``__placeholder__:abstained:malformed``     0.0       empty
+    ==========================  ==========================================  ========  ===========
+
+    Only ``observed`` is a verdict the analyzer stands behind, and only
+    ``observed`` is validated by :class:`CausalFinding` to carry a mechanism,
+    severity, confidence and trace-backed evidence. For every other status the
+    conversion is lossy **on purpose**:
+
+    * The blame graph is dropped rather than forwarded. A non-``observed``
+      finding's graph is not evidence-checked by the model validator, so
+      forwarding it would let un-evidenced attribution reach the editor and the
+      score provenance as if it had been established.
+    * ``mechanism_description`` is dropped even when present. An abstaining
+      analyzer may still name a hunch; promoting a hunch into the mechanism
+      string would put it into clustering and entropy as a real mechanism.
+    * ``severity`` is forced to 0.0 for the same reason.
+
+    The finding's ``rationale`` and ``counterfactual_notes`` are preserved in
+    ``counterfactual_evidence``, so the abstention's reasoning is auditable
+    without being mistaken for a conclusion. ``score`` passes through unchanged.
+    """
+    if finding.status == "observed":
+        # The model validator guarantees these are set for ``observed``.
+        mechanism = finding.mechanism_description or ""
+        severity = finding.severity
+        assert mechanism, "CausalFinding validation guarantees a mechanism"
+        assert severity is not None, "CausalFinding validation guarantees severity"
+        return CausalAnalysis(
+            mechanism=mechanism,
+            severity=severity,
+            score=score,
+            blame_graph=finding.blame_graph,
+            counterfactual_evidence=finding.counterfactual_notes,
+            analyzer_model_id=analyzer_model_id,
+            judge_model_id=judge_model_id,
+        )
+
+    return abstained_analysis(
+        finding.status,
+        score=score,
+        evidence=(finding.rationale, *finding.counterfactual_notes),
+        analyzer_model_id=analyzer_model_id,
+        judge_model_id=judge_model_id,
+    )
+
+
 def merge_analyses(analyses: Iterable[CausalAnalysis]) -> CausalAnalysis:
     """Combine multiple analyses of the same rollout into one verdict.
 

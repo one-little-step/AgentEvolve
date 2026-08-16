@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-c365c1c7",
+  "gaia_task_id": "c365c1c7-a3db-4d5e-a9a1-66f56eae7865",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "Of the cities within the United States where U.S. presidents were born, which two are the farthest apart from the westernmost to the easternmost going east, giving the city names only? Give them to me in alphabetical order, in a comma-separated list",
+  "expected_regex": "(?i)\\bBraintree,\\ Honolulu\\b",
+  "started_at": "2026-08-12T22:27:22.834061+00:00",
+  "ended_at": "2026-08-12T22:27:49.924353+00:00",
+  "elapsed_seconds": 27.089935583993793,
+  "elapsed": "00:00:27.09",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "9c57daf4-d9dc-4192-94f8-e858e420658b",
+  "answer": "I’ll verify the full set of presidential birthplaces and compare the longitudes of U.S. birth cities, then return only the two endpoint city names alphabetically.\nHonolulu, Quincy",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/9c57daf4-d9dc-4192-94f8-e858e420658b.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\bBraintree,\\ Honolulu\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-c365c1c7",
+    "verdict": "wrong",
+    "reason": "The easternmost city expected is Braintree, and the response gave Quincy instead.",
+    "answer_span": "Honolulu, Quincy"
+  },
+  "status": "failed_llm"
+}

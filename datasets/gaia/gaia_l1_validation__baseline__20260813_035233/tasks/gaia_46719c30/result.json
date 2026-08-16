@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-46719c30",
+  "gaia_task_id": "46719c30-f4c3-4cad-be07-d5cb21eee6bb",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "Of the authors (First M. Last) that worked on the paper \"Pie Menus or Linear Menus, Which Is Better?\" in 2015, what was the title of the first paper authored by the one that had authored prior papers?",
+  "expected_regex": "(?i)\\bMapping\\ Human\\ Oriented\\ Information\\ to\\ Software\\ Agents\\ for\\ Online\\ Systems\\ Usage\\b",
+  "started_at": "2026-08-12T22:22:33.658034+00:00",
+  "ended_at": "2026-08-12T22:23:06.614344+00:00",
+  "elapsed_seconds": 32.95596608298365,
+  "elapsed": "00:00:32.96",
+  "return_code": -2,
+  "timed_out": false,
+  "error": "run2.py exited with code -2",
+  "run_id": null,
+  "answer": "",
+  "tool_calls": [],
+  "trace": null,
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\bMapping\\ Human\\ Oriented\\ Information\\ to\\ Software\\ Agents\\ for\\ Online\\ Systems\\ Usage\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "errored"
+}

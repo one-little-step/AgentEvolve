@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-46719c30",
+  "gaia_task_id": "46719c30-f4c3-4cad-be07-d5cb21eee6bb",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "Of the authors (First M. Last) that worked on the paper \"Pie Menus or Linear Menus, Which Is Better?\" in 2015, what was the title of the first paper authored by the one that had authored prior papers?",
+  "expected_regex": "(?i)\\bMapping\\ Human\\ Oriented\\ Information\\ to\\ Software\\ Agents\\ for\\ Online\\ Systems\\ Usage\\b",
+  "started_at": "2026-08-12T22:25:41.671682+00:00",
+  "ended_at": "2026-08-12T22:26:19.772519+00:00",
+  "elapsed_seconds": 38.100787541945465,
+  "elapsed": "00:00:38.10",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "4298c9be-70be-48aa-8911-d6bd659faad8",
+  "answer": "I’ll identify the 2015 paper and its authors, then verify each author’s publication history and determine the earliest prior paper title from reliable sources.\nI’m sorry, but I couldn’t complete the web research needed to answer this reliably.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/4298c9be-70be-48aa-8911-d6bd659faad8.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\bMapping\\ Human\\ Oriented\\ Information\\ to\\ Software\\ Agents\\ for\\ Online\\ Systems\\ Usage\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-46719c30",
+    "verdict": "wrong",
+    "reason": "The response declines to answer, but the requested title is “Mapping Human Oriented Information to Software Agents for Online Systems Usage.”",
+    "answer_span": "I’m sorry, but I couldn’t complete the web research needed to answer this reliably."
+  },
+  "status": "failed_llm"
+}

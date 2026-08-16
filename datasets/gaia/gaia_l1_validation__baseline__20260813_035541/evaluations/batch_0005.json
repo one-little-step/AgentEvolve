@@ -1,0 +1,14 @@
+[
+  {
+    "task_id": "gaia-cf106601",
+    "verdict": "correct",
+    "reason": "The answer CUB matches the IOC country code for Cuba, the country with the fewest athletes under the stated tie rule.",
+    "answer_span": "CUB"
+  },
+  {
+    "task_id": "gaia-50ec8903",
+    "verdict": "correct",
+    "reason": "The missing two-colored cube must be the green-white edge cube, and the colors are listed alphabetically as requested.",
+    "answer_span": "green, white"
+  }
+]

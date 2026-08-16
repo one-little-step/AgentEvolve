@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-2d83110e",
+  "gaia_task_id": "2d83110e-a098-4ebb-9987-066c06fa42d0",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": ".rewsna eht sa \"tfel\" drow eht fo etisoppo eht etirw ,ecnetnes siht dnatsrednu uoy fI",
+  "expected_regex": "(?i)\\bRight\\b",
+  "started_at": "2026-08-12T22:22:33.660719+00:00",
+  "ended_at": "2026-08-12T22:23:06.573165+00:00",
+  "elapsed_seconds": 32.9124750419287,
+  "elapsed": "00:00:32.91",
+  "return_code": -2,
+  "timed_out": false,
+  "error": "run2.py exited with code -2",
+  "run_id": null,
+  "answer": "",
+  "tool_calls": [],
+  "trace": null,
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\bRight\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "errored"
+}

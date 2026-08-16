@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-a0068077",
+  "gaia_task_id": "a0068077-79f4-461a-adfe-75c1a4148545",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "What was the actual enrollment count of the clinical trial on H. pylori in acne vulgaris patients from Jan-May 2018 as listed on the NIH website?",
+  "expected_regex": "(?i)\\b90\\b",
+  "started_at": "2026-08-12T14:09:56.962126+00:00",
+  "ended_at": "2026-08-12T14:10:36.210341+00:00",
+  "elapsed_seconds": 39.24821608397178,
+  "elapsed": "00:00:39.25",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "431d48ac-cd31-462f-a6d8-698e44f8e368",
+  "answer": "I’ll search the NIH ClinicalTrials.gov record for the H. pylori/acne vulgaris study and verify the enrollment field and date range from the source.\nSearching for the exact ClinicalTrials.gov study title and date window first; I’ll then open the NIH record to distinguish actual enrollment from the planned target.\nI’m unable to access the NIH record at the moment, so I can’t reliably verify the actual enrollment count.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/431d48ac-cd31-462f-a6d8-698e44f8e368.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\b90\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "failed_direct"
+}

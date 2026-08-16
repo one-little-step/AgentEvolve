@@ -1,0 +1,122 @@
+[
+  {
+    "task_id": "gaia-a1e91b78",
+    "verdict": "wrong",
+    "reason": "The agent did not provide the requested number and explicitly stated it could not determine the answer.",
+    "answer_span": "I can’t reliably determine the highest number of bird species shown simultaneously."
+  },
+  {
+    "task_id": "gaia-46719c30",
+    "verdict": "wrong",
+    "reason": "The agent did not answer the question.",
+    "answer_span": "I’m sorry, but I wasn’t able to complete the research reliably."
+  },
+  {
+    "task_id": "gaia-dc28cf18",
+    "verdict": "correct",
+    "reason": "The agent gives the correct required number of 2 whole bags.",
+    "answer_span": "2"
+  },
+  {
+    "task_id": "gaia-e1fc63a2",
+    "verdict": "wrong",
+    "reason": "The agent did not perform the requested calculation or provide a numerical answer.",
+    "answer_span": "I’m unable to access the web lookup tool needed to verify the Wikipedia values and perform the calculation."
+  },
+  {
+    "task_id": "gaia-4b6bb5f7",
+    "verdict": "wrong",
+    "reason": "The agent did not provide the setting from the official script.",
+    "answer_span": "I’m sorry, but I couldn’t verify the official script wording from the available sources."
+  },
+  {
+    "task_id": "gaia-2d83110e",
+    "verdict": "correct",
+    "reason": "The answer correctly gives the opposite of “left” as “right.”",
+    "answer_span": "right"
+  },
+  {
+    "task_id": "gaia-5d0080cb",
+    "verdict": "wrong",
+    "reason": "The reported volume, 0.03 m³, does not match the paper's calculated value of 0.1777 m³.",
+    "answer_span": "The paper calculated the fish bag’s volume as approximately **0.03 m³**."
+  },
+  {
+    "task_id": "gaia-b415aba4",
+    "verdict": "wrong",
+    "reason": "The agent did not identify the nano-compound.",
+    "answer_span": "I’m sorry, but I couldn’t complete the web search needed to identify the article reliably."
+  },
+  {
+    "task_id": "gaia-5188369a",
+    "verdict": "wrong",
+    "reason": "The agent provided no answer to the question.",
+    "answer_span": "I’ll search for Merriam-Webster’s June 27, 2022 Word of the Day page and verify the quoted writer from the page itself."
+  },
+  {
+    "task_id": "gaia-b816bfce",
+    "verdict": "wrong",
+    "reason": "The requested quoted word is “fluffy,” not “cute.”",
+    "answer_span": "The word was **“cute.”**"
+  },
+  {
+    "task_id": "gaia-935e2cff",
+    "verdict": "wrong",
+    "reason": "The question asks what R stands for in the relevant policy acronym, which is “research,” not “revert.”",
+    "answer_span": "“R” stands for “revert.”"
+  },
+  {
+    "task_id": "gaia-8e867cd7",
+    "verdict": "wrong",
+    "reason": "The agent did not provide the requested count and instead mentioned an unverified count of four; the correct count is 3.",
+    "answer_span": "The earlier answer of **four** should not be treated as verified."
+  },
+  {
+    "task_id": "gaia-42576abe",
+    "verdict": "wrong",
+    "reason": "The requested translation uses the accusative form “mato” for I and nominative “apple,” whereas the agent used “Zapple Pa.”",
+    "answer_span": "Maktay Zapple Pa."
+  },
+  {
+    "task_id": "gaia-4fc2f1ae",
+    "verdict": "wrong",
+    "reason": "The agent did not identify who nominated the Featured Article.",
+    "answer_span": "I’ll search for the November 2016 Featured Article promotion record..."
+  },
+  {
+    "task_id": "gaia-27d5d136",
+    "verdict": "correct",
+    "reason": "The agent correctly identifies the fifth statement as the one that is not logically equivalent to the others.",
+    "answer_span": "**(¬A → B) ↔ (A ∨ ¬B)**"
+  },
+  {
+    "task_id": "gaia-4b650a35",
+    "verdict": "correct",
+    "reason": "The agent followed the instruction to output only “Guava.”",
+    "answer_span": "Guava"
+  },
+  {
+    "task_id": "gaia-9d191bce",
+    "verdict": "wrong",
+    "reason": "The agent did not provide Teal’c’s response.",
+    "answer_span": "I’m unable to access or retrieve the YouTube video’s transcript with the available tools."
+  },
+  {
+    "task_id": "gaia-c714ab3a",
+    "verdict": "correct",
+    "reason": "The reasoning correctly shows that any human would make the statement true, contradicting the presence of lying vampires; therefore all 100 residents are vampires.",
+    "answer_span": "100 residents have been turned into vampires."
+  },
+  {
+    "task_id": "gaia-3cef3a44",
+    "verdict": "wrong",
+    "reason": "The agent incorrectly includes acorns and omits fresh basil; the requested botanical-vegetable list is broccoli, celery, fresh basil, lettuce, sweet potatoes.",
+    "answer_span": "acorns, broccoli, celery, lettuce, sweet potatoes"
+  },
+  {
+    "task_id": "gaia-ec09fa32",
+    "verdict": "wrong",
+    "reason": "The optimal selection is ball 3, not ball 2.",
+    "answer_span": "The best choice is **ball 2**."
+  }
+]

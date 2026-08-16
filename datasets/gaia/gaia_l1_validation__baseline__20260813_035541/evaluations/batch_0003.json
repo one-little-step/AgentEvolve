@@ -1,0 +1,62 @@
+[
+  {
+    "task_id": "gaia-305ac316",
+    "verdict": "wrong",
+    "reason": "The agent did not provide the requested first name and explicitly stated it could not verify the answer.",
+    "answer_span": "I’m unable to verify the actor and role from the available search results."
+  },
+  {
+    "task_id": "gaia-e142056d",
+    "verdict": "wrong",
+    "reason": "The agent did not complete the calculation or provide the minimum amount Bob can win.",
+    "answer_span": "I’m sorry, but I couldn’t complete the calculation."
+  },
+  {
+    "task_id": "gaia-50ad0280",
+    "verdict": "correct",
+    "reason": "The extracted sentence correctly uses all letters in order and matches the requested sentence.",
+    "answer_span": "THE SEAGULL GLIDED PEACEFULLY TO MY CHAIR."
+  },
+  {
+    "task_id": "gaia-c365c1c7",
+    "verdict": "wrong",
+    "reason": "The easternmost city expected is Braintree, and the response gave Quincy instead.",
+    "answer_span": "Honolulu, Quincy"
+  },
+  {
+    "task_id": "gaia-11af4e1a",
+    "verdict": "correct",
+    "reason": "The response correctly calculates 12 BERT-base encoder blocks minus 6 original Transformer encoder blocks as 6.",
+    "answer_span": "Therefore, BERT-base has 6 more blocks (twice as many)."
+  },
+  {
+    "task_id": "gaia-7673d772",
+    "verdict": "wrong",
+    "reason": "The requested deleted word was “inference,” but the agent answered “However.”",
+    "answer_span": "The deleted word was “However.”"
+  },
+  {
+    "task_id": "gaia-7d4a7d1d",
+    "verdict": "wrong",
+    "reason": "The agent did not provide the requested number of years; the expected answer is 22.",
+    "answer_span": "the exact number of years cannot be determined from the provided information."
+  },
+  {
+    "task_id": "gaia-d0633230",
+    "verdict": "correct",
+    "reason": "The response gives the requested predictor base command exactly.",
+    "answer_span": "BaseLabelPropagation"
+  },
+  {
+    "task_id": "gaia-cabe07ed",
+    "verdict": "wrong",
+    "reason": "The agent did not provide the requested veterinarian surname and stated that it could not establish the answer.",
+    "answer_span": "I’m unable to complete a reliable verification ... The evidence shown does not establish the surname conclusively."
+  },
+  {
+    "task_id": "gaia-3cef3a44",
+    "verdict": "correct",
+    "reason": "The response correctly lists the botanical vegetables, alphabetized and comma-separated, without botanical fruits.",
+    "answer_span": "broccoli, celery, fresh basil, lettuce, sweet potatoes"
+  }
+]

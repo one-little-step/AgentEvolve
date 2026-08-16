@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-2d83110e",
+  "gaia_task_id": "2d83110e-a098-4ebb-9987-066c06fa42d0",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": ".rewsna eht sa \"tfel\" drow eht fo etisoppo eht etirw ,ecnetnes siht dnatsrednu uoy fI",
+  "expected_regex": "(?i)\\bRight\\b",
+  "started_at": "2026-08-12T22:25:41.673072+00:00",
+  "ended_at": "2026-08-12T22:26:03.182552+00:00",
+  "elapsed_seconds": 21.509211709024385,
+  "elapsed": "00:00:21.51",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "57066ee4-8be1-4d6d-a1bb-97ade0f22805",
+  "answer": "right",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/57066ee4-8be1-4d6d-a1bb-97ade0f22805.json",
+  "direct_regex": {
+    "available": true,
+    "passed": true,
+    "pattern": "(?i)\\bRight\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-2d83110e",
+    "verdict": "correct",
+    "reason": "The opposite of “left” is “right,” which matches the requested answer.",
+    "answer_span": "right"
+  },
+  "status": "passed_llm"
+}

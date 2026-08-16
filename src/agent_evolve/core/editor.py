@@ -231,7 +231,26 @@ class FocusedValidationReport:
         return any(not r.passed for r in self.regression)
 
     def weighted_net_gain(self, weights: Mapping[ValidationKind, float] | None = None) -> float:
-        """Weighted sum of probe scores. Default weights favor origin + worked."""
+        """Weighted sum of probe evidence. Default weights favor origin + worked.
+
+        A regression probe is charged only when it **failed**, and then in
+        proportion to how far it fell (``1 - score``, so a probe that collapsed to
+        0.1 costs 0.9 while one that dipped to 0.9 costs 0.1). A regression probe
+        that PASSED contributes nothing: such a probe exists to confirm the edit
+        broke nothing, so passing it is evidence *for* the edit.
+
+        The previous formula applied the negative weight to every regression
+        probe's ``score``, which charged an edit for its own passing probes. An
+        edit that fixed its origin case and regressed nothing went non-positive as
+        soon as one regression probe existed (1.0 origin - 1.0 probe = 0.0), so
+        acceptance was arithmetically impossible at two or more tasks and every
+        self-improvement delta was forced to zero regardless of agent quality.
+
+        Hard regressions remain gated by :attr:`regression_violated` together with
+        protected floors; ``decide_acceptance`` deliberately tolerates a small
+        regression when net gain stays positive, so this term expresses magnitude,
+        not permission.
+        """
         w = weights or {
             ValidationKind.ORIGIN: 1.0,
             ValidationKind.WORKED: 0.5,
@@ -240,7 +259,13 @@ class FocusedValidationReport:
         }
         total = 0.0
         for r in self.all_results:
-            total += w.get(r.kind, 0.0) * r.score
+            weight = w.get(r.kind, 0.0)
+            if r.kind is ValidationKind.REGRESSION:
+                if r.passed:
+                    continue
+                total += weight * (1.0 - r.score)
+            else:
+                total += weight * r.score
         return total
 
 

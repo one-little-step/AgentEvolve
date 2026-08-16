@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-4b6bb5f7",
+  "gaia_task_id": "4b6bb5f7-f634-410e-815d-e673ab7f8632",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "In Series 9, Episode 11 of Doctor Who, the Doctor is trapped inside an ever-shifting maze. What is this location called in the official script for the episode? Give the setting exactly as it appears in the first scene heading.",
+  "expected_regex": "(?i)\\bTHE\\ CASTLE\\b",
+  "started_at": "2026-08-12T22:25:41.671816+00:00",
+  "ended_at": "2026-08-12T22:26:22.289298+00:00",
+  "elapsed_seconds": 40.617643583915196,
+  "elapsed": "00:00:40.62",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "7ffd95b6-83e0-40d0-87b7-41d2acc8c2f4",
+  "answer": "I need the official episode script text, specifically its opening scene heading rather than a summary of the setting. I’ll search for the script and verify the exact capitalization/wording in the first heading.\nThe search results will identify the script source; I’ll now inspect the most authoritative available transcript/script page and extract the first scene heading verbatim.\nI’m narrowing this to the production script, because fan transcripts may label the location differently. The key check is the first scene heading, not later descriptions of the castle/maze.\nI’ll test the likely BBC Writersroom PDF endpoint directly; if it is available, that is preferable to relying on a fan transcription.\nThe direct PDF route is not yielding usable text in this session, so I’ll cross-check against indexed script/transcript sources for the exact opening heading and compare their wording.\nI’ll make one final targeted lookup for the script’s opening slug line, including likely variants (“THE CASTLE” versus “CASTLE”), so the final wording is not paraphrased.\nThe setting is **“THE CASTLE”** — shown in the first scene heading as **“EXT. THE CASTLE – DAY.”**",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/7ffd95b6-83e0-40d0-87b7-41d2acc8c2f4.json",
+  "direct_regex": {
+    "available": true,
+    "passed": true,
+    "pattern": "(?i)\\bTHE\\ CASTLE\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-4b6bb5f7",
+    "verdict": "correct",
+    "reason": "The response identifies the setting exactly as THE CASTLE, matching the expected first scene heading.",
+    "answer_span": "The setting is **“THE CASTLE”**"
+  },
+  "status": "passed_llm"
+}

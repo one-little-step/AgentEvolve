@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-27d5d136",
+  "gaia_task_id": "27d5d136-8563-469e-92bf-fd103c28b57c",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "¬(A ∧ B) ↔ (¬A ∨ ¬B)\n¬(A ∨ B) ↔ (¬A ∧ ¬B)\n(A → B) ↔ (¬B → ¬A)\n(A → B) ↔ (¬A ∨ B)\n(¬A → B) ↔ (A ∨ ¬B)\n¬(A → B) ↔ (A ∧ ¬B)\n\nWhich of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.",
+  "expected_regex": "(?i)\\(¬A\\ →\\ B\\)\\ ↔\\ \\(A\\ ∨\\ ¬B\\)",
+  "started_at": "2026-08-12T22:22:33.661360+00:00",
+  "ended_at": "2026-08-12T22:23:06.529148+00:00",
+  "elapsed_seconds": 32.86791712511331,
+  "elapsed": "00:00:32.87",
+  "return_code": -2,
+  "timed_out": false,
+  "error": "run2.py exited with code -2",
+  "run_id": null,
+  "answer": "",
+  "tool_calls": [],
+  "trace": null,
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\(¬A\\ →\\ B\\)\\ ↔\\ \\(A\\ ∨\\ ¬B\\)",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "errored"
+}

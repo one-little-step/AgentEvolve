@@ -1,0 +1,173 @@
+2026-08-12 19:39:54.647 | INFO     | cuga.config:<module>:249 - Running cuga in *balanced* mode
+2026-08-12 19:39:54.647 | WARNING  | cuga.config:<module>:253 - tracker disabled - logs and trajectory data will not be saved
+2026-08-12 19:39:54.647 | INFO     | cuga.config:<module>:274 - loaded llm settings *settings.openai.toml*
+2026-08-12 19:39:54.647 | INFO     | cuga.config:<module>:280 - Models config path: /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/.venv/lib/python3.14/site-packages/cuga/configurations/models/settings.openai.toml
+2026-08-12 19:39:54.647 | INFO     | cuga.config:<module>:281 - Mode config path:   /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/.venv/lib/python3.14/site-packages/cuga/configurations/modes/balanced.toml
+2026-08-12 19:39:55.470 | WARNING  | cuga.backend.activity_tracker.tracker:<module>:28 - Ignoring agent analytics
+2026-08-12 19:39:55.508 | WARNING  | cuga.backend.cuga_graph.nodes.shared.base_agent:<module>:15 - Langchain Google GenAI not installed, using OpenAI instead
+2026-08-12 19:39:57.759 | INFO     | cuga.sdk:__init__:1827 - Created DirectLangChainToolsProvider with 5 tools
+2026-08-12 19:39:57.760 | INFO     | cuga.backend.llm.models:_get_model_name:593 - Using MODEL_NAME from environment: azure/gpt-5.6-luna
+2026-08-12 19:39:57.760 | INFO     | cuga.backend.llm.models:_get_base_url:831 - Using OPENAI_BASE_URL from environment: https://ete-litellm.ai-models.vpc-int.res.ibm.com
+2026-08-12 19:39:57.760 | INFO     | cuga.backend.llm.models:_get_model_name:593 - Using MODEL_NAME from environment: azure/gpt-5.6-luna
+2026-08-12 19:39:57.760 | INFO     | cuga.backend.llm.models:_get_base_url:831 - Using OPENAI_BASE_URL from environment: https://ete-litellm.ai-models.vpc-int.res.ibm.com
+2026-08-12 19:39:57.760 | DEBUG    | cuga.backend.llm.models:get_model:1417 - Creating new model: openai/azure/gpt-5.6-luna (api_version=None, base_url=https://ete-litellm.ai-models.vpc-int.res.ibm.com)
+2026-08-12 19:39:57.760 | INFO     | cuga.backend.llm.models:_get_model_name:593 - Using MODEL_NAME from environment: azure/gpt-5.6-luna
+2026-08-12 19:39:57.760 | INFO     | cuga.backend.llm.models:_get_base_url:831 - Using OPENAI_BASE_URL from environment: https://ete-litellm.ai-models.vpc-int.res.ibm.com
+2026-08-12 19:39:57.760 | INFO     | cuga.backend.llm.models:_create_llm_instance:1008 - Sampling config for openai/azure/gpt-5.6-luna: temperature=None, top_p=None, max_tokens=16000
+2026-08-12 19:39:57.760 | DEBUG    | cuga.backend.llm.models:_create_llm_instance:1057 - Skipping temperature for reasoning model: azure/gpt-5.6-luna
+2026-08-12 19:39:58.021 | DEBUG    | cuga.backend.llm.models:_update_model_parameters:359 - Skipping temperature update for reasoning model: azure/gpt-5.6-luna
+2026-08-12 19:39:58.021 | DEBUG    | cuga.backend.llm.models:_update_model_parameters:393 - Updated model parameters: temperature=0.1, max_tokens=16000, max_completion_tokens=16000
+2026-08-12 19:39:58.021 | INFO     | cuga.sdk:__init__:1850 - Using default model: ReasoningChatOpenAI
+2026-08-12 19:39:58.021 | INFO     | cuga.backend.cuga_graph.nodes.cuga_lite.providers.langchain:initialize:75 - Initializing DirectLangChainToolsProvider with 5 tools
+2026-08-12 19:39:58.021 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.providers.langchain:initialize:81 -   - calculator: Evaluate a mathematical expression safely.
+2026-08-12 19:39:58.021 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.providers.langchain:initialize:81 -   - web_search: Search the public web using SearXNG, Tavily, or DuckDuckGo fallback.
+2026-08-12 19:39:58.021 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.providers.langchain:initialize:81 -   - web_fetch: Fetch a public HTTP/HTTPS page and return extracted text; JavaScript is not executed.
+2026-08-12 19:39:58.021 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.providers.langchain:initialize:81 -   - wikipedia_search: Search Wikipedia using the official English Wikipedia MediaWiki API.
+
+Returns matching article title
+2026-08-12 19:39:58.021 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.providers.langchain:initialize:81 -   - save_note: Save a small local research note for this demo run.
+2026-08-12 19:40:00.480 | WARNING  | cuga.sdk:_ensure_initialized:1999 - Knowledge auto-injection failed (will retry): Knowledge engine already running in another process. Start with --workers 1
+2026-08-12 19:40:00.497 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:140 - Initializing policy system with:
+2026-08-12 19:40:00.497 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:141 -   Collection: cuga_policies
+2026-08-12 19:40:00.497 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:142 -   Embedding: provider=local, dim=384
+2026-08-12 19:40:00.579 | INFO     | cuga.backend.storage.embedding.embedding_service:_create_local:143 - Loading local embedding model: BAAI/bge-small-en-v1.5
+2026-08-12 19:40:00.922 | INFO     | cuga.backend.storage.embedding.embedding_service:_create_local:151 - ✅ Local embedding model loaded (dim=384)
+2026-08-12 19:40:00.923 | INFO     | cuga.backend.cuga_graph.policy.storage:_initialize_embedding_function:90 - ✅ Embedding function initialized (provider: local, dim: 384)
+2026-08-12 19:40:00.923 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:161 - PolicyStorage initialized with embedding function
+2026-08-12 19:40:00.923 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:171 - ✅ Using embedding function from storage (provider: local)
+2026-08-12 19:40:00.923 | INFO     | cuga.backend.llm.models:_get_model_name:593 - Using MODEL_NAME from environment: azure/gpt-5.6-luna
+2026-08-12 19:40:00.923 | INFO     | cuga.backend.llm.models:_get_base_url:831 - Using OPENAI_BASE_URL from environment: https://ete-litellm.ai-models.vpc-int.res.ibm.com
+2026-08-12 19:40:00.923 | INFO     | cuga.backend.llm.models:_get_model_name:593 - Using MODEL_NAME from environment: azure/gpt-5.6-luna
+2026-08-12 19:40:00.923 | INFO     | cuga.backend.llm.models:_get_base_url:831 - Using OPENAI_BASE_URL from environment: https://ete-litellm.ai-models.vpc-int.res.ibm.com
+2026-08-12 19:40:00.923 | DEBUG    | cuga.backend.llm.models:get_model:1403 - Returning cached model: openai/azure/gpt-5.6-luna (api_version=None, base_url=https://ete-litellm.ai-models.vpc-int.res.ibm.com)
+2026-08-12 19:40:00.923 | DEBUG    | cuga.backend.llm.models:_update_model_parameters:359 - Skipping temperature update for reasoning model: azure/gpt-5.6-luna
+2026-08-12 19:40:00.924 | DEBUG    | cuga.backend.llm.models:_update_model_parameters:393 - Updated model parameters: temperature=0.1, max_tokens=16000, max_completion_tokens=16000
+2026-08-12 19:40:00.924 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:183 - LLM initialized for policy matching
+2026-08-12 19:40:00.924 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:195 - PolicyAgent initialized
+2026-08-12 19:40:00.924 | INFO     | cuga.backend.cuga_graph.policy.configurable:initialize:198 - ✅ Policy system fully initialized
+2026-08-12 19:40:00.924 | DEBUG    | cuga.sdk:_ensure_policy_system:222 - Initialized filesystem sync for .cuga
+2026-08-12 19:40:00.925 | DEBUG    | cuga.sdk:_ensure_policy_system:248 - Checking for policy folder: .cuga
+2026-08-12 19:40:00.925 | DEBUG    | cuga.sdk:_ensure_policy_system:249 -   Current working directory: /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper
+2026-08-12 19:40:00.925 | DEBUG    | cuga.sdk:_ensure_policy_system:250 -   Resolved absolute path: /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/.cuga
+2026-08-12 19:40:00.925 | INFO     | cuga.sdk:load_from_folder:1344 - Loading policies from .cuga (clear_existing=False)
+2026-08-12 19:40:00.925 | DEBUG    | cuga.backend.cuga_graph.policy.folder_loader:load_policies_from_folder:383 - Subfolder .cuga/playbooks does not exist, skipping
+2026-08-12 19:40:00.925 | DEBUG    | cuga.backend.cuga_graph.policy.folder_loader:load_policies_from_folder:383 - Subfolder .cuga/output_formatters does not exist, skipping
+2026-08-12 19:40:00.925 | DEBUG    | cuga.backend.cuga_graph.policy.folder_loader:load_policies_from_folder:383 - Subfolder .cuga/tool_guides does not exist, skipping
+2026-08-12 19:40:00.925 | DEBUG    | cuga.backend.cuga_graph.policy.folder_loader:load_policies_from_folder:383 - Subfolder .cuga/intent_guards does not exist, skipping
+2026-08-12 19:40:00.925 | DEBUG    | cuga.backend.cuga_graph.policy.folder_loader:load_policies_from_folder:383 - Subfolder .cuga/tool_approvals does not exist, skipping
+2026-08-12 19:40:00.925 | DEBUG    | cuga.backend.cuga_graph.policy.configurable:initialize:113 - Policy system already initialized
+2026-08-12 19:40:00.925 | INFO     | cuga.sdk:load_from_folder:1361 - ✅ Loaded 0 policies from 0 files in .cuga
+2026-08-12 19:40:00.925 | INFO     | cuga.sdk:_ensure_policy_system:254 - Auto-loaded policies from .cuga (resolved: /Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/.cuga)
+2026-08-12 19:40:00.938 | DEBUG    | cuga.sdk:stream:2841 - Policy system auto-initialized during first stream()
+2026-08-12 19:40:00.939 | DEBUG    | cuga.sdk:stream:2901 - Auto-generated thread_id: sdk_7a835d83
+2026-08-12 19:40:01.116 | DEBUG    | cuga.sdk:_build_callbacks:1909 - Built callbacks: TokenUsageTracker only
+2026-08-12 19:40:01.116 | DEBUG    | cuga.sdk:stream:2927 - Streaming agent with 1 messages
+2026-08-12 19:40:01.123 | SUCCESS  | cuga.configurations.instructions_manager:_log_initialization_summary:108 - 📋 Instructions configuration loaded successfully
+2026-08-12 19:40:01.123 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:109 -    📁 Config file: configurations/instructions/instructions.toml
+2026-08-12 19:40:01.123 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:110 -    📏 File size: 854 bytes
+2026-08-12 19:40:01.128 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:117 -    🔑 Instruction sections: 8
+2026-08-12 19:40:01.128 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:121 -    🔗 Key mappings available: 7
+2026-08-12 19:40:01.128 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:128 -    🏷️  Sample mappings: APICodePlannerAgent→api_code_planner, PlanControllerAgent→plan_controller, TaskDecompositionAgent→task_decomposition... (+4 more)
+2026-08-12 19:40:01.129 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:149 -    📝 Inline instructions: 0
+2026-08-12 19:40:01.129 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:150 -    📄 File-based instructions: 8
+2026-08-12 19:40:01.129 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:151 -    📊 Total content length: 0 characters
+2026-08-12 19:40:01.129 | INFO     | cuga.configurations.instructions_manager:_log_initialization_summary:156 -    🏷️  Available keys: PLAN_CONTROLLER, TASK_DECOMPOSITION, API_PLANNER, SHORTLISTER, CODE_AGENT, API_REFLECTION, API_CODE_PLANNER, ANSWER
+2026-08-12 19:40:01.148 | DEBUG    | cuga.sdk:_build_callbacks:1909 - Built callbacks: TokenUsageTracker only
+2026-08-12 19:40:01.165 | WARNING  | cuga.configurations.instructions_manager:get_all_instructions_formatted:322 - No markdown sections found
+2026-08-12 19:40:01.204 | INFO     | cuga.backend.llm.models:_get_model_name:593 - Using MODEL_NAME from environment: azure/gpt-5.6-luna
+2026-08-12 19:40:01.205 | INFO     | cuga.backend.llm.models:_get_base_url:831 - Using OPENAI_BASE_URL from environment: https://ete-litellm.ai-models.vpc-int.res.ibm.com
+2026-08-12 19:40:01.205 | INFO     | cuga.backend.llm.models:_get_model_name:593 - Using MODEL_NAME from environment: azure/gpt-5.6-luna
+2026-08-12 19:40:01.205 | INFO     | cuga.backend.llm.models:_get_base_url:831 - Using OPENAI_BASE_URL from environment: https://ete-litellm.ai-models.vpc-int.res.ibm.com
+2026-08-12 19:40:01.205 | DEBUG    | cuga.backend.llm.models:get_model:1403 - Returning cached model: openai/azure/gpt-5.6-luna (api_version=None, base_url=https://ete-litellm.ai-models.vpc-int.res.ibm.com)
+2026-08-12 19:40:01.205 | DEBUG    | cuga.backend.llm.models:_update_model_parameters:359 - Skipping temperature update for reasoning model: azure/gpt-5.6-luna
+2026-08-12 19:40:01.205 | DEBUG    | cuga.backend.llm.models:_update_model_parameters:393 - Updated model parameters: temperature=0.1, max_tokens=16000, max_completion_tokens=16000
+2026-08-12 19:40:01.208 | DEBUG    | cuga.sdk:_create_hitl_wrapper_graph:2167 - Created HITL wrapper graph with SuggestHumanActions and WaitForResponse
+2026-08-12 19:40:01.208 | DEBUG    | cuga.sdk:_create_graph:2011 - Created CugaLite graph with HITL wrapper
+2026-08-12 19:40:01.213 | DEBUG    | cuga.sdk:graph:2301 - Compiled graph with checkpointer and HITL support
+2026-08-12 19:40:01.220 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.prepare_node:prepare_tools_and_apps:108 - [APPROVAL DEBUG] prepare_tools_and_apps received cuga_lite_metadata: {}
+2026-08-12 19:40:01.220 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:74 - PolicyEnactment: Got policy system: <cuga.backend.cuga_graph.policy.configurable.PolicyConfigurable object at 0x1525d5400>
+2026-08-12 19:40:01.220 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:81 - PolicyEnactment: Created context with user_input='In Audre Lorde’s poem “Father Son and Holy Ghost”, what is the number of the stanza in which some lines are indented?', inferred target='intent'
+2026-08-12 19:40:01.221 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:950 - 🔍 Starting policy matching for target: 'intent'
+2026-08-12 19:40:01.221 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:957 -   - Filtering by policy types: [<PolicyType.INTENT_GUARD: 'intent_guard'>, <PolicyType.PLAYBOOK: 'playbook'>, <PolicyType.TOOL_GUIDE: 'tool_guide'>]
+2026-08-12 19:40:01.221 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:959 -   - user_input: In Audre Lorde’s poem “Father Son and Holy Ghost”, what is the number of the stanza in which some lines are indented?
+2026-08-12 19:40:01.221 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:960 -   - chat_messages: ['In Audre Lorde’s poem “Father Son and Holy Ghost”, what is the number of the stanza in which some lines are indented?']
+2026-08-12 19:40:01.221 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:701 - 🔍 Evaluating keyword-triggered policies for target: 'intent'
+2026-08-12 19:40:01.222 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:728 - No policies with keyword triggers for target 'intent'
+2026-08-12 19:40:01.222 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:785 - 🔍 Evaluating natural language policies for target: 'intent'
+2026-08-12 19:40:01.222 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:817 - No policies with NL triggers for target 'intent'
+2026-08-12 19:40:01.223 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:87 - PolicyEnactment: Policy match result: matched=False, reasoning=No policies matched the current context
+2026-08-12 19:40:01.223 | DEBUG    | cuga.backend.cuga_graph.policy.agent:check_tool_guide_policies:1246 - Checking Tool Guide policies
+2026-08-12 19:40:01.223 | DEBUG    | cuga.backend.cuga_graph.policy.agent:check_tool_guide_policies:1253 - Found 0 enabled Tool Guide policies
+2026-08-12 19:40:01.223 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:96 - PolicyEnactment: Found 0 Tool Guide policies
+2026-08-12 19:40:01.223 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.prepare_node:prepare_tools_and_apps:259 - Bundled MCP few-shots (prompts/find_tools_few_shot_examples.json) not loaded: find_tools is off (total_tool_count=5 <= shortlisting_tool_threshold=35). Lower the threshold via configurable or add apps/tools.
+2026-08-12 19:40:01.225 | DEBUG    | cuga.backend.tools_env.registry.utils.api_utils:get_apps:119 - Calling get apps
+2026-08-12 19:40:01.225 | DEBUG    | cuga.backend.tools_env.registry.utils.api_utils:get_apps:135 - External apps are []
+2026-08-12 19:40:01.230 | ERROR    | cuga.backend.tools_env.registry.utils.api_utils:get_apps:157 - Error while calling registry to get apps
+2026-08-12 19:40:01.230 | DEBUG    | cuga.backend.evolve.integration:_call_tool:231 - Evolve registry call failed, falling back to direct SSE: Cannot connect to host localhost:8001 ssl:default [Multiple exceptions: [Errno 61] Connect call failed ('::1', 8001, 0, 0), [Errno 61] Connect call failed ('127.0.0.1', 8001)]
+2026-08-12 19:40:01.483 | WARNING  | cuga.backend.evolve.integration:get_guidelines:85 - Evolve get_guidelines failed (non-fatal): Client failed to connect: All connection attempts failed
+2026-08-12 19:40:02.331 | WARNING  | cuga.backend.server.main:<module>:306 - Failed to import agent_analytics: No module named 'agent_analytics'
+2026-08-12 19:40:02.361 | INFO     | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.prepare_node:prepare_tools_and_apps:643 - Prepared CugaLite prompt: enable_find_tools=False few_shot_message_turns=0 few_shots_as_messages=False prompt_chars=18085
+2026-08-12 19:40:02.363 | DEBUG    | cuga.backend.cuga_graph.utils.token_counter:ensure_model_context_profile:442 - Set model profile: max_input_tokens=400000 for azure/gpt-5.6-luna
+2026-08-12 19:40:02.363 | INFO     | cuga.backend.cuga_graph.utils.context_summarizer:_setup_model_profile:93 - Set model profile: max_input_tokens=400000 for azure/gpt-5.6-luna
+2026-08-12 19:40:02.366 | INFO     | cuga.backend.cuga_graph.utils.context_summarizer:_init_middleware:80 - Context summarization initialized: trigger=('fraction', 0.7), keep=('messages', 10), model=azure/gpt-5.6-luna
+2026-08-12 19:40:02.367 | DEBUG    | cuga.backend.cuga_graph.utils.token_counter:count_total_context_tokens:612 - Total context tokens: 4798 (messages: 34, tools: 0, prompt: 4759, overhead: 5)
+2026-08-12 19:40:02.367 | INFO     | cuga.backend.cuga_graph.nodes.cuga_agent_core.graph.shared_nodes:call_model:178 - call_model: 2 messages → model (CugaLite)
+2026-08-12 19:40:21.244 | INFO     | cuga.sdk:sdk_callback_node:2079 - SDK callback node - processing subgraph results
+2026-08-12 19:40:21.247 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:74 - PolicyEnactment: Got policy system: <cuga.backend.cuga_graph.policy.configurable.PolicyConfigurable object at 0x1525d5400>
+2026-08-12 19:40:21.247 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:81 - PolicyEnactment: Created context with user_input='In Audre Lorde’s poem “Father Son and Holy Ghost”, what is the number of the stanza in which some lines are indented?', inferred target='agent_response'
+2026-08-12 19:40:21.247 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:950 - 🔍 Starting policy matching for target: 'agent_response'
+2026-08-12 19:40:21.247 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:957 -   - Filtering by policy types: [<PolicyType.OUTPUT_FORMATTER: 'output_formatter'>]
+2026-08-12 19:40:21.247 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:959 -   - user_input: In Audre Lorde’s poem “Father Son and Holy Ghost”, what is the number of the stanza in which some lines are indented?
+2026-08-12 19:40:21.247 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:960 -   - chat_messages: ['In Audre Lorde’s poem “Father Son and Holy Ghost”, what is the number of the stanza in which some lines are indented?', 'I’ll locate a reliable text or scan of the poem and inspect its stanza formatting, since indentation can vary by transcription.\nI’m sorry, but I couldn’t verify the poem’s stanza indentation from the available sources.']
+2026-08-12 19:40:21.247 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:701 - 🔍 Evaluating keyword-triggered policies for target: 'agent_response'
+2026-08-12 19:40:21.248 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:728 - No policies with keyword triggers for target 'agent_response'
+2026-08-12 19:40:21.248 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:785 - 🔍 Evaluating natural language policies for target: 'agent_response'
+2026-08-12 19:40:21.249 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:817 - No policies with NL triggers for target 'agent_response'
+2026-08-12 19:40:21.249 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:87 - PolicyEnactment: Policy match result: matched=False, reasoning=No policies matched the current context
+2026-08-12 19:40:21.249 | INFO     | cuga.sdk:sdk_callback_node:2129 - Routing to FinalAnswerAgent with answer: I’ll locate a reliable text or scan of the poem and inspect its stanza formatting, since indentation can vary by transcription.
+I’m sorry, but I couldn’t verify the poem’s stanza indentation from the available sources.
+2026-08-12 19:40:21.257 | WARNING  | cuga.sdk:_ensure_initialized:1999 - Knowledge auto-injection failed (will retry): Knowledge engine already running in another process. Start with --workers 1
+2026-08-12 19:40:21.257 | DEBUG    | cuga.sdk:invoke:2549 - Auto-generated thread_id: sdk_8d9b9e26
+2026-08-12 19:40:21.257 | DEBUG    | cuga.sdk:invoke:2630 - Created new state for thread_id: sdk_8d9b9e26
+2026-08-12 19:40:21.257 | DEBUG    | cuga.sdk:_build_callbacks:1909 - Built callbacks: TokenUsageTracker only
+2026-08-12 19:40:21.258 | DEBUG    | cuga.sdk:invoke:2647 - Invoking agent with 1 total message(s) in conversation
+2026-08-12 19:40:21.262 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.prepare_node:prepare_tools_and_apps:108 - [APPROVAL DEBUG] prepare_tools_and_apps received cuga_lite_metadata: {}
+2026-08-12 19:40:21.262 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:74 - PolicyEnactment: Got policy system: <cuga.backend.cuga_graph.policy.configurable.PolicyConfigurable object at 0x1525d5400>
+2026-08-12 19:40:21.262 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:81 - PolicyEnactment: Created context with user_input='In Audre Lorde’s poem “Father Son and Holy Ghost”, what is the number of the stanza in which some lines are indented?', inferred target='intent'
+2026-08-12 19:40:21.262 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:950 - 🔍 Starting policy matching for target: 'intent'
+2026-08-12 19:40:21.262 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:957 -   - Filtering by policy types: [<PolicyType.INTENT_GUARD: 'intent_guard'>, <PolicyType.PLAYBOOK: 'playbook'>, <PolicyType.TOOL_GUIDE: 'tool_guide'>]
+2026-08-12 19:40:21.262 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:959 -   - user_input: In Audre Lorde’s poem “Father Son and Holy Ghost”, what is the number of the stanza in which some lines are indented?
+2026-08-12 19:40:21.262 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:960 -   - chat_messages: ['In Audre Lorde’s poem “Father Son and Holy Ghost”, what is the number of the stanza in which some lines are indented?']
+2026-08-12 19:40:21.262 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:701 - 🔍 Evaluating keyword-triggered policies for target: 'intent'
+2026-08-12 19:40:21.263 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:728 - No policies with keyword triggers for target 'intent'
+2026-08-12 19:40:21.263 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:785 - 🔍 Evaluating natural language policies for target: 'intent'
+2026-08-12 19:40:21.264 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:817 - No policies with NL triggers for target 'intent'
+2026-08-12 19:40:21.264 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:87 - PolicyEnactment: Policy match result: matched=False, reasoning=No policies matched the current context
+2026-08-12 19:40:21.264 | DEBUG    | cuga.backend.cuga_graph.policy.agent:check_tool_guide_policies:1246 - Checking Tool Guide policies
+2026-08-12 19:40:21.265 | DEBUG    | cuga.backend.cuga_graph.policy.agent:check_tool_guide_policies:1253 - Found 0 enabled Tool Guide policies
+2026-08-12 19:40:21.265 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:96 - PolicyEnactment: Found 0 Tool Guide policies
+2026-08-12 19:40:21.265 | DEBUG    | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.prepare_node:prepare_tools_and_apps:259 - Bundled MCP few-shots (prompts/find_tools_few_shot_examples.json) not loaded: find_tools is off (total_tool_count=5 <= shortlisting_tool_threshold=35). Lower the threshold via configurable or add apps/tools.
+2026-08-12 19:40:21.267 | DEBUG    | cuga.backend.tools_env.registry.utils.api_utils:get_apps:119 - Calling get apps
+2026-08-12 19:40:21.267 | DEBUG    | cuga.backend.tools_env.registry.utils.api_utils:get_apps:135 - External apps are []
+2026-08-12 19:40:21.271 | ERROR    | cuga.backend.tools_env.registry.utils.api_utils:get_apps:157 - Error while calling registry to get apps
+2026-08-12 19:40:21.272 | DEBUG    | cuga.backend.evolve.integration:_call_tool:231 - Evolve registry call failed, falling back to direct SSE: Cannot connect to host localhost:8001 ssl:default [Multiple exceptions: [Errno 61] Connect call failed ('::1', 8001, 0, 0), [Errno 61] Connect call failed ('127.0.0.1', 8001)]
+2026-08-12 19:40:21.283 | WARNING  | cuga.backend.evolve.integration:get_guidelines:85 - Evolve get_guidelines failed (non-fatal): Client failed to connect: All connection attempts failed
+2026-08-12 19:40:21.300 | INFO     | cuga.backend.cuga_graph.nodes.cuga_lite.adapter.prepare_node:prepare_tools_and_apps:643 - Prepared CugaLite prompt: enable_find_tools=False few_shot_message_turns=0 few_shots_as_messages=False prompt_chars=18085
+2026-08-12 19:40:21.301 | INFO     | cuga.backend.cuga_graph.utils.context_summarizer:_setup_model_profile:93 - Set model profile: max_input_tokens=400000 for azure/gpt-5.6-luna
+2026-08-12 19:40:21.302 | INFO     | cuga.backend.cuga_graph.utils.context_summarizer:_init_middleware:80 - Context summarization initialized: trigger=('fraction', 0.7), keep=('messages', 10), model=azure/gpt-5.6-luna
+2026-08-12 19:40:21.302 | DEBUG    | cuga.backend.cuga_graph.utils.token_counter:count_total_context_tokens:612 - Total context tokens: 4798 (messages: 34, tools: 0, prompt: 4759, overhead: 5)
+2026-08-12 19:40:21.302 | INFO     | cuga.backend.cuga_graph.nodes.cuga_agent_core.graph.shared_nodes:call_model:178 - call_model: 2 messages → model (CugaLite)
+2026-08-12 19:40:33.597 | INFO     | cuga.sdk:sdk_callback_node:2079 - SDK callback node - processing subgraph results
+2026-08-12 19:40:33.597 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:74 - PolicyEnactment: Got policy system: <cuga.backend.cuga_graph.policy.configurable.PolicyConfigurable object at 0x1525d5400>
+2026-08-12 19:40:33.597 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:81 - PolicyEnactment: Created context with user_input='In Audre Lorde’s poem “Father Son and Holy Ghost”, what is the number of the stanza in which some lines are indented?', inferred target='agent_response'
+2026-08-12 19:40:33.597 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:950 - 🔍 Starting policy matching for target: 'agent_response'
+2026-08-12 19:40:33.597 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:957 -   - Filtering by policy types: [<PolicyType.OUTPUT_FORMATTER: 'output_formatter'>]
+2026-08-12 19:40:33.597 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:959 -   - user_input: In Audre Lorde’s poem “Father Son and Holy Ghost”, what is the number of the stanza in which some lines are indented?
+2026-08-12 19:40:33.597 | DEBUG    | cuga.backend.cuga_graph.policy.agent:match_policy:960 -   - chat_messages: ['In Audre Lorde’s poem “Father Son and Holy Ghost”, what is the number of the stanza in which some lines are indented?', 'I’ll locate a reliable text or scan of the poem and inspect its stanza formatting, since indentation can vary by transcription.\nI’m sorry, but I couldn’t verify the poem’s stanza indentation from the available sources.']
+2026-08-12 19:40:33.597 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:701 - 🔍 Evaluating keyword-triggered policies for target: 'agent_response'
+2026-08-12 19:40:33.597 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_keyword_triggered_policies:728 - No policies with keyword triggers for target 'agent_response'
+2026-08-12 19:40:33.597 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:785 - 🔍 Evaluating natural language policies for target: 'agent_response'
+2026-08-12 19:40:33.597 | DEBUG    | cuga.backend.cuga_graph.policy.agent:_evaluate_natural_language_policies:817 - No policies with NL triggers for target 'agent_response'
+2026-08-12 19:40:33.597 | DEBUG    | cuga.backend.cuga_graph.policy.enactment:check_and_enact:87 - PolicyEnactment: Policy match result: matched=False, reasoning=No policies matched the current context
+2026-08-12 19:40:33.597 | INFO     | cuga.sdk:sdk_callback_node:2129 - Routing to FinalAnswerAgent with answer: I’ll locate a reliable text or scan of the poem and inspect its stanza formatting, since indentation can vary by transcription.
+I’m sorry, but I couldn’t verify the poem’s stanza indentation from the available sources.

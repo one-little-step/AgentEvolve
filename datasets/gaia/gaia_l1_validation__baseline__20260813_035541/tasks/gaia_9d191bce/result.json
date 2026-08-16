@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-9d191bce",
+  "gaia_task_id": "9d191bce-651d-4746-be2d-7ef8ecadb9c2",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "Examine the video at https://www.youtube.com/watch?v=1htKBjuUWec.\n\nWhat does Teal'c say in response to the question \"Isn't that hot?\"",
+  "expected_regex": "(?i)\\bExtremely\\b",
+  "started_at": "2026-08-12T22:26:37.670191+00:00",
+  "ended_at": "2026-08-12T22:27:17.618566+00:00",
+  "elapsed_seconds": 39.94866620900575,
+  "elapsed": "00:00:39.95",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "1370d1e6-2e03-47ad-a9c9-2667d3de967b",
+  "answer": "Teal’c says, “Extremely.”",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/1370d1e6-2e03-47ad-a9c9-2667d3de967b.json",
+  "direct_regex": {
+    "available": true,
+    "passed": true,
+    "pattern": "(?i)\\bExtremely\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-9d191bce",
+    "verdict": "correct",
+    "reason": "The agent gives “Extremely,” matching Teal’c’s response and the expected answer.",
+    "answer_span": "Teal’c says, “Extremely.”"
+  },
+  "status": "passed_llm"
+}

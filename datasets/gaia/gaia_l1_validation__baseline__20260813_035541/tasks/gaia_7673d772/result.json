@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-7673d772",
+  "gaia_task_id": "7673d772-ef80-4f0f-a602-1bf4485c9b43",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "On Cornell Law School website's legal information institute, under the fifth section of federal rules alphabetically, what word was deleted in the last amendment to the first rule in the article that has \"witnesses\" in the most titles as of 2021?",
+  "expected_regex": "(?i)\\binference\\b",
+  "started_at": "2026-08-12T22:27:22.820931+00:00",
+  "ended_at": "2026-08-12T22:28:06.689310+00:00",
+  "elapsed_seconds": 43.86825029097963,
+  "elapsed": "00:00:43.87",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "c43196dd-ef15-43f8-8763-c895b48025d5",
+  "answer": "The Cornell page confirms the latest amendment is the 2011 restyling, but it does not show deletions. I’m checking the official amendment/redline text to distinguish a word actually deleted from wording merely replaced.\nThe deleted word was “However.”\n\nCornell’s Rule 601 page identifies the last amendment as the December 1, 2011 restyling. In that amendment, “However, in a civil case” was revised to “But in a civil case,” deleting “However.”",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/c43196dd-ef15-43f8-8763-c895b48025d5.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\binference\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-7673d772",
+    "verdict": "wrong",
+    "reason": "The requested deleted word was “inference,” but the agent answered “However.”",
+    "answer_span": "The deleted word was “However.”"
+  },
+  "status": "failed_llm"
+}

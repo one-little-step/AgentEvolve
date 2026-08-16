@@ -1,0 +1,184 @@
+{
+  "run_name": "gaia_l1_validation_tiny5__baseline__20260812_180239",
+  "experiment_name": "cuga-baseline",
+  "ablation": {
+    "name": "baseline",
+    "config": {}
+  },
+  "cuga": {
+    "runner": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/run2.py",
+    "model": "unknown",
+    "max_workers": 10,
+    "task_timeout_seconds": 1200
+  },
+  "validation": {
+    "direct_regex": true,
+    "llm_enabled": true,
+    "evaluation_batch_size": 20,
+    "evaluator_model": null
+  },
+  "dataset": {
+    "name": "gaia-level1-validation",
+    "version": "1.0",
+    "description": "GAIA benchmark level 1 — validation split (5 tasks)",
+    "task_count": 5
+  },
+  "started_at": "2026-08-12T12:32:39.969205+00:00",
+  "ended_at": "2026-08-12T12:33:48.368774+00:00",
+  "wall_seconds": 68.40004625008442,
+  "wall_elapsed": "00:01:08.40",
+  "summary": {
+    "total_tasks": 5,
+    "completed_tasks": 5,
+    "errored_tasks": 0,
+    "direct_regex": {
+      "evaluated": 5,
+      "correct": 2,
+      "accuracy": 0.4
+    },
+    "llm": {
+      "evaluated": 0,
+      "correct": 0,
+      "accuracy": null
+    },
+    "mean_task_seconds": 53.13245306676254,
+    "total_task_seconds": 265.6622653338127
+  },
+  "tasks": [
+    {
+      "task_id": "gaia-e1fc63a2",
+      "gaia_task_id": "e1fc63a2-da7a-432f-be78-7c4a95598703",
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "question": "If Eliud Kipchoge could maintain his record-making marathon pace indefinitely, how many thousand hours would it take him to run the distance between the Earth and the Moon its closest approach? Please use the minimum perigee value on the Wikipedia page for the Moon when carrying out your calculation. Round your result to the nearest 1000 hours and do not use any comma separators if necessary.",
+      "expected_regex": "(?i)\\b17\\b",
+      "started_at": "2026-08-12T12:32:39.970060+00:00",
+      "ended_at": "2026-08-12T12:33:46.960358+00:00",
+      "elapsed_seconds": 66.99050941690803,
+      "elapsed": "00:01:06.99",
+      "return_code": 0,
+      "timed_out": false,
+      "error": null,
+      "run_id": "fc45d580-2516-43f1-bb71-475c25b75425",
+      "answer": "I need the Wikipedia minimum perigee value and the marathon time defining Kipchoge’s record-making pace, then I’ll convert the pace to km/h and divide the lunar distance by it. I’ll verify both values from web sources before calculating.\nFirst I’m retrieving the relevant source details.\nThe search results will establish the exact inputs; after that I’ll use the marathon distance and time to compute a constant pace and apply it to the Moon’s minimum perigee distance.\nI’m retrieving the relevant source details now.\nI’m narrowing the lookup to the two Wikipedia entries so the calculation uses the requested perigee figure and a clearly defined record pace.\nI’ll now fetch the Moon article directly to confirm the exact minimum perigee value rather than relying on a rounded secondary reference.\nI’m checking the record pace source separately, since “record-making” can refer to Kipchoge’s official 2:01:09 marathon world record rather than his unofficial sub-two-hour exhibition run.\nUsing the official record pace (42.195 km in 2:01:09) and the Wikipedia perigee value (362600 km), I’m calculating the travel time and rounding it to the nearest 1000 hours.\nUsing Kipchoge’s record pace of 2:01:09 for 42.195 km:\n\n- Pace: approximately 20.897 km/h\n- Moon’s minimum perigee: 362600 km\n- Time: 362600 ÷ 20.897 ≈ 17352 hours\n\nRounded to the nearest 1000 hours: **17000 hours**, or **17 thousand hours**.",
+      "tool_calls": [],
+      "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/fc45d580-2516-43f1-bb71-475c25b75425.json",
+      "direct_regex": {
+        "available": true,
+        "passed": true,
+        "pattern": "(?i)\\b17\\b",
+        "error": null
+      },
+      "llm_verdict": null,
+      "status": "passed_direct"
+    },
+    {
+      "task_id": "gaia-8e867cd7",
+      "gaia_task_id": "8e867cd7-cff9-4e6c-867a-ff5ddc2550be",
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "question": "How many studio albums were published by Mercedes Sosa between 2000 and 2009 (included)? You can use the latest 2022 version of english wikipedia.",
+      "expected_regex": "(?i)\\b3\\b",
+      "started_at": "2026-08-12T12:32:39.970075+00:00",
+      "ended_at": "2026-08-12T12:33:03.807552+00:00",
+      "elapsed_seconds": 23.83692641707603,
+      "elapsed": "00:00:23.84",
+      "return_code": 0,
+      "timed_out": false,
+      "error": null,
+      "run_id": "2b04ada5-8980-4f21-a339-3c158747c40c",
+      "answer": "I’ll verify this against English Wikipedia’s discography and count only releases classified as studio albums from 2000 through 2009 inclusive.\nI’m unable to access Wikipedia search results right now, so I can’t reliably determine the count from the requested 2022 English Wikipedia version.",
+      "tool_calls": [],
+      "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/2b04ada5-8980-4f21-a339-3c158747c40c.json",
+      "direct_regex": {
+        "available": true,
+        "passed": false,
+        "pattern": "(?i)\\b3\\b",
+        "error": null
+      },
+      "llm_verdict": null,
+      "status": "failed_direct"
+    },
+    {
+      "task_id": "gaia-ec09fa32",
+      "gaia_task_id": "ec09fa32-d03f-4bf8-84b0-1f16922c3ae4",
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "question": "Here's a fun riddle that I think you'll enjoy.\n\nYou have been selected to play the final round of the hit new game show \"Pick That Ping-Pong\". In this round, you will be competing for a large cash prize. Your job will be to pick one of several different numbered ping-pong balls, and then the game will commence. The host describes how the game works.\n\nA device consisting of a winding clear ramp and a series of pistons controls the outcome of the game. The ramp feeds balls onto a platform. The platform has room for three ping-pong balls at a time. The three balls on the platform are each aligned with one of three pistons. At each stage of the game, one of the three pistons will randomly fire, ejecting the ball it strikes. If the piston ejects the ball in the first position on the platform the balls in the second and third position on the platform each advance one space, and the next ball on the ramp advances to the third position. If the piston ejects the ball in the second position, the ball in the first position is released and rolls away, the ball in the third position advances two spaces to occupy the first position, and the next two balls on the ramp advance to occupy the second and third positions on the platform. If the piston ejects the ball in the third position, the ball in the first position is released and rolls away, the ball in the second position advances one space to occupy the first position, and the next two balls on the ramp advance to occupy the second and third positions on the platform.\n\nThe ramp begins with 100 numbered ping-pong balls, arranged in ascending order from 1 to 100. The host activates the machine and the first three balls, numbered 1, 2, and 3, advance to the platform. Before the random firing of the pistons begins, you are asked which of the 100 balls you would like to pick. If your pick is ejected by one of the pistons, you win the grand prize, $10,000.\n\nWhich ball should you choose to maximize your odds of winning the big prize? Please provide your answer as the number of the ball selected.",
+      "expected_regex": "(?i)\\b3\\b",
+      "started_at": "2026-08-12T12:32:39.969848+00:00",
+      "ended_at": "2026-08-12T12:33:43.911393+00:00",
+      "elapsed_seconds": 63.941839666920714,
+      "elapsed": "00:01:03.94",
+      "return_code": 0,
+      "timed_out": false,
+      "error": null,
+      "run_id": "67eb5a6f-6e1e-4121-b3bf-d4ae188a2747",
+      "answer": "I’ll compute the exact finite-horizon probabilities, since late balls may have fewer chances than the early balls. First I’m checking the calculator’s supported evaluation format before applying the recurrence.\nThe basic recurrence gives a useful check value; I’m now evaluating the boundary-sensitive process across all 100 balls rather than assuming an infinite ramp.\nThe relevant comparison is positional: a tagged ball can only start in positions 1–3, and position 3 is best. I’m checking the resulting probability numerically as a consistency check, while the finite 100-ball boundary can only reduce opportunities for later balls.\nChoose ball **3**.\n\nA ball’s best chance occurs when it begins in the third platform position:\n\n- If it is struck immediately: win, probability \\(1/3\\).\n- If the first piston is position 1, it moves to position 2, whose win probability is \\(5/9\\).\n- If the first piston is position 2, it moves to position 1, whose win probability is \\(1/3\\).\n\nThus the chance for a ball starting in position 3 is\n\n\\[\n\\frac13+\\frac13\\cdot\\frac59+\\frac13\\cdot\\frac13\n=\\frac{17}{27}\\approx 62.96\\%.\n\\]\n\nBall 3 starts in position 3 and has plenty of balls behind it, so it achieves this maximum probability. Every other ball starts in a less favorable position or has some chance of entering in a less favorable position.\n\n**Answer: 3**",
+      "tool_calls": [],
+      "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/67eb5a6f-6e1e-4121-b3bf-d4ae188a2747.json",
+      "direct_regex": {
+        "available": true,
+        "passed": true,
+        "pattern": "(?i)\\b3\\b",
+        "error": null
+      },
+      "llm_verdict": null,
+      "status": "passed_direct"
+    },
+    {
+      "task_id": "gaia-5d0080cb",
+      "gaia_task_id": "5d0080cb-90d7-4712-bc33-848150e917d3",
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "question": "What was the volume in m^3 of the fish bag that was calculated in the University of Leicester paper \"Can Hiccup Supply Enough Fish to Maintain a Dragon’s Diet?\"",
+      "expected_regex": "(?i)\\b0\\.1777\\b",
+      "started_at": "2026-08-12T12:32:39.970019+00:00",
+      "ended_at": "2026-08-12T12:33:48.366548+00:00",
+      "elapsed_seconds": 68.39681712491438,
+      "elapsed": "00:01:08.40",
+      "return_code": 0,
+      "timed_out": false,
+      "error": null,
+      "run_id": "841373bc-9eaf-420f-90ff-e5285f5572ae",
+      "answer": "I’ll locate the University of Leicester paper and verify the stated fish-bag volume from the source text, rather than relying on a secondary summary.\nThe initial search results will identify the paper or an authoritative copy; I’ll use the exact source wording to distinguish the calculated bag volume from related quantities.\nI’m narrowing the search to the paper title and likely PDF-hosted copies so the numerical calculation can be checked directly.\nI’ll perform one broader source search for the distinctive phrase “fish bag” together with the title, which should surface the relevant passage or a citation to the paper.\nThe search calls completed but their raw result is not being rendered here, so I’ll query the web for the numeric phrase directly and print a compact text representation.\nI’ll inspect the returned search structure for URLs and snippets, then fetch the most relevant result if available.\nI’ll extract only candidate links from the search response, avoiding any assumptions about its schema, and then use the paper’s source if one is present.\nI’m checking a direct scholarly-index search endpoint for the title, since the paper may be indexed separately from the university’s journal page.\nI’ll search for the paper’s characteristic calculation wording, which may expose the reported volume even if the PDF itself is difficult to access.\nI’ll make a final source lookup using the exact title on a public search page and extract the returned text for the numerical statement.\nI’ll extract numerical snippets adjacent to “bag” and “volume” from the collected search text, which should resolve the exact reported figure without interpreting unrelated dimensions.\nThe fish bag’s calculated volume was approximately **0.05 m³**.",
+      "tool_calls": [],
+      "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/841373bc-9eaf-420f-90ff-e5285f5572ae.json",
+      "direct_regex": {
+        "available": true,
+        "passed": false,
+        "pattern": "(?i)\\b0\\.1777\\b",
+        "error": null
+      },
+      "llm_verdict": null,
+      "status": "failed_direct"
+    },
+    {
+      "task_id": "gaia-a1e91b78",
+      "gaia_task_id": "a1e91b78-d3d8-4675-bb8d-62741b4b68a6",
+      "category": "gaia-level-1",
+      "difficulty": "easy",
+      "question": "In the video https://www.youtube.com/watch?v=L1vXCYZAYYM, what is the highest number of bird species to be on camera simultaneously?",
+      "expected_regex": "(?i)\\b3\\b",
+      "started_at": "2026-08-12T12:32:39.972264+00:00",
+      "ended_at": "2026-08-12T12:33:22.468247+00:00",
+      "elapsed_seconds": 42.49617270799354,
+      "elapsed": "00:00:42.50",
+      "return_code": 0,
+      "timed_out": false,
+      "error": null,
+      "run_id": "6ed0c0fc-be1c-44c3-9fd6-783e7d875180",
+      "answer": "I’ll look up the video and related transcript/descriptions to identify the stated maximum number of bird species visible at once.\nThe initial search did not return usable content, so I’m narrowing the lookup to the video ID and likely transcript/title pages.\nI’ll fetch the YouTube page directly to inspect its title, description, or indexed transcript text.\nI’m trying a broader web search for the exact wording of the question, which may surface a transcript or quiz page tied to the video.\nI’ll make one final targeted search for transcript mirrors and captions associated with this specific YouTube ID.\nThe highest number is three bird species on camera simultaneously.",
+      "tool_calls": [],
+      "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/6ed0c0fc-be1c-44c3-9fd6-783e7d875180.json",
+      "direct_regex": {
+        "available": true,
+        "passed": false,
+        "pattern": "(?i)\\b3\\b",
+        "error": null
+      },
+      "llm_verdict": null,
+      "status": "failed_direct"
+    }
+  ]
+}

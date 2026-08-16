@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-bda648d7",
+  "gaia_task_id": "bda648d7-d618-4883-88f4-3466eabd860e",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "Where were the Vietnamese specimens described by Kuznetzov in Nedoshivina's 2010 paper eventually deposited? Just give me the city name without abbreviations.",
+  "expected_regex": "(?i)\\bSaint\\ Petersburg\\b",
+  "started_at": "2026-08-12T14:10:11.525163+00:00",
+  "ended_at": "2026-08-12T14:10:43.632712+00:00",
+  "elapsed_seconds": 32.10758137493394,
+  "elapsed": "00:00:32.11",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "6f179d1b-97be-45aa-8246-8a894075df03",
+  "answer": "I’ll locate Nedoshivina’s 2010 paper and verify the repository location for Kuznetzov’s Vietnamese specimens, then return only the city name.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/6f179d1b-97be-45aa-8246-8a894075df03.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\bSaint\\ Petersburg\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "failed_direct"
+}

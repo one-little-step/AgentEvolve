@@ -1,0 +1,45 @@
+{
+  "task_id": "gaia-27d5d136",
+  "gaia_task_id": "27d5d136-8563-469e-92bf-fd103c28b57c",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "¬(A ∧ B) ↔ (¬A ∨ ¬B)\n¬(A ∨ B) ↔ (¬A ∧ ¬B)\n(A → B) ↔ (¬B → ¬A)\n(A → B) ↔ (¬A ∨ B)\n(¬A → B) ↔ (A ∨ ¬B)\n¬(A → B) ↔ (A ∧ ¬B)\n\nWhich of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.",
+  "expected_regex": "(?i)\\(¬A\\ →\\ B\\)\\ ↔\\ \\(A\\ ∨\\ ¬B\\)",
+  "started_at": "2026-08-12T14:07:06.564238+00:00",
+  "ended_at": "2026-08-12T14:08:58.379507+00:00",
+  "elapsed_seconds": 111.81555312499404,
+  "elapsed": "00:01:51.82",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "d11d0c39-ce60-4d54-9bd6-d16fbb743a53",
+  "answer": "The statement that does not fit is:\n\n**(¬A → B) ↔ (A ∨ ¬B)**\n\nBecause:\n\n**¬A → B ≡ A ∨ B**, not **A ∨ ¬B**.\n\nThe other five statements are logically valid equivalences.",
+  "tool_calls": [
+    {
+      "name": "calculator",
+      "arguments": {
+        "expression": "(1 and 0) == 0"
+      },
+      "result": "Calculator error: Unsupported calculator expression",
+      "app_name": "calculator",
+      "operation_id": "calculator",
+      "timestamp": "2026-08-12T19:38:35.231792",
+      "duration_ms": 0.07700920104980469,
+      "error": null
+    }
+  ],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/d11d0c39-ce60-4d54-9bd6-d16fbb743a53.json",
+  "direct_regex": {
+    "available": true,
+    "passed": true,
+    "pattern": "(?i)\\(¬A\\ →\\ B\\)\\ ↔\\ \\(A\\ ∨\\ ¬B\\)",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-27d5d136",
+    "verdict": "correct",
+    "reason": "The agent correctly identifies the fifth statement as the one that is not logically equivalent to the others.",
+    "answer_span": "**(¬A → B) ↔ (A ∨ ¬B)**"
+  },
+  "status": "passed_llm"
+}

@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-0383a3ee",
+  "gaia_task_id": "0383a3ee-47a7-41a4-b493-519bdefe0488",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "On the BBC Earth YouTube video of the Top 5 Silliest Animal Moments, what species of bird is featured?",
+  "expected_regex": "(?i)\\bRockhopper\\ penguin\\b",
+  "started_at": "2026-08-12T14:09:09.564359+00:00",
+  "ended_at": "2026-08-12T14:09:52.299070+00:00",
+  "elapsed_seconds": 42.73454337497242,
+  "elapsed": "00:00:42.73",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "70f1f9ac-a361-45bf-bc93-b60701d5cc80",
+  "answer": "I’ll search for the specific BBC Earth video and verify the bird species from a reliable result or the video description/transcript.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/70f1f9ac-a361-45bf-bc93-b60701d5cc80.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\bRockhopper\\ penguin\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "failed_direct"
+}

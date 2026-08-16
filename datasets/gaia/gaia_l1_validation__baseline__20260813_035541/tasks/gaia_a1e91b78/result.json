@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-a1e91b78",
+  "gaia_task_id": "a1e91b78-d3d8-4675-bb8d-62741b4b68a6",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "In the video https://www.youtube.com/watch?v=L1vXCYZAYYM, what is the highest number of bird species to be on camera simultaneously?",
+  "expected_regex": "(?i)\\b3\\b",
+  "started_at": "2026-08-12T22:25:41.671439+00:00",
+  "ended_at": "2026-08-12T22:26:05.453552+00:00",
+  "elapsed_seconds": 23.782296999939717,
+  "elapsed": "00:00:23.78",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "84a936d7-3cc8-4626-96da-5e2de8b1cf10",
+  "answer": "I’m checking the video’s indexed transcript and related references for the specific simultaneous-species count, rather than relying on a guess from the title or description.\nI’m unable to access the video’s contents or transcript through the available tools, so I can’t reliably determine the highest number of bird species shown on camera simultaneously.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/84a936d7-3cc8-4626-96da-5e2de8b1cf10.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\b3\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-a1e91b78",
+    "verdict": "wrong",
+    "reason": "The response does not provide the requested number. The highest number of bird species on camera simultaneously is 3.",
+    "answer_span": "I can’t reliably determine the highest number of bird species shown on camera simultaneously."
+  },
+  "status": "failed_llm"
+}

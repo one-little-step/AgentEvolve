@@ -112,6 +112,17 @@ counterfactual context. Base-harness mechanisms provide anchors. Task-local
 incremental clusters assign `mechanism_cluster_id`, which is the cross-candidate
 alignment key.
 
+Cell comparability is decided by semantic similarity, not by cluster-ID equality.
+Two mechanism clusters whose embeddings reach the comparability threshold
+(default `0.95`) are treated as the same cell for entropy purposes, so variance
+can be computed across candidates that failed the same way under slightly
+different mechanism wording.
+
+This threshold is deliberately stricter than the cluster join threshold. Joining
+shapes the cluster space and a mistake there is recoverable at a refresh barrier;
+comparability decides what may be *statistically compared*, and a false merge
+silently corrupts entropy and every selection that reads it.
+
 Clusters are stable inside an outer iteration. New observations may join an
 existing cluster; cluster create/merge/split occurs at refresh barriers. Track
 cluster freshness and reduce entropy weight when evidence is stale.

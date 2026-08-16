@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-50ad0280",
+  "gaia_task_id": "50ad0280-0819-4bd9-b275-5de32d3b5bcb",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "Pull out the sentence in the following 5x7 block of text. Read from left to right and use all of the letters in order:\n\nTHESE\nAGULL\nGLIDE\nDPEAC\nEFULL\nYTOMY\nCHAIR",
+  "expected_regex": "(?i)\\bThe\\ seagull\\ glided\\ peacefully\\ to\\ my\\ chair\\.",
+  "started_at": "2026-08-12T14:09:22.984617+00:00",
+  "ended_at": "2026-08-12T14:09:56.960970+00:00",
+  "elapsed_seconds": 33.97633520804811,
+  "elapsed": "00:00:33.98",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "b482d9c0-70df-4851-99e5-9269790b66e3",
+  "answer": "THE SEAGULL GLIDED PEACEFULLY TO MY CHAIR.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/b482d9c0-70df-4851-99e5-9269790b66e3.json",
+  "direct_regex": {
+    "available": true,
+    "passed": true,
+    "pattern": "(?i)\\bThe\\ seagull\\ glided\\ peacefully\\ to\\ my\\ chair\\.",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "passed_direct"
+}

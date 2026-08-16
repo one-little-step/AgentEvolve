@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-bda648d7",
+  "gaia_task_id": "bda648d7-d618-4883-88f4-3466eabd860e",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "Where were the Vietnamese specimens described by Kuznetzov in Nedoshivina's 2010 paper eventually deposited? Just give me the city name without abbreviations.",
+  "expected_regex": "(?i)\\bSaint\\ Petersburg\\b",
+  "started_at": "2026-08-12T22:28:20.970035+00:00",
+  "ended_at": "2026-08-12T22:29:17.459954+00:00",
+  "elapsed_seconds": 56.48922979203053,
+  "elapsed": "00:00:56.49",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "897b87b1-dc2e-4875-80da-98a8723e6869",
+  "answer": "St. Petersburg",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/897b87b1-dc2e-4875-80da-98a8723e6869.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\bSaint\\ Petersburg\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-bda648d7",
+    "verdict": "wrong",
+    "reason": "The question explicitly requests the city name without abbreviations; the answer uses “St.” instead of “Saint.”",
+    "answer_span": "St. Petersburg"
+  },
+  "status": "failed_llm"
+}

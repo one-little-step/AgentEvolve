@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-23dd907f",
+  "gaia_task_id": "23dd907f-1261-4488-b21c-e9185af91d5e",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "In Audre Lorde’s poem “Father Son and Holy Ghost”, what is the number of the stanza in which some lines are indented?",
+  "expected_regex": "(?i)\\b2\\b",
+  "started_at": "2026-08-12T14:09:52.300854+00:00",
+  "ended_at": "2026-08-12T14:10:36.103167+00:00",
+  "elapsed_seconds": 43.80231437494513,
+  "elapsed": "00:00:43.80",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "54e51059-85ed-4aef-992e-59319e35abe4",
+  "answer": "I’ll locate a reliable text or scan of the poem and inspect its stanza formatting, since indentation can vary by transcription.\nI’m sorry, but I couldn’t verify the poem’s stanza indentation from the available sources.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/54e51059-85ed-4aef-992e-59319e35abe4.json",
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\b2\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "failed_direct"
+}

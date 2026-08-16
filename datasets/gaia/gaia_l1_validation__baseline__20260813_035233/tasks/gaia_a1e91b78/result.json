@@ -1,0 +1,27 @@
+{
+  "task_id": "gaia-a1e91b78",
+  "gaia_task_id": "a1e91b78-d3d8-4675-bb8d-62741b4b68a6",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "In the video https://www.youtube.com/watch?v=L1vXCYZAYYM, what is the highest number of bird species to be on camera simultaneously?",
+  "expected_regex": "(?i)\\b3\\b",
+  "started_at": "2026-08-12T22:22:33.655560+00:00",
+  "ended_at": "2026-08-12T22:23:06.512252+00:00",
+  "elapsed_seconds": 32.85649416700471,
+  "elapsed": "00:00:32.86",
+  "return_code": -2,
+  "timed_out": false,
+  "error": "run2.py exited with code -2",
+  "run_id": null,
+  "answer": "",
+  "tool_calls": [],
+  "trace": null,
+  "direct_regex": {
+    "available": true,
+    "passed": false,
+    "pattern": "(?i)\\b3\\b",
+    "error": null
+  },
+  "llm_verdict": null,
+  "status": "errored"
+}

@@ -1,0 +1,12 @@
+{
+  "experiment_file": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/dataset/exp/gaia_l1_validation_tiny5.json",
+  "experiment_name": "cuga-baseline",
+  "ablation": "baseline",
+  "ablation_config": {},
+  "runner": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/run2.py",
+  "model": "unknown",
+  "max_workers": 10,
+  "task_timeout_seconds": 1200,
+  "evaluation_batch_size": 20,
+  "llm_validation_enabled": true
+}

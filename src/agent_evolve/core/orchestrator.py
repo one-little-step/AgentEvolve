@@ -26,15 +26,30 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import random
-from typing import Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
-from agent_evolve.core.analyzer import AnalyzerJudge, FakeAnalyzerJudge
+from agent_evolve.core.analyzer import (
+    AnalyzerJudge,
+    FakeAnalyzerJudge,
+    ReportAnalyzerJudge,
+    as_legacy_analyzer,
+    contract_score,
+    is_report_analyzer,
+)
+from agent_evolve.core.parallel_analysis import (
+    AnalysisOutcome,
+    ParallelAnalysisRunner,
+)
 from agent_evolve.core.blame import (
     BlameGraph,
     BlameNode,
     CausalAnalysis,
     CausalFinding,
+    abstained_analysis,
+    analysis_from_finding,
     empty_analysis,
+    is_placeholder_mechanism,
+    unanalyzed_analysis,
 )
 from agent_evolve.core.clustering import (
     ClusterRegistry,
@@ -73,6 +88,17 @@ from agent_evolve.core.entropy import (
     HierarchicalDPPSelector,
     Issue,
 )
+from agent_evolve.core.evaluation import (
+    ContractScorer,
+    ObservedRollout,
+    RolloutBatch,
+    RolloutOutcome,
+    RolloutScore,
+    ScoreTally,
+    Scorer,
+    tally_scores,
+)
+from agent_evolve.core.evidence import rollout_group_report
 from agent_evolve.core.fake_editor import FakeEditor
 from agent_evolve.core.issues import (
     DEFAULT_SCORE_FLOOR as TARGET_SCORE_FLOOR,
@@ -202,6 +228,41 @@ class Orchestrator:
     protected_floors: tuple[ProtectedFloor, ...] = ()
     _iteration: int = 0
     _attempt_seq: int = 0
+    #: Every mechanism string that reached clustering, in record order. Kept so a
+    #: caller (and the test suite) can assert that a profile without an analyzer
+    #: never emits something that looks like a semantic mechanism.
+    _observed_mechanisms: list[str] = field(default_factory=list)
+    #: Mechanism strings carried by the synthesized base-failure issues.
+    _issue_mechanisms: list[str] = field(default_factory=list)
+    #: Blamed actor tuples carried by those issues, for the same audit purpose.
+    _issue_blame_actors: list[tuple[str, ...]] = field(default_factory=list)
+    #: The best-evidence analysis retained per ``(task_id, cluster_id)`` cell from
+    #: this iteration's base rollouts, keyed exactly as the score tensor is.
+    #: Issue synthesis reads it instead of inventing a stand-in analysis.
+    _base_analyses: dict[tuple[str, str], CausalAnalysis] = field(
+        default_factory=dict
+    )
+    _resolved_analyzer: AnalyzerJudge | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+
+    # ------------------------------------------------------------------ #
+    # Analyzer protocol resolution
+    # ------------------------------------------------------------------ #
+    @property
+    def resolved_analyzer(self) -> AnalyzerJudge:
+        """``analyzer_judge`` adapted to the legacy ``(task, trace)`` call sites.
+
+        A legacy analyzer is returned by identity, so existing behaviour is
+        byte-identical. A report-based analyzer is wrapped once in a
+        :class:`~agent_evolve.core.analyzer.ReportAnalyzerShim`; the wrapper is
+        cached because it may hold a stateful analyzer.
+        """
+        resolved = self._resolved_analyzer
+        if resolved is None:
+            resolved = as_legacy_analyzer(self.analyzer_judge)
+            self._resolved_analyzer = resolved
+        return resolved
 
     # ------------------------------------------------------------------ #
     # Setup
@@ -229,27 +290,27 @@ class Orchestrator:
         result = self.adapter.run_full_rollout(workspace, task, rollout_id)
         trace = self.adapter.capture_trace(result)
         if self.profile.use_causal_blame:
-            analysis = self.analyzer_judge.analyze(task, trace)
+            analysis = self.resolved_analyzer.analyze(task, trace)
         else:
-            # Minimal profile: just use the substring check to score.
-            score = 1.0 if task.expected_contract.get("expected_substring", "") in trace.final_output else 0.0
-            if score == 1.0:
+            # Minimal profile: there is no analyzer, so the rollout is *scored*
+            # against the task contract and left *undiagnosed*. The mechanism is
+            # the reserved UNANALYZED_MECHANISM sentinel rather than a
+            # task-derived template: a template like f"failed-to-match-{task_id}"
+            # yields one identical string per task, which collapses mechanism
+            # clustering to one cluster per task and makes cross-candidate
+            # entropy and DPP diversity degenerate -- while still looking like a
+            # real mechanism to every downstream consumer.
+            score = contract_score(task, trace)
+            if score >= 1.0:
                 analysis = empty_analysis()
             else:
-                # Minimal: blame the first actor in the trace, if any.
+                # The blamed actor is directly observed (the first actor that
+                # acted); only the mechanism is unknown.
                 actor = next(
                     (e.actor_id for e in trace.events if e.actor_id),
                     "unknown",
                 )
-                from agent_evolve.core.blame import BlameGraph, BlameNode
-                analysis = CausalAnalysis(
-                    mechanism=f"failed-to-match-{task.task_id}",
-                    severity=1.0,
-                    score=0.0,
-                    blame_graph=BlameGraph(
-                        nodes=(BlameNode(actor_id=actor, blame=1.0, artifacts=()),
-                    )),
-                )
+                analysis = unanalyzed_analysis(score=score, actor_id=actor)
         return trace, analysis
 
     def _record_score(
@@ -267,6 +328,7 @@ class Orchestrator:
         if rollout_seq is None:
             cell = entry.cell(task.task_id, cluster_id)
             rollout_seq = cell.rollout_count
+        self._observed_mechanisms.append(analysis.mechanism)
         prov = ScoreProvenance(
             task_id=task.task_id,
             mechanism_cluster_id=cluster_id,
@@ -456,6 +518,10 @@ class Orchestrator:
         self._iteration += 1
         self.cluster_registry.begin_iteration(self._iteration)
         self.entropy.refresh_at_barrier(self._iteration)
+        # Retained analyses are per-iteration evidence. A prior iteration's
+        # diagnosis describes a prior version of the artifacts, so carrying it
+        # forward would attribute a stale mechanism to a fresh failure.
+        self._base_analyses.clear()
         attempts: list[EditAttempt] = []
         accepted: list[str] = []
         rejected: list[str] = []
@@ -483,6 +549,14 @@ class Orchestrator:
                     cluster_id = assignment.cluster_id
                 else:
                     cluster_id = "c0"
+                # Retain the analysis for issue synthesis below. The cell is
+                # keyed exactly as the score tensor is, and the lowest-scoring
+                # rollout is kept: an issue describes a failure, so the rollout
+                # that failed hardest is the one worth diagnosing.
+                cell_key = (task.task_id, cluster_id)
+                previous = self._base_analyses.get(cell_key)
+                if previous is None or analysis.score < previous.score:
+                    self._base_analyses[cell_key] = analysis
                 self._record_score(
                     base_entry, task, analysis, cluster_id, trace.trace_id
                 )
@@ -496,20 +570,44 @@ class Orchestrator:
                     continue
                 if cell.max >= 1.0:
                     continue  # No issue; base already succeeds.
-                # Re-analyze the worst rollout for the issue.
-                worst_prov = min(cell.provenance, key=lambda p: 0.0)
-                # We don't have the trace anymore; synthesize an analysis
-                # from the score.
-                from agent_evolve.core.blame import BlameGraph, BlameNode
-                fake_analysis = CausalAnalysis(
-                    mechanism=f"base-failed-{t_id}-{m_id}",
-                    severity=1.0 - cell.max,
-                    score=cell.max,
-                    blame_graph=BlameGraph(
-                        nodes=(BlameNode(actor_id="agent", blame=1.0, artifacts=()),)
-                    ),
-                )
-                issues.append((task, f"{t_id}:{m_id}", fake_analysis))
+                # Reuse the analysis this iteration's base rollouts actually
+                # produced for this cell. The old code synthesized
+                # f"base-failed-{t_id}-{m_id}" with a hardcoded
+                # BlameNode(actor_id="agent") on the premise that "we don't have
+                # the trace anymore" -- but the analysis was computed a few lines
+                # above and simply discarded. Fabricating a mechanism that no
+                # analyzer produced made every base failure on a task collapse to
+                # one identical string, and the invented blame node was what the
+                # editor selected its target from.
+                retained = self._base_analyses.get((t_id, m_id))
+                if retained is None:
+                    # No analysis was retained for this cell (e.g. it was scored
+                    # in an earlier iteration). There is genuinely nothing to
+                    # report, so abstain explicitly rather than invent a verdict.
+                    issue_analysis = abstained_analysis(
+                        "insufficient_evidence",
+                        score=cell.max,
+                        evidence=(
+                            "no analysis was retained for this cell in the "
+                            "current iteration; no mechanism was diagnosed",
+                        ),
+                    )
+                else:
+                    # The retained analysis is the real diagnosis; only the score
+                    # is replaced with the cell aggregate, which is the measured
+                    # evidence the acceptance decision compares against.
+                    issue_analysis = CausalAnalysis(
+                        mechanism=retained.mechanism,
+                        severity=retained.severity,
+                        score=cell.max,
+                        blame_graph=retained.blame_graph,
+                        counterfactual_evidence=retained.counterfactual_evidence,
+                        analyzer_model_id=retained.analyzer_model_id,
+                        judge_model_id=retained.judge_model_id,
+                    )
+                self._issue_mechanisms.append(issue_analysis.mechanism)
+                self._issue_blame_actors.append(issue_analysis.actor_ids)
+                issues.append((task, f"{t_id}:{m_id}", issue_analysis))
 
         # 3. Build the write set from the base inventory.
         write_set = tuple(
@@ -802,11 +900,43 @@ class SequentialGepaRunner:
     net_gain_threshold: float = 0.0
     # Donor parents offered to the editor alongside the primary (spec §7).
     donor_count: int = 2
+    #: Measures every rollout and names the grader that did it. Defaults to the
+    #: task-contract scorer, which is what the offline suite and the fake stack
+    #: use. A real run supplies a benchmark-driven scorer so the headline number
+    #: comes from the benchmark's own grader.
+    scorer: Scorer | None = None
+    #: Executes a whole task batch for one version. ``None`` means "roll tasks
+    #: out one at a time through the adapter", which is the existing behaviour
+    #: and the only safe mode for a workspace-bound real harness on one thread.
+    rollout_batch: RolloutBatch | None = None
+    #: Zero-arg builder for a report-based analyzer, used only when
+    #: ``analyzer_workers > 1``. Required for concurrency because the analyzer is
+    #: expected to become a stateful agent: sharing one across threads would
+    #: interleave two trajectories into one conversation.
+    analyzer_factory: Callable[[], ReportAnalyzerJudge] | None = None
     _selector: TargetIssueSelector | None = field(default=None, init=False, repr=False)
     _rng: random.Random | None = field(default=None, init=False, repr=False)
     _iteration: int = field(default=0, init=False, repr=False)
     _attempt_seq: int = field(default=0, init=False, repr=False)
     _probe_seq: int = field(default=0, init=False, repr=False)
+    _resolved_analyzer: AnalyzerJudge | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _resolved_scorer: Scorer | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    #: Probes whose rollout produced no measurement. Counted, never scored: a
+    #: probe with no evidence must not become a passing validation result.
+    _unscorable_probes: int = field(default=0, init=False, repr=False)
+    #: Analyzer failures observed this run, as data. A model outage is recorded,
+    #: not converted into a diagnosis and not allowed to abort the batch.
+    _analysis_failures: list[AnalysisOutcome] = field(
+        default_factory=list, init=False, repr=False
+    )
+    #: Every mechanism that reached issue synthesis, in order, for auditing.
+    _observed_mechanisms: list[str] = field(
+        default_factory=list, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         if not self.mechanism_cluster_id:
@@ -817,6 +947,13 @@ class SequentialGepaRunner:
             self.embedder = LexicalEmbedder()
         self._rng = random.Random(self.seed)
         config = self.config
+        if self.analyzer_workers > 1 and self.analyzer_factory is None:
+            raise ValueError(
+                f"max_analyzer_workers={self.analyzer_workers} requires an "
+                "analyzer_factory: a stateful analyzer shared across threads "
+                "would interleave two trajectories into one conversation, so "
+                "each worker must build its own instance"
+            )
         self._selector = TargetIssueSelector(
             theta=config.dpp_theta if config is not None else TARGET_THETA,
             score_floor=(
@@ -829,6 +966,69 @@ class SequentialGepaRunner:
                 config.entropy_frontier_weight if config is not None else 0.30
             ),
         )
+
+    # ------------------------------------------------------------------ #
+    # Scoring, concurrency and failure surfaces
+    # ------------------------------------------------------------------ #
+    @property
+    def resolved_scorer(self) -> Scorer:
+        """``scorer``, defaulting to the task-contract scorer.
+
+        Cached so a stateful benchmark is built once, and so ``grader_name`` is
+        stable across an entire run: a run whose grader could change mid-flight
+        would report a pass rate with no single denominator definition.
+        """
+        resolved = self._resolved_scorer
+        if resolved is None:
+            resolved = self.scorer if self.scorer is not None else ContractScorer()
+            self._resolved_scorer = resolved
+        return resolved
+
+    @property
+    def grader_name(self) -> str:
+        return self.resolved_scorer.grader_name
+
+    @property
+    def analyzer_workers(self) -> int:
+        """Bounded analyzer concurrency, from config. Defaults to 1.
+
+        Analyzer fan-out is pure LLM calls with no CUGA process involved, so
+        threads are safe here -- unlike rollouts, where ``CUGA_FOLDER`` is
+        process-global.
+        """
+        if self.config is None:
+            return 1
+        return max(1, int(getattr(self.config, "max_analyzer_workers", 1)))
+
+    @property
+    def unscorable_probe_count(self) -> int:
+        return self._unscorable_probes
+
+    @property
+    def analysis_failures(self) -> tuple[AnalysisOutcome, ...]:
+        return tuple(self._analysis_failures)
+
+    @property
+    def observed_mechanisms(self) -> tuple[str, ...]:
+        return tuple(self._observed_mechanisms)
+
+
+    # ------------------------------------------------------------------ #
+    # Analyzer protocol resolution
+    # ------------------------------------------------------------------ #
+    @property
+    def resolved_analyzer(self) -> AnalyzerJudge:
+        """``analyzer_judge`` adapted to this runner's ``(task, trace)`` call sites.
+
+        Identical semantics to :attr:`Orchestrator.resolved_analyzer`: a legacy
+        analyzer passes through by identity, a report-based analyzer is wrapped
+        once and cached.
+        """
+        resolved = self._resolved_analyzer
+        if resolved is None:
+            resolved = as_legacy_analyzer(self.analyzer_judge)
+            self._resolved_analyzer = resolved
+        return resolved
 
     # ------------------------------------------------------------------ #
     # Identifiers
@@ -859,6 +1059,180 @@ class SequentialGepaRunner:
     # ------------------------------------------------------------------ #
     # Observation
     # ------------------------------------------------------------------ #
+    def _execute_rollouts(
+        self, version: str, tasks: Sequence[EvolutionTask], *, prefix: str
+    ) -> tuple[RolloutOutcome, ...]:
+        """Run ``tasks`` against ``version``, returning failures as data.
+
+        With a ``rollout_batch`` the whole batch is delegated -- that is how a
+        real run gets process-isolated parallel CUGA execution. Without one,
+        tasks run through the adapter one at a time on this thread, which is the
+        pre-existing behaviour and the only safe in-process mode for a
+        workspace-bound harness (``CUGA_FOLDER`` is process-global).
+
+        An adapter that raises is recorded as one failed rollout, not propagated:
+        one broken task must not discard the evidence from its siblings.
+        """
+        if self.rollout_batch is not None:
+            return tuple(self.rollout_batch.run_rollouts(version, tasks, prefix=prefix))
+
+        outcomes: list[RolloutOutcome] = []
+        for task in tasks:
+            probe_id = self._next_probe_id(f"{prefix}-{task.task_id}")
+            try:
+                workspace = self.adapter.materialize_candidate(version, probe_id)
+                result = self.adapter.run_full_rollout(workspace, task, probe_id)
+                trace = self.adapter.capture_trace(result)
+            except Exception as exc:  # noqa: BLE001 - a failure is data
+                outcomes.append(
+                    RolloutOutcome(
+                        task=task,
+                        trace=None,
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                )
+                continue
+            outcomes.append(RolloutOutcome(task=task, trace=trace))
+        return tuple(outcomes)
+
+    def rollout_group(
+        self, version: str, tasks: Sequence[EvolutionTask], *, prefix: str
+    ) -> tuple[ObservedRollout, ...]:
+        """Roll out, score, and diagnose one candidate version over ``tasks``.
+
+        Three phases, in this order and for these reasons:
+
+        1. **Execute.** Rollouts happen first so the analyzer never blocks on
+           agent execution, and so a batch executor can parallelise them under
+           process isolation.
+        2. **Score.** The score comes from ``resolved_scorer`` -- a measurement.
+           A rollout that produced no answer is marked unscorable here and is
+           excluded from every denominator from this point on.
+        3. **Diagnose.** Only *answered, failing* rollouts are analyzed, with
+           bounded concurrency. Analyzing an unanswered rollout would spend a
+           model call to diagnose an outage, and analyzing a passing one would
+           ask for a mechanism where there is no failure.
+
+        Diagnosis never supplies the score: ``analysis_from_finding`` requires
+        the caller's own measurement, so a diagnosis can never be mistaken for
+        a verdict on correctness.
+        """
+        executed = self._execute_rollouts(version, tasks, prefix=prefix)
+        scorer = self.resolved_scorer
+
+        scored: list[tuple[RolloutOutcome, RolloutScore]] = []
+        for outcome in executed:
+            if outcome.trace is None:
+                scored.append(
+                    (
+                        outcome,
+                        RolloutScore(
+                            task_id=outcome.task.task_id,
+                            grader_name=scorer.grader_name,
+                            score=0.0,
+                            scorable=False,
+                            reason=outcome.error or "no rollout was produced",
+                        ),
+                    )
+                )
+                continue
+            scored.append((outcome, scorer.score_rollout(outcome.task, outcome.trace)))
+
+        # Only answered failures are worth a model call.
+        to_analyze = [
+            (outcome, score)
+            for outcome, score in scored
+            if outcome.trace is not None and score.scorable and not score.passed
+        ]
+        analyses = self._analyze(to_analyze)
+
+        observed: list[ObservedRollout] = []
+        for outcome, score in scored:
+            analysis, error = analyses.get(
+                (outcome.task.task_id, id(outcome)), (None, "")
+            )
+            observed.append(
+                ObservedRollout(
+                    task=outcome.task,
+                    trace=outcome.trace,
+                    score=score,
+                    analysis=analysis,
+                    error=outcome.error or error,
+                )
+            )
+        return tuple(observed)
+
+    def _analyze(
+        self, items: Sequence[tuple[RolloutOutcome, RolloutScore]]
+    ) -> dict[tuple[str, int], tuple[CausalAnalysis | None, str]]:
+        """Diagnose the given rollouts, with concurrency when configured.
+
+        At ``analyzer_workers == 1`` the legacy per-rollout path is used
+        verbatim, so existing behaviour (including error propagation from a
+        legacy analyzer) is unchanged. Above 1,
+        :class:`ParallelAnalysisRunner` fans the sanitized reports out over
+        threads and returns per-item failures as data; the score is still the
+        caller's, supplied to ``analysis_from_finding``.
+        """
+        if not items:
+            return {}
+
+        out: dict[tuple[str, int], tuple[CausalAnalysis | None, str]] = {}
+        if self.analyzer_workers == 1:
+            analyzer = self.resolved_analyzer
+            for outcome, score in items:
+                assert outcome.trace is not None  # filtered by the caller
+                analysis = analyzer.analyze(outcome.task, outcome.trace)
+                self._observed_mechanisms.append(analysis.mechanism)
+                out[(outcome.task.task_id, id(outcome))] = (analysis, "")
+            return out
+
+        factory = self.analyzer_factory
+        assert factory is not None  # validated in __post_init__
+        reports = tuple(
+            rollout_group_report(outcome.task, outcome.trace)  # type: ignore[arg-type]
+            for outcome, _ in items
+        )
+        runner = ParallelAnalysisRunner(
+            analyzer_factory=factory, max_workers=self.analyzer_workers
+        )
+        outcomes = runner.run(reports)
+        for (rollout, score), analysis_outcome in zip(items, outcomes, strict=True):
+            key = (rollout.task.task_id, id(rollout))
+            if not analysis_outcome.ok:
+                self._analysis_failures.append(analysis_outcome)
+                out[key] = (None, analysis_outcome.error)
+                continue
+            findings = analysis_outcome.findings
+            if len(findings) != 1:
+                # A single-rollout report yields exactly one finding. Anything
+                # else cannot be projected onto one verdict without discarding
+                # evidence, so it is recorded as a gap instead of guessed at.
+                error = (
+                    f"a single-rollout report yielded {len(findings)} findings; "
+                    "exactly one verdict is representable"
+                )
+                self._analysis_failures.append(
+                    AnalysisOutcome(
+                        report=analysis_outcome.report,
+                        findings=(),
+                        error=error,
+                        ok=False,
+                    )
+                )
+                out[key] = (None, error)
+                continue
+            analysis = analysis_from_finding(
+                findings[0],
+                score=score.score,
+                analyzer_model_id=str(
+                    getattr(factory, "analyzer_model_id", "") or ""
+                ),
+            )
+            self._observed_mechanisms.append(analysis.mechanism)
+            out[key] = (analysis, "")
+        return out
+
     def observe(
         self, entry: PoolEntry, task: EvolutionTask
     ) -> tuple[ExecutionTrace, CausalAnalysis]:
@@ -866,13 +1240,35 @@ class SequentialGepaRunner:
 
         The rollout uses a throwaway workspace materialized from the candidate's
         version so the candidate's own artifacts are never written.
+
+        Raises ``ValueError`` when the rollout produced no measurement. There is
+        no analysis of a rollout that did not happen, and returning a zero-scored
+        analysis would put a fabricated failure into the caller's hands; callers
+        that must tolerate a failed rollout use :meth:`rollout_group`.
         """
-        probe_id = self._next_probe_id(f"obs-{entry.candidate_id}")
-        workspace = self.adapter.materialize_candidate(entry.version, probe_id)
-        result = self.adapter.run_full_rollout(workspace, task, probe_id)
-        trace = self.adapter.capture_trace(result)
-        analysis = self.analyzer_judge.analyze(task, trace)
-        return trace, analysis
+        observed = self.rollout_group(
+            entry.version, (task,), prefix=f"obs-{entry.candidate_id}"
+        )[0]
+        if observed.trace is None or observed.score is None or not observed.scorable:
+            reason = (
+                observed.error
+                or (observed.score.reason if observed.score is not None else "")
+                or "unknown"
+            )
+            raise ValueError(
+                f"rollout of {entry.candidate_id!r} on task {task.task_id!r} "
+                f"produced no measurement ({reason}); a failed rollout is not a "
+                f"wrong answer and must not be scored"
+            )
+        if observed.analysis is not None:
+            return observed.trace, observed.analysis
+        if observed.score.passed:
+            return observed.trace, empty_analysis()
+        return observed.trace, abstained_analysis(
+            "insufficient_evidence",
+            score=observed.score.score,
+            evidence=(observed.error or "no analysis was produced for this rollout",),
+        )
 
     # ------------------------------------------------------------------ #
     # Finding synthesis
@@ -968,21 +1364,37 @@ class SequentialGepaRunner:
         Returns target :class:`agent_evolve.core.issues.Issue` values. A task the
         base already satisfies produces no issue, and a finding with no writable
         attribution is dropped by :func:`build_issue` rather than ranked.
+
+        A task whose rollout produced no measurement yields no issue **and no
+        score**. It is neither an observed failure to diagnose nor a data point
+        to record: a broken harness must not look like a candidate that answered
+        wrongly.
         """
         base = self.pool.base
         inventory = self.adapter.artifact_inventory(base.version)
         write_set = self._writable_artifact_ids(base.version)
+        observed = self.rollout_group(
+            base.version, tasks, prefix=f"obs-{base.candidate_id}"
+        )
         out: list[TargetIssue] = []
-        for task in tasks:
-            trace, analysis = self.observe(base, task)
-            if analysis.score >= 1.0:
+        for rollout in observed:
+            if rollout.trace is None or rollout.score is None or not rollout.scorable:
+                continue
+            self._record_rollout_score(base.candidate_id, rollout)
+            if rollout.score.passed:
+                continue
+            analysis = rollout.analysis
+            if analysis is None:
+                # The rollout answered and failed, but no diagnosis exists (an
+                # analyzer outage). The score is already recorded; there is
+                # nothing to attribute an artifact from, so no issue is built.
                 continue
             finding = self.finding_from_analysis(
                 analysis,
-                task=task,
+                task=rollout.task,
                 candidate_id=base.candidate_id,
-                trace_id=trace.trace_id,
-                verdict_id=f"{task.task_id}:{self.mechanism_cluster_id}",
+                trace_id=rollout.trace.trace_id,
+                verdict_id=f"{rollout.task.task_id}:{self.mechanism_cluster_id}",
                 writable_artifact_ids=write_set,
             )
             if finding.status == "insufficient_evidence":
@@ -990,16 +1402,60 @@ class SequentialGepaRunner:
             issue = build_target_issue(
                 finding,
                 inventory,
-                entropy=self._cell_entropy(task.task_id),
-                coverage_need=self._coverage_need(task.task_id),
+                entropy=self._cell_entropy(rollout.task.task_id),
+                coverage_need=self._coverage_need(rollout.task.task_id),
                 pareto_relevance=self._pareto_relevance(base.candidate_id),
-                embedding=self._embed_finding(finding, task),
+                embedding=self._embed_finding(finding, rollout.task),
                 lineage=base.version,
-                entropy_tier=self._entropy_tier(task.task_id),
+                entropy_tier=self._entropy_tier(rollout.task.task_id),
             )
             if issue is not None:
                 out.append(issue)
         return tuple(out)
+
+    def _record_rollout_score(
+        self, candidate_id: str, rollout: ObservedRollout
+    ) -> None:
+        """Record one *scorable* rollout's measurement in the pool.
+
+        Refuses an unscorable rollout outright rather than skipping it quietly:
+        this is the last line of defence for the property that a failed rollout
+        can never reach a score denominator, and a silent no-op here would make
+        a future miswiring invisible.
+        """
+        score = rollout.score
+        if score is None or not score.scorable:
+            raise ValueError(
+                "refusing to record an unscorable rollout: a rollout that "
+                "produced no measurement is not a wrong answer"
+            )
+        assert rollout.trace is not None  # scorable implies a trace
+        entry = self.pool.get(candidate_id)
+        cell = entry.cell(rollout.task.task_id, self.mechanism_cluster_id)
+        analysis = rollout.analysis
+        self.pool.record_score(
+            candidate_id,
+            score.score,
+            ScoreProvenance(
+                task_id=rollout.task.task_id,
+                mechanism_cluster_id=self.mechanism_cluster_id,
+                trace_id=rollout.trace.trace_id,
+                rollout_seq=cell.rollout_count,
+                analyzer_model_id=(
+                    analysis.analyzer_model_id if analysis is not None else ""
+                ),
+                # The grader that produced this number, recorded as the judge:
+                # a score whose grader is unnamed cannot be compared later.
+                judge_model_id=score.grader_name,
+                blame_confidence=(
+                    min(1.0, analysis.blame_graph.total_blame())
+                    if analysis is not None
+                    else 0.0
+                ),
+                blame_stability=1.0,
+                artifact_versions=dict(entry.candidate.artifact_hashes),
+            ),
+        )
 
     def _embed_finding(
         self, finding: CausalFinding, task: EvolutionTask
@@ -1244,24 +1700,39 @@ class SequentialGepaRunner:
         origin_task: EvolutionTask,
         regression_tasks: Sequence[EvolutionTask] = (),
     ) -> FocusedValidationReport:
-        """Run origin and regression probes against the edited workspace."""
+        """Run origin and regression probes against the edited workspace.
+
+        A probe whose rollout produced no measurement is **dropped**, not
+        recorded. Recording it as a 0.0 would invent a regression; recording it
+        as a pass would accept an edit on evidence that does not exist. Both are
+        worse than an absent probe, which merely leaves the edit unsupported --
+        and an unsupported edit is rejected by :func:`decide_acceptance`, because
+        an empty origin set produces zero weighted net gain. The count is
+        exposed via :attr:`unscorable_probe_count` so a run can report how much
+        of its validation evidence went missing.
+        """
         planner = ValidationPlanner(
             origin_task=origin_task,
             regression_tasks=tuple(regression_tasks),
         )
+        probes = planner.build_probes()
+        observed = self.rollout_group(
+            workspace.version,
+            tuple(probe.task for probe in probes),
+            prefix=f"{workspace.attempt_id}-probe",
+        )
         origin: list[ValidationResult] = []
         regression: list[ValidationResult] = []
-        for probe in planner.build_probes():
-            probe_id = self._next_probe_id(f"{workspace.attempt_id}-{probe.kind.value}")
-            result = self.adapter.run_full_rollout(workspace, probe.task, probe_id)
-            trace = self.adapter.capture_trace(result)
-            analysis = self.analyzer_judge.analyze(probe.task, trace)
+        for probe, rollout in zip(probes, observed, strict=True):
+            if rollout.trace is None or rollout.score is None or not rollout.scorable:
+                self._unscorable_probes += 1
+                continue
             outcome = ValidationResult(
                 kind=probe.kind,
                 task_id=probe.task.task_id,
-                score=analysis.score,
-                trace_id=trace.trace_id,
-                passed=analysis.score >= 0.5,
+                score=rollout.score.score,
+                trace_id=rollout.trace.trace_id,
+                passed=rollout.score.score >= 0.5,
                 mechanism_cluster_id=self.mechanism_cluster_id,
             )
             if probe.kind is ValidationKind.REGRESSION:
@@ -1345,13 +1816,32 @@ class SequentialGepaRunner:
                     trace_id=result.trace_id,
                     rollout_seq=cell.rollout_count,
                     analyzer_model_id=analysis.analyzer_model_id,
-                    judge_model_id=analysis.judge_model_id,
+                    # The grader that produced this score, not the analyzer's
+                    # judge: the validation results came from ``validate``, which
+                    # measures with ``resolved_scorer``.
+                    judge_model_id=self.grader_name,
                     blame_confidence=min(1.0, analysis.blame_graph.total_blame()),
                     blame_stability=1.0,
                     artifact_versions=dict(candidate.artifact_hashes),
                 ),
             )
         return entry
+
+    def measure(
+        self, version: str, tasks: Sequence[EvolutionTask], *, prefix: str = "measure"
+    ) -> ScoreTally:
+        """Score one version over ``tasks`` and report the tally with its denominator.
+
+        Used for the before/after numbers a run reports. It records nothing in
+        the pool: a measurement pass is an observation of a version, and folding
+        it into the score tensor would double-count the evidence that selection
+        reads.
+        """
+        observed = self.rollout_group(version, tasks, prefix=prefix)
+        return tally_scores(
+            tuple(r.score for r in observed if r.score is not None),
+            grader_name=self.grader_name,
+        )
 
     # ------------------------------------------------------------------ #
     # One attempt
@@ -1379,7 +1869,51 @@ class SequentialGepaRunner:
         task = self._task_for(issue, tasks)
         parent = self.select_parent()
         attempt_id = self._next_attempt_id()
-        _, analysis = self.observe(parent, task)
+        parent_rollout = self.rollout_group(
+            parent.version, (task,), prefix=f"obs-{parent.candidate_id}"
+        )[0]
+        if parent_rollout.score is None or not parent_rollout.scorable:
+            # The parent's own rollout produced no measurement, so there is no
+            # evidence to hand the editor and no baseline to compare an edit
+            # against. Reported as "no work item" rather than attempted on a
+            # fabricated zero.
+            outcome = GepaAttemptOutcome(
+                attempt_id=attempt_id,
+                issue_id=issue.issue_id,
+                parent_candidate_id=parent.candidate_id,
+                result_candidate_id=None,
+                status=AttemptStatus.PENDING,
+                accepted=False,
+                weighted_net_gain=0.0,
+                reason=(
+                    "the parent rollout produced no measurement: "
+                    + (
+                        parent_rollout.error
+                        or (
+                            parent_rollout.score.reason
+                            if parent_rollout.score is not None
+                            else "unknown"
+                        )
+                    )
+                ),
+                fallback_reason=report.fallback_reason,  # type: ignore[attr-defined]
+            )
+            self._persist_attempt(outcome, 0)
+            return outcome
+        analysis = parent_rollout.analysis
+        if analysis is None:
+            analysis = (
+                empty_analysis()
+                if parent_rollout.score.passed
+                else abstained_analysis(
+                    "insufficient_evidence",
+                    score=parent_rollout.score.score,
+                    evidence=(
+                        parent_rollout.error
+                        or "no analysis was produced for the parent rollout",
+                    ),
+                )
+            )
 
         workspace, response, corrections, observed_parents = self.propose_edits(
             parent, issue, task, analysis, attempt_id

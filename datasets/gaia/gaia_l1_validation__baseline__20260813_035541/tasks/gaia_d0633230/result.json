@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-d0633230",
+  "gaia_task_id": "d0633230-7067-47a9-9dbf-ee11e0a2cdd6",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "In the Scikit-Learn July 2017 changelog, what other predictor base command received a bug fix? Just give the name, not a path.",
+  "expected_regex": "(?i)\\bBaseLabelPropagation\\b",
+  "started_at": "2026-08-12T22:26:51.430729+00:00",
+  "ended_at": "2026-08-12T22:28:20.966685+00:00",
+  "elapsed_seconds": 89.53600362490397,
+  "elapsed": "00:01:29.54",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "c5b49dda-1266-4f3d-9e29-d060e2fe423f",
+  "answer": "BaseLabelPropagation",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/c5b49dda-1266-4f3d-9e29-d060e2fe423f.json",
+  "direct_regex": {
+    "available": true,
+    "passed": true,
+    "pattern": "(?i)\\bBaseLabelPropagation\\b",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-d0633230",
+    "verdict": "correct",
+    "reason": "The response gives the requested predictor base command exactly.",
+    "answer_span": "BaseLabelPropagation"
+  },
+  "status": "passed_llm"
+}

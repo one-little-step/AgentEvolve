@@ -1,0 +1,32 @@
+{
+  "task_id": "gaia-50ad0280",
+  "gaia_task_id": "50ad0280-0819-4bd9-b275-5de32d3b5bcb",
+  "category": "gaia-level-1",
+  "difficulty": "easy",
+  "question": "Pull out the sentence in the following 5x7 block of text. Read from left to right and use all of the letters in order:\n\nTHESE\nAGULL\nGLIDE\nDPEAC\nEFULL\nYTOMY\nCHAIR",
+  "expected_regex": "(?i)\\bThe\\ seagull\\ glided\\ peacefully\\ to\\ my\\ chair\\.",
+  "started_at": "2026-08-12T22:27:18.159164+00:00",
+  "ended_at": "2026-08-12T22:27:39.684472+00:00",
+  "elapsed_seconds": 21.525302708963864,
+  "elapsed": "00:00:21.53",
+  "return_code": 0,
+  "timed_out": false,
+  "error": null,
+  "run_id": "c41a5573-340a-4a16-8a10-a3da6b41579a",
+  "answer": "THE SEAGULL GLIDED PEACEFULLY TO MY CHAIR.",
+  "tool_calls": [],
+  "trace": "/Users/saptarshi/personal/AgentEvolve/cuga_complete_wrapper/data/traces/c41a5573-340a-4a16-8a10-a3da6b41579a.json",
+  "direct_regex": {
+    "available": true,
+    "passed": true,
+    "pattern": "(?i)\\bThe\\ seagull\\ glided\\ peacefully\\ to\\ my\\ chair\\.",
+    "error": null
+  },
+  "llm_verdict": {
+    "task_id": "gaia-50ad0280",
+    "verdict": "correct",
+    "reason": "The extracted sentence correctly uses all letters in order and matches the requested sentence.",
+    "answer_span": "THE SEAGULL GLIDED PEACEFULLY TO MY CHAIR."
+  },
+  "status": "passed_llm"
+}
