@@ -68,6 +68,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT / "src") not in sys.path:
@@ -90,12 +91,17 @@ from agent_evolve.core.run_logging import (  # noqa: E402
 from agent_evolve.pipeline import (  # noqa: E402
     DEFAULT_WORKER_KNOWLEDGE_SEED,
     EvolutionStack,
+    IterationSummary,
     build_live_stack,
     build_offline_stack,
+    build_rho_hooks,
     format_delta,
     nothing_accepted_warning,
     nothing_accepted_warning_applies,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from agent_evolve.core.rho.rounds import RoundConfig
 
 #: Matches the observed baseline configuration.
 DEFAULT_TASK_TIMEOUT = 1200.0
@@ -278,7 +284,207 @@ def build_parser() -> argparse.ArgumentParser:
             "corrupt evidence."
         ),
     )
+    _add_rho_arguments(parser)
     return parser
+
+
+def _add_rho_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the RHO stage flags.
+
+    Grouped at the end rather than interleaved with the existing concurrency
+    flags: ``--max-workers``, ``--analyzer-workers`` and ``--isolation`` describe
+    one decision together, and splitting them made ``--help`` read as if
+    ``--isolation`` were an RHO option. Every flag here is inert at the default
+    ``--mode genetic``, so an existing invocation is unchanged.
+    """
+    group = parser.add_argument_group(
+        "RHO stage",
+        "retrospective harness optimization; inert unless --mode selects it",
+    )
+    group.add_argument(
+        "--mode",
+        choices=("rho", "genetic", "rho-genetic"),
+        default="genetic",
+        help=(
+            "which phases run per outer iteration. 'genetic' (default) is the "
+            "existing mutation/crossover loop, unchanged. 'rho' runs the "
+            "retrospective harness-optimization round. 'rho-genetic' alternates "
+            "[RHO round -> genetic iterations]."
+        ),
+    )
+    group.add_argument(
+        "--rho-rounds",
+        type=int,
+        default=1,
+        help="how many RHO rounds to run (default: 1)",
+    )
+    group.add_argument(
+        "--rho-history",
+        type=Path,
+        default=None,
+        help=(
+            "trace root holding the historical corpus. Omitted means COLD START: "
+            "difficulty judging is skipped and the coreset is chosen without "
+            "difficulty weighting, so the run proves plumbing, not the method."
+        ),
+    )
+    group.add_argument(
+        "--rho-coreset-size",
+        type=int,
+        default=10,
+        help="k: how many historical tasks to diagnose and re-solve (default: 10)",
+    )
+    group.add_argument(
+        "--rho-group-rollouts",
+        type=int,
+        default=3,
+        help="G: baseline rollouts per coreset task (default: 3)",
+    )
+    group.add_argument(
+        "--rho-candidates",
+        type=int,
+        default=3,
+        help=(
+            "N: independent candidate proposals per round (default: 3). Each is "
+            "its own workspace-agent invocation; ALL survivors are retained."
+        ),
+    )
+    group.add_argument(
+        "--rho-candidate-rollouts",
+        type=int,
+        default=2,
+        help=(
+            "R: rollouts per candidate per coreset task (default: 2). 2 is the "
+            "minimum that clears the cross-candidate entropy evidence floor "
+            "(min_rollouts_per_candidate=2), so low-evidence cells are never "
+            "silently skipped. 1 halves cost but leaves every candidate mean "
+            "resting on a single stochastic rollout."
+        ),
+    )
+    group.add_argument(
+        "--rho-selector",
+        choices=("dpp", "difficulty_rank", "random"),
+        default="dpp",
+        help="coreset selection strategy (default: dpp)",
+    )
+    group.add_argument(
+        "--rho-group-workers",
+        type=int,
+        default=4,
+        help="concurrently admitted task groups (default: 4)",
+    )
+    group.add_argument(
+        "--rho-rollout-workers",
+        type=int,
+        default=3,
+        help="concurrent rollouts within one group (default: 3)",
+    )
+    group.add_argument(
+        "--rho-proposal-temperature",
+        type=float,
+        default=None,
+        help=(
+            "ABLATION ONLY. Unset by default: candidate diversity comes from N "
+            "independent agent invocations, not sampling. 0.0 is rejected by the "
+            "endpoint and is refused here."
+        ),
+    )
+    group.add_argument(
+        "--rho-summary-cache",
+        type=Path,
+        default=None,
+        help="cache dir for trajectory comprehension, keyed by trace content hash",
+    )
+    group.add_argument(
+        "--rho-difficulty-cache",
+        type=Path,
+        default=None,
+        help="cache dir for difficulty/fingerprint verdicts",
+    )
+    group.add_argument(
+        "--rho-embedding-cache",
+        type=Path,
+        default=None,
+        help="cache dir for fingerprint embeddings",
+    )
+    group.add_argument(
+        "--genetic-iterations-per-round",
+        type=int,
+        default=1,
+        help="genetic iterations after each RHO round in rho-genetic (default: 1)",
+    )
+
+
+def resolve_rho_config(args: argparse.Namespace) -> "RoundConfig":
+    """Validate RHO configuration before anything expensive is constructed.
+
+    Every refusal here is credential-independent on purpose. A run configured
+    with an impossible concurrency, or with threads against a process-global
+    ``CUGA_FOLDER``, is wrong whether or not a model is reachable, and reporting
+    "no model configured" first would send an operator to fix the wrong thing --
+    after paying for a CUGA wrapper. Same ordering rationale as
+    :func:`agent_evolve.pipeline.require_safe_rollout_concurrency`.
+
+    Nothing is ever clamped. A ``--max-workers`` larger than the two-level
+    structure can produce is a configuration error: silently lowering it would
+    make the run measure a concurrency the operator never asked for.
+    """
+    # Imported inside the function so this module keeps importing while the RHO
+    # round machinery is absent, and so --help costs nothing.
+    from agent_evolve.core.rho.scheduler import ConcurrencyPlan
+
+    if (
+        args.rho_proposal_temperature is not None
+        and args.rho_proposal_temperature == 0.0
+    ):
+        raise SystemExit(
+            "--rho-proposal-temperature 0.0 is rejected by the endpoint "
+            "('temperature does not support 0.0'); omit the flag instead"
+        )
+
+    # Checked before the plan is built: an unsafe isolation choice is unsafe at
+    # every worker count that exceeds 1, whatever the two-level split is.
+    if (
+        not args.dry_run
+        and not args.allow_unsafe_concurrency
+        and args.isolation != PROCESS_ISOLATION
+        and max(args.max_workers, args.rho_rollout_workers) > 1
+    ):
+        raise SystemExit(
+            f"RHO rollout concurrency requires --isolation {PROCESS_ISOLATION}. "
+            f"CUGA_FOLDER is a process-global environment variable read during "
+            f"invoke(): two threads binding different candidate workspaces were "
+            f"observed both reading the second one's, while each trace still "
+            f"stamped its own harness_version -- the run would look clean while "
+            f"measuring a harness that never existed. Use --isolation "
+            f"{PROCESS_ISOLATION}, or --max-workers 1 --rho-rollout-workers 1."
+        )
+
+    try:
+        plan = ConcurrencyPlan.validated(
+            group_workers=args.rho_group_workers,
+            rollout_workers=args.rho_rollout_workers,
+            global_cap=args.max_workers,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"invalid RHO concurrency: {exc}") from exc
+
+    from agent_evolve.core.rho.rounds import RoundConfig
+
+    try:
+        return RoundConfig(
+            mode=args.mode,
+            rounds=args.rho_rounds,
+            coreset_size=args.rho_coreset_size,
+            group_rollouts=args.rho_group_rollouts,
+            candidates=args.rho_candidates,
+            candidate_rollouts=args.rho_candidate_rollouts,
+            selector=args.rho_selector,
+            genetic_iterations_per_round=args.genetic_iterations_per_round,
+            concurrency=plan,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"invalid RHO configuration: {exc}") from exc
 
 
 def log_capture_from_args(args: argparse.Namespace) -> LogCaptureConfig:
@@ -376,6 +582,146 @@ def _build_live(
         return 2
 
 
+def _run_rho_preflight(args: argparse.Namespace) -> "RoundConfig | int":
+    """Resolve and report the RHO configuration, or return an exit code.
+
+    Every refusal here is credential-independent and happens before the dataset,
+    grader, harness and model checks: an impossible concurrency is wrong whatever
+    the credentials are.
+
+    Returns the validated :class:`RoundConfig` on success. It is *returned*
+    rather than reported-and-discarded because the caller now executes the round
+    with it -- silently running the genetic loop under ``--mode rho`` would
+    attribute genetic results to RHO, which is the one failure this reporting
+    exists to prevent.
+    """
+    try:
+        config = resolve_rho_config(args)
+    except SystemExit as exc:
+        print(f"cannot start: {exc}")
+        return 2
+    except ImportError as exc:
+        # The round machinery is absent; the invariant above was still checked.
+        print(
+            f"--mode {args.mode} validated its concurrency but the RHO round "
+            f"machinery is unavailable ({exc}); no RHO phase can run"
+        )
+        return 2
+
+    print(
+        f"RHO     : mode={config.mode} rounds={config.rounds} "
+        f"k={config.coreset_size} G={config.group_rollouts} "
+        f"N={config.candidates} R={config.candidate_rollouts} "
+        f"selector={config.selector}"
+    )
+    print(
+        f"RHO cost: {config.rollouts_per_round} rollout(s) per round under a "
+        f"global cap of {config.concurrency.global_cap} "
+        f"({config.concurrency.group_workers} groups x "
+        f"{config.concurrency.rollout_workers} rollouts)"
+    )
+    if args.rho_history is None:
+        print(
+            "RHO      : COLD START (no --rho-history): no historical trace "
+            "corpus was supplied, so difficulty judging and coreset selection "
+            "have nothing to rank and the RHO phases are skipped. This proves "
+            "plumbing, not the method."
+        )
+    return config
+
+
+def _rho_components_for(args: argparse.Namespace) -> dict[str, object]:
+    """The five RHO components this run should use.
+
+    ``--dry-run`` gets deterministic offline ones. That is not a convenience: the
+    flag documents "no CUGA process, no model endpoint, no network", and the real
+    comprehender and difficulty judge call ``litellm`` while the real diagnoser,
+    optimizer and preference judge each construct a CUGA agent. A dry run that
+    built them would make a real network call while claiming not to -- and would
+    then report every failed call as an unobserved result, so the round would
+    degrade to "summaries unavailable" and read like a data problem rather than a
+    wiring one.
+
+    A live run gets ``{}``, so :func:`build_rho_hooks` constructs the real
+    adapters itself. Returning explicit fakes for a live run would be the same
+    mistake in the other direction: a fabricated round reported as a real one.
+    """
+    if not args.dry_run:
+        return {}
+    from examples.fake_rho_components import offline_rho_components
+
+    return offline_rho_components()
+
+
+def _run_rho_rounds(
+    stack: EvolutionStack, args: argparse.Namespace, config: "RoundConfig"
+) -> None:
+    """Execute the RHO rounds against ``stack`` and report each one.
+
+    Nothing is inferred from a passing configuration: every line printed here
+    describes work that actually happened, and a phase that produced nothing
+    says so in ``notes``.
+    """
+    from agent_evolve.core.entropy import EntropyTracker
+    from agent_evolve.core.rho.rounds import run_rounds
+
+    history_root = args.rho_history
+    if history_root is not None and not Path(history_root).is_absolute():
+        history_root = REPO_ROOT / history_root
+
+    hooks = build_rho_hooks(
+        stack,
+        history_root=history_root,
+        summary_cache_root=args.rho_summary_cache,
+        difficulty_cache_root=args.rho_difficulty_cache,
+        embedding_cache_root=args.rho_embedding_cache,
+        proposal_temperature=args.rho_proposal_temperature,
+        **_rho_components_for(args),  # type: ignore[arg-type]
+    )
+    # A tracker of its own rather than the runner's: the RHO cells are keyed by
+    # ``rho_cluster_id``, and mixing them into the genetic tracker's fixed
+    # cluster would make two different mechanisms share one cell.
+    tracker = EntropyTracker()
+
+    print(f"\nrunning {config.rounds} RHO round(s)...")
+    summaries = run_rounds(config, hooks, tracker=tracker)
+    for summary in summaries:
+        print(f"  {summary.line()}")
+        print(
+            f"    rollouts={summary.rollouts_spent} "
+            f"failures={summary.rollout_failures} "
+            f"diagnoses_observed={summary.diagnoses_observed} "
+            f"preferences={summary.preferences_available} available / "
+            f"{summary.preferences_unavailable} unavailable"
+        )
+        if summary.preferences_available:
+            print(f"    mean preference={summary.preference_mean:+.3f}")
+        if summary.collapsed:
+            # Never silent: a collapse to one candidate means the pairwise judge
+            # compared a harness against itself.
+            print(
+                f"    warning: candidates COLLAPSED to "
+                f"{summary.candidates_distinct} of "
+                f"{summary.candidates_requested} requested; a single surviving "
+                f"candidate is compared against itself"
+            )
+        for index, reason in summary.discarded:
+            print(f"    discarded candidate {index}: {reason}")
+        for note in summary.notes:
+            print(f"    note: {note}")
+        if summary.genetic_iterations:
+            print(
+                f"    genetic: {summary.genetic_iterations} iteration(s) over "
+                f"the {len(summary.coreset_ids)} coreset task(s)"
+            )
+    hits = summaries[-1].cache_hits if summaries else {}
+    if hits:
+        print(
+            "  cache hits: "
+            + " ".join(f"{name}={count}" for name, count in sorted(hits.items()))
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -391,6 +737,17 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"cannot start: {exc}")
         return 2
+
+    rho_config: "RoundConfig | None" = None
+    if args.mode != "genetic":
+        # Before the dataset, grader, harness and model checks on purpose: an
+        # impossible concurrency or an unsafe isolation choice is wrong whatever
+        # the credentials are, and reporting a missing dataset first would send
+        # an operator to fix the wrong thing.
+        resolved = _run_rho_preflight(args)
+        if isinstance(resolved, int):
+            return resolved
+        rho_config = resolved
 
     if args.dry_run:
         if args.dataset is not None:
@@ -412,18 +769,30 @@ def main(argv: list[str] | None = None) -> int:
         stack = built
 
     try:
+        # Set before the header so the "no RHO seeder" caveat matches the run
+        # about to happen rather than the run the builder assumed.
+        stack.mode = args.mode
         _print_header(stack)
 
         print("\nmeasuring the base before any edit...")
         before = stack.measure(stack.base_version, prefix="before")
         _print_tally("base", before)
 
-        print("\nevolving...")
-        summaries = stack.run_iterations(args.iterations)
-        for summary in summaries:
-            print(f"  {summary.line}")
+        summaries: tuple[IterationSummary, ...] = ()
+        if rho_config is not None:
+            # The RHO round owns the genetic phase in ``rho-genetic`` -- it hands
+            # it the coreset tasks only, because after a RHO round the
+            # (task, mechanism) cells exist only there. Running the outer genetic
+            # loop as well would spend a second, differently-scoped budget and
+            # attribute both to one number.
+            _run_rho_rounds(stack, args, rho_config)
+        else:
+            print("\nevolving...")
+            summaries = stack.run_iterations(args.iterations)
+            for summary in summaries:
+                print(f"  {summary.line}")
 
-        if nothing_accepted_warning_applies(
+        if summaries and nothing_accepted_warning_applies(
             len(stack.tasks), any(s.accepted for s in summaries)
         ):
             # Surfaced loudly because a silently inert run is worse than a loud
@@ -460,9 +829,14 @@ def main(argv: list[str] | None = None) -> int:
                 "variance, not evolution"
             )
         print(
-            f"note   : {stack.candidate_count()} candidate(s) in the pool; with "
-            f"no RHO seeder there is one lineage, so cross-candidate entropy and "
-            f"DPP diversity contributed nothing to selection"
+            f"note   : {stack.candidate_count()} candidate(s) in the pool"
+            + (
+                ""
+                if rho_config is not None
+                else "; with no RHO seeder there is one lineage, so "
+                "cross-candidate entropy and DPP diversity contributed nothing "
+                "to selection"
+            )
         )
     finally:
         stack.close()

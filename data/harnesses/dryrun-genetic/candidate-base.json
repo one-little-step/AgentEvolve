@@ -1,0 +1,32 @@
+{
+  "export_format": "agent-evolve-harness-v1",
+  "policies": {
+    "execution": "execute(tool, args): call tool, return output"
+  },
+  "provenance": {
+    "ancestor_ids": [],
+    "attempt_ids": [],
+    "candidate_id": "base",
+    "candidate_version": "base-v0",
+    "grader_name": "expected_contract",
+    "is_base": true,
+    "is_champion": false,
+    "mean_score": 0.0,
+    "origin_attempt_ids": [],
+    "parent_ids": [],
+    "scored_cells": 3,
+    "source_base_version": "base-v0",
+    "task_ids": [
+      "task-1",
+      "task-2",
+      "task-3"
+    ],
+    "unexported_artifacts": {
+      "prompts/system": "You are a helpful assistant."
+    }
+  },
+  "skills": {
+    "retrieval": "retrieve(query): return top_k docs by bm25"
+  },
+  "version": "evolved-base"
+}

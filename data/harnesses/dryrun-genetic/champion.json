@@ -1,0 +1,40 @@
+{
+  "export_format": "agent-evolve-harness-v1",
+  "policies": {
+    "execution": "execute(tool, args): call tool, return output\nuse graphrag-retrieval here"
+  },
+  "provenance": {
+    "ancestor_ids": [
+      "base"
+    ],
+    "attempt_ids": [
+      "att-i001-s0000"
+    ],
+    "candidate_id": "base-v0+att-i001-s0000",
+    "candidate_version": "base-v0+att-i001-s0000",
+    "grader_name": "expected_contract",
+    "is_base": false,
+    "is_champion": true,
+    "mean_score": 1.0,
+    "origin_attempt_ids": [
+      "att-i001-s0000"
+    ],
+    "parent_ids": [
+      "base"
+    ],
+    "scored_cells": 3,
+    "source_base_version": "base-v0",
+    "task_ids": [
+      "task-1",
+      "task-2",
+      "task-3"
+    ],
+    "unexported_artifacts": {
+      "prompts/system": "You are a helpful assistant."
+    }
+  },
+  "skills": {
+    "retrieval": "retrieve(query): return top_k docs by bm25"
+  },
+  "version": "evolved-base-v0+att-i001-s0000"
+}

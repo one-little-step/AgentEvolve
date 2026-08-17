@@ -54,7 +54,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
 from agent_evolve.adapters.cuga_adapter import CugaAdapter
 from agent_evolve.benchmarks.base import Benchmark, BenchmarkTask
@@ -69,9 +69,11 @@ from agent_evolve.benchmarks.cuga_executor import (
 )
 from agent_evolve.benchmarks.runner import run_benchmark
 from agent_evolve.core.analyzer import FakeAnalyzerJudge
-from agent_evolve.core.clustering import LexicalEmbedder
+from agent_evolve.core.clustering import LexicalEmbedder, MechanismEmbedder
+from agent_evolve.core.rho.cache import JsonDiskCache
 from agent_evolve.core.config import ResolvedConfig, resolve_profile
 from agent_evolve.core.contracts import (
+    ArtifactEdit,
     EvolutionCandidate,
     EvolutionTask,
     ExecutionTrace,
@@ -86,13 +88,17 @@ from agent_evolve.core.evaluation import (
 from agent_evolve.core.fake_editor import FakeEditor
 from agent_evolve.core.memory import EditMemory
 from agent_evolve.core.orchestrator import SequentialGepaRunner
-from agent_evolve.core.pool import PersistentPool
+from agent_evolve.core.pool import PersistentPool, ScoreProvenance
 from agent_evolve.core.run_logging import (
     LogCaptureConfig,
     RunLogSink,
     build_sinks,
 )
 from agent_evolve.core.storage import StorageBackend
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from agent_evolve.core.rho.history import HistoryLoadReport
+    from agent_evolve.core.rho.rounds import RhoHooks
 
 __all__ = [
     "CANDIDATE_FILENAME_PREFIX",
@@ -103,8 +109,10 @@ __all__ = [
     "CugaRolloutRunner",
     "EvolutionStack",
     "IterationSummary",
+    "RhoBinding",
     "build_live_stack",
     "build_offline_stack",
+    "build_rho_hooks",
     "describe_knowledge_choice",
     "export_harness",
     "format_delta",
@@ -424,6 +432,11 @@ class EvolutionStack:
     #: Every sink this stack owns, by channel. Held so :meth:`close` can flush
     #: them: a stream still open at exit loses its final lines.
     log_sinks: Mapping[str, RunLogSink] = field(default_factory=dict)
+    #: Which phases the run selected, or ``""`` for the plain genetic loop. Read
+    #: only by the header: the "no RHO seeder exists" caveat is true of a genetic
+    #: run and false of a RHO one, and printing it under ``--mode rho`` would
+    #: tell an operator to discount a real cross-candidate result as inert.
+    mode: str = "genetic"
     _closers: tuple[Callable[[], None], ...] = ()
 
     # -- inspection ------------------------------------------------------- #
@@ -458,11 +471,27 @@ class EvolutionStack:
             f"knowledge store : {describe_knowledge_choice(self.knowledge_seed)}",
             f"trace root      : {self.trace_root if self.trace_root else '<none>'}",
             f"log capture     : {self._describe_capture()}",
-            (
-                f"candidates      : {self.candidate_count()} (base only -- no RHO "
-                f"seeder exists, so cross-candidate entropy and DPP diversity are "
-                f"inert)"
-            ),
+            f"candidates      : {self.candidate_count()}{self._describe_seeding()}",
+        )
+
+    def _describe_seeding(self) -> str:
+        """Whether cross-candidate machinery can do anything on this run.
+
+        Under ``--mode genetic`` the pool starts and stays at one lineage, so
+        cross-candidate entropy (which needs >= 3 comparable candidates per cell)
+        and DPP diversity (which needs alternatives) are genuinely inert, and
+        saying so keeps an operator from reading a selection decision into them.
+        Under a RHO mode a seeder runs and produces N candidates, so the same
+        sentence would be a false reassurance about a real result.
+        """
+        if self.mode == "genetic":
+            return (
+                " (base only -- no RHO seeder runs in this mode, so "
+                "cross-candidate entropy and DPP diversity are inert)"
+            )
+        return (
+            f" before the first round (the RHO seeder adds N per round; "
+            f"ALL are retained)"
         )
 
     def _describe_capture(self) -> str:
@@ -975,6 +1004,449 @@ def _harness_artifacts(harness: HarnessVersion) -> dict[str, str]:
     if not artifacts:
         artifacts["skills/generated-evolved"] = ""
     return artifacts
+
+
+# --------------------------------------------------------------------------- #
+# RHO round wiring
+#
+# ``core/rho/rounds.py`` may not import ``cuga``, ``litellm``, or
+# ``agent_evolve.adapters``; every model call, agent invocation and rollout
+# therefore arrives as an injected callable on ``RhoHooks``. This section is the
+# one place allowed to bind those callables to live adapters, which is the whole
+# reason ``RhoHooks`` exists rather than a set of direct imports inside the core.
+# --------------------------------------------------------------------------- #
+
+#: What produced a RHO cell's diagnosis, recorded on every score provenance so a
+#: later reader can tell a RHO-round cell from a genetic-attempt cell.
+RHO_ANALYZER_MODEL_ID = "cuga-rho-group-diagnoser"
+
+#: What ranked a RHO candidate. The *score* in the cell comes from the grader,
+#: not from this judge; the judge decides reported ordering only.
+RHO_JUDGE_MODEL_ID = "cuga-preference-judge"
+
+
+@dataclass(slots=True)
+class RhoBinding:
+    """Mutable state the RHO hooks share, kept out of the closures' scope.
+
+    Held as an object rather than as closure cells so a caller can read the
+    counters after a round: "how many rollouts produced no measurement?" is a
+    question asked after the run, when the answer can no longer be recovered.
+    """
+
+    #: version -> (task_id, cluster_id) -> list of scores awaiting pool commit.
+    #: Buffered because ``run_round`` scores a candidate in phase 8 but commits
+    #: it in phase 10, and ``PersistentPool.record_score`` refuses a candidate
+    #: that is not in the pool yet.
+    pending_scores: dict[str, dict[tuple[str, str], list[float]]] = field(
+        default_factory=dict
+    )
+    #: Rollouts whose trace carried no measurement. Counted, never scored as
+    #: zero into the pool: a probe with no evidence is not a failing probe.
+    unscorable: int = 0
+    #: Monotonic candidate registration counter, so two proposals never share a
+    #: workspace or a pool candidate id.
+    registrations: int = 0
+    #: Every candidate version committed to the pool, in commit order.
+    committed_versions: tuple[str, ...] = ()
+
+
+def build_rho_hooks(
+    stack: EvolutionStack,
+    *,
+    history_root: Path | None = None,
+    comprehender: object | None = None,
+    difficulty_judge: object | None = None,
+    diagnoser: object | None = None,
+    optimizer: object | None = None,
+    preference_judge: object | None = None,
+    summary_cache_root: Path | None = None,
+    difficulty_cache_root: Path | None = None,
+    embedding_cache_root: Path | None = None,
+    proposal_temperature: float | None = None,
+    expected_answer_for: Callable[[str], str | None] | None = None,
+    binding: RhoBinding | None = None,
+) -> "RhoHooks":
+    """Bind every :class:`RhoHooks` field to a live adapter over ``stack``.
+
+    All five RHO components are injectable and default to the real adapters,
+    constructed lazily so importing this module never requires the CUGA SDK.
+    An offline test injects duck-typed fakes; the shapes each one must satisfy
+    are documented on ``RhoHooks`` itself.
+
+    ``history_root`` is optional: its absence is a COLD START, which
+    :func:`~agent_evolve.core.rho.history.load_history` reports as data rather
+    than as an error.
+
+    Notes on the two hooks whose contract is not a straight delegation:
+
+    ``rollout`` adapts the batch-shaped ``run_rollouts`` to the round's
+    per-index call and **never raises** -- a raised exception would discard a
+    whole group's evidence for one broken rollout. It also resolves the round's
+    fixed ``BASE_VERSION`` ("base") to whatever this stack actually named its
+    incumbent, because the offline stack calls it ``base-v0`` and rolling out a
+    version the adapter never registered would fail silently.
+
+    ``score`` returns the grader's number but records into the pool only when
+    the rollout was *scorable*. An unscorable rollout still reaches the entropy
+    tracker as ``0.0`` because the hook signature carries no "unmeasured"
+    channel; the count is kept on :class:`RhoBinding` and logged rather than
+    hidden.
+
+    ``contamination_literals`` is deliberately left empty. The scan is
+    observational, and the only way to populate it is to hand this function an
+    answer key -- which would then travel into a manifest.
+    """
+    from agent_evolve.core.rho.cache import JsonDiskCache
+    from agent_evolve.core.rho.history import HistoryLoadReport, load_history
+    from agent_evolve.core.rho.rounds import BASE_VERSION, RhoHooks, rho_cluster_id
+
+    state = binding if binding is not None else RhoBinding()
+    adapter = stack.adapter
+    pool = stack.pool
+    scorer = stack.scorer
+
+    summary_cache = JsonDiskCache(summary_cache_root)
+    difficulty_cache = JsonDiskCache(difficulty_cache_root)
+    embedding_cache = JsonDiskCache(embedding_cache_root)
+
+    if comprehender is None:
+        from agent_evolve.adapters.cuga_rho_comprehender import RhoComprehender
+
+        comprehender = RhoComprehender(cache=summary_cache)
+    elif hasattr(comprehender, "cache") and summary_cache_root is not None:
+        comprehender.cache = summary_cache  # type: ignore[attr-defined]
+
+    if difficulty_judge is None:
+        from agent_evolve.adapters.cuga_rho_judge import RhoDifficultyJudge
+
+        difficulty_judge = RhoDifficultyJudge(cache=difficulty_cache)
+    elif hasattr(difficulty_judge, "cache") and difficulty_cache_root is not None:
+        difficulty_judge.cache = difficulty_cache  # type: ignore[attr-defined]
+
+    if diagnoser is None:
+        from agent_evolve.adapters.cuga_rho_diagnoser import RhoGroupDiagnoser
+
+        diagnoser = RhoGroupDiagnoser()
+
+    if optimizer is None:
+        from agent_evolve.adapters.cuga_rho_optimizer import RhoOptimizer
+
+        # Never 0.0: the endpoint rejects it and RhoOptimizer raises. Unset by
+        # default -- diversity comes from N independent invocations, not from
+        # sampling.
+        optimizer = RhoOptimizer(temperature=proposal_temperature)
+    elif proposal_temperature is not None and hasattr(optimizer, "temperature"):
+        optimizer.temperature = proposal_temperature  # type: ignore[attr-defined]
+
+    if preference_judge is None:
+        from agent_evolve.adapters.cuga_preference_judge import PreferenceJudge
+
+        preference_judge = PreferenceJudge()
+
+    tasks_by_id = {task.task_id: task for task in stack.tasks}
+
+    # -- phase 1 ---------------------------------------------------------- #
+    def load_history_hook() -> "HistoryLoadReport":
+        if history_root is None:
+            return HistoryLoadReport()
+        return load_history(Path(history_root))
+
+    # -- phase 3 ---------------------------------------------------------- #
+    def judge_hook(record: object, summary_text: str) -> object:
+        expected = (
+            expected_answer_for(getattr(record, "task_id", ""))
+            if expected_answer_for is not None
+            else None
+        )
+        judge_call = getattr(difficulty_judge, "judge")
+        return judge_call(record, summary_text, expected_answer=expected)
+
+    # -- phase 4 ---------------------------------------------------------- #
+    def task_for(task_id: str) -> EvolutionTask | None:
+        return tasks_by_id.get(task_id)
+
+    # -- phases 5 and 8 --------------------------------------------------- #
+    def resolve_version(version: str) -> str:
+        """Map the round's fixed base label onto this stack's incumbent."""
+        return stack.base_version if version == BASE_VERSION else version
+
+    def rollout(
+        version: str, task: EvolutionTask, index: int
+    ) -> RolloutOutcome:
+        resolved = resolve_version(version)
+        prefix = f"rho-{version}-{index}"
+        try:
+            outcomes = stack.runner._execute_rollouts(
+                resolved, (task,), prefix=prefix
+            )
+        except Exception as exc:  # noqa: BLE001 - a failure is data, never a raise
+            return RolloutOutcome(
+                task=task, trace=None, error=f"{type(exc).__name__}: {exc}"
+            )
+        if not outcomes:
+            return RolloutOutcome(
+                task=task, trace=None, error="the rollout batch returned nothing"
+            )
+        return _restamped(outcomes[0], resolved)
+
+    # -- phase 7 ---------------------------------------------------------- #
+    def base_artifacts() -> Mapping[str, str]:
+        version = stack.base_version
+        ids = tuple(
+            d.artifact_id
+            for d in adapter.artifact_inventory(version)  # type: ignore[attr-defined]
+        )
+        return dict(adapter.read_artifacts(version, ids))  # type: ignore[attr-defined]
+
+    def register_candidate(proposed: object) -> str:
+        """Materialize a proposal as a rollout-able version.
+
+        Two paths, one contract. ``CugaAdapter`` exposes ``register_candidate``,
+        which is the seeding seam RHO was built for and which validates every
+        artifact id against a CUGA harness slot. An adapter without it (the
+        offline fake) goes through the neutral contract instead, so a dry run
+        rehearses this same code path rather than a toy.
+        """
+        state.registrations += 1
+        artifacts = dict(getattr(proposed, "artifacts", {}) or {})
+        index = int(getattr(proposed, "candidate_index", state.registrations))
+        attempt_id = f"rho-{state.registrations:03d}-c{index}"
+
+        seeder = getattr(adapter, "register_candidate", None)
+        if seeder is not None:
+            version = f"rho-cand-{state.registrations:03d}-c{index}"
+            seeder(version, artifacts)
+            return version
+
+        base = dict(base_artifacts())
+        workspace = adapter.materialize_candidate(  # type: ignore[attr-defined]
+            stack.base_version, attempt_id
+        )
+        edits = [
+            ArtifactEdit(
+                artifact_id=artifact_id,
+                operation="replace" if artifact_id in base else "create",
+                payload={"content": content},
+            )
+            for artifact_id, content in sorted(artifacts.items())
+        ]
+        if edits:
+            adapter.apply_structured_edits(workspace, edits)  # type: ignore[attr-defined]
+        return workspace.version
+
+    # -- optional: grader scores ------------------------------------------ #
+    def pool_id_for(version: str) -> str:
+        """Resolve a *version* to the pool's *candidate id*.
+
+        The two are not the same and conflating them is silent: the offline
+        stack's base is version ``base-v0`` under candidate id ``base``, so
+        writing evidence keyed by version would raise for the base and, worse,
+        would leave the incumbent's cells empty in any pool that tolerated it.
+        """
+        return pool.base_id if version == stack.base_version else version
+
+    def score(task: EvolutionTask, trace: ExecutionTrace) -> float:
+        result = scorer.score_rollout(task, trace)
+        value = float(result.score)
+        version = trace.candidate_id or stack.base_version
+        if not result.scorable:
+            # No measurement is not a zero. It is counted and excluded from the
+            # pool tensor; the entropy tracker still sees ``value`` because the
+            # hook signature has nowhere to say "unmeasured".
+            state.unscorable += 1
+            return value
+        cell_key = (task.task_id, rho_cluster_id(task.task_id))
+        if version == stack.base_version:
+            # The base is already in the pool, so its evidence lands directly.
+            # Without base cells the incumbent's champion coverage is zero and a
+            # candidate would win selection on coverage alone.
+            _record_pool_score(pool, pool_id_for(version), cell_key, value)
+        else:
+            state.pending_scores.setdefault(version, {}).setdefault(
+                cell_key, []
+            ).append(value)
+        return value
+
+    # -- phase 10 --------------------------------------------------------- #
+    def commit(evidence: object) -> None:
+        version = str(getattr(evidence, "version", ""))
+        artifacts = dict(getattr(evidence, "artifacts", {}) or {})
+        try:
+            hashes = {
+                d.artifact_id: d.version_hash
+                for d in adapter.artifact_inventory(version)  # type: ignore[attr-defined]
+            }
+        except Exception:  # noqa: BLE001 - an adapter without this version
+            hashes = {
+                artifact_id: f"sha256:{_sha256_text(content)}"
+                for artifact_id, content in artifacts.items()
+            }
+        pool.add_candidate(
+            EvolutionCandidate(
+                candidate_id=version,
+                version=version,
+                artifact_hashes=hashes,
+                parent_ids=(pool.base_id,),
+                ancestor_ids=(pool.base_id,),
+            ),
+            origin_attempt_ids=(version,),
+        )
+        state.committed_versions = state.committed_versions + (version,)
+        for cell_key, values in state.pending_scores.pop(version, {}).items():
+            for value in values:
+                _record_pool_score(pool, version, cell_key, value)
+
+    # -- optional: the genetic phase, coreset tasks only ------------------ #
+    def run_genetic(tasks: Sequence[EvolutionTask], iterations: int) -> None:
+        """Run the existing genetic loop over ``tasks`` only.
+
+        The task set is narrowed rather than the loop reimplemented, so the
+        genetic phase is byte-for-byte the loop that produced the measured
+        baseline. It is restored in ``finally``: leaving the stack narrowed
+        would silently shrink the final champion measurement to the coreset.
+        """
+        if iterations < 1:
+            return
+        original = stack.tasks
+        stack.tasks = tuple(tasks)
+        try:
+            stack.run_iterations(iterations)
+        finally:
+            stack.tasks = original
+
+    def cache_hits() -> Mapping[str, int]:
+        return {
+            "summary": int(getattr(summary_cache, "hits", 0)),
+            "difficulty": int(getattr(difficulty_cache, "hits", 0)),
+            # Reported for completeness; nothing reads it yet because
+            # ``run_round`` selects the coreset without an embedder.
+            "embedding": int(getattr(embedding_cache, "hits", 0)),
+        }
+
+    return RhoHooks(
+        load_history=load_history_hook,
+        comprehend=comprehender.comprehend,  # type: ignore[union-attr]
+        judge=judge_hook,
+        task_for=task_for,
+        rollout=rollout,
+        diagnose=diagnoser.diagnose,  # type: ignore[union-attr]
+        base_artifacts=base_artifacts,
+        propose=optimizer.propose,  # type: ignore[union-attr]
+        register_candidate=register_candidate,
+        # Symmetric on purpose: position bias is the dominant systematic error
+        # of an LLM preference judge, and it is selection-critical here.
+        compare=preference_judge.compare_symmetric,  # type: ignore[union-attr]
+        commit=commit,
+        pool_size=stack.pool_size,
+        score=score,
+        run_genetic=run_genetic,
+        cache_hits=cache_hits,
+        # The DPP diversity term. Without this the coreset degrades to a plain
+        # difficulty ranking, which silently discards half the selection design.
+        embedder=(
+            _CachingEmbedder(stack.runner.embedder, embedding_cache)
+            if stack.runner.embedder is not None
+            else None
+        ),
+        # Never populated: the only way to fill it is to hand this function an
+        # answer key, which would then travel into a manifest.
+        contamination_literals=(),
+    )
+
+
+class _CachingEmbedder:
+    """Wrap a :class:`MechanismEmbedder` with a content-hash disk cache.
+
+    Fingerprint text is stable across rounds, so re-embedding it every round is
+    pure waste. ``EmbeddingProviderUnavailable`` is deliberately NOT caught --
+    ``select_coreset`` catches that sentinel itself to trigger its documented
+    quality-only fallback, and swallowing it here would make a degraded run
+    indistinguishable from a healthy one.
+    """
+
+    def __init__(self, inner: "MechanismEmbedder", cache: "JsonDiskCache") -> None:
+        self._inner = inner
+        self._cache = cache
+        self.dim = int(inner.dim)
+
+    def embed(self, text: str) -> tuple[float, ...]:
+        key = f"embed:{self.dim}:{_sha256_text(text)}"
+        cached = self._cache.get(key)
+        if cached is not None:
+            vector = cached.get("vector")
+            if isinstance(vector, list) and len(vector) == self.dim:
+                return tuple(float(v) for v in vector)
+        vector_out = self._inner.embed(text)
+        # JsonDiskCache stores dicts only, so the vector must be wrapped.
+        self._cache.put(key, {"vector": list(vector_out)})
+        return vector_out
+
+
+def _sha256_text(content: str) -> str:
+    from hashlib import sha256
+
+    return sha256(content.encode("utf-8")).hexdigest()
+
+
+def _restamped(outcome: RolloutOutcome, version: str) -> RolloutOutcome:
+    """Force the trace's ``candidate_id`` to the version that was rolled out.
+
+    Not cosmetic. An adapter is free to stamp its own per-attempt workspace name
+    (``FakeAdapter`` returns ``base-v0+rho-...``), and the RHO round keys every
+    downstream decision on ``trace.candidate_id``: the score hook uses it to
+    decide which pool entry to credit, so a workspace-shaped id would file the
+    base's own evidence under a candidate that is not in the pool, and the
+    entropy cell for the incumbent would stay empty no matter how many rollouts
+    were spent.
+    """
+    trace = outcome.trace
+    if trace is None or trace.candidate_id == version:
+        return outcome
+    return RolloutOutcome(
+        task=outcome.task,
+        trace=ExecutionTrace(
+            trace_id=trace.trace_id,
+            candidate_id=version,
+            task_id=trace.task_id,
+            events=trace.events,
+            final_output=trace.final_output,
+            status=trace.status,
+            checkpoint_ids=trace.checkpoint_ids,
+        ),
+    )
+
+
+def _record_pool_score(
+    pool: PersistentPool,
+    candidate_id: str,
+    cell_key: tuple[str, str],
+    value: float,
+) -> None:
+    """Append one measured score to a pool cell with RHO provenance.
+
+    ``rollout_seq`` must be the cell's next slot or ``ScoreCell.add`` refuses
+    the write, so it is read from the cell rather than tracked separately.
+    """
+    task_id, cluster_id = cell_key
+    cell = pool.get(candidate_id).cell(task_id, cluster_id)
+    pool.record_score(
+        candidate_id,
+        max(0.0, min(1.0, float(value))),
+        ScoreProvenance(
+            task_id=task_id,
+            mechanism_cluster_id=cluster_id,
+            trace_id=f"rho:{candidate_id}:{task_id}:{cell.rollout_count}",
+            rollout_seq=cell.rollout_count,
+            analyzer_model_id=RHO_ANALYZER_MODEL_ID,
+            judge_model_id=RHO_JUDGE_MODEL_ID,
+            # A RHO round performs no causal blame attribution, so claiming any
+            # blame confidence would be inventing evidence. Zero is the honest
+            # value; neither field participates in the weighted cell score.
+            blame_confidence=0.0,
+            blame_stability=0.0,
+        ),
+    )
 
 
 # --------------------------------------------------------------------------- #

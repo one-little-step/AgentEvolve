@@ -1,0 +1,1 @@
+{"difficulty": 10.0, "abstract_fingerprint": "task shape: ambiguous or under-specified request\nbinding constraint: the requested quantity cannot be determined because the task specification is unavailable\nfailure locus: never acted, the agent produced an unsupported value without executing any task-specific retrieval or computation"}

@@ -1,0 +1,1 @@
+{"difficulty": 10.0, "abstract_fingerprint": "task shape: ambiguous or under-specified request\nbinding constraint: the requested operation and output are unspecified, so the supplied facts do not determine a unique calculation\nfailure locus: never acted, the agent performed only an initial search and did not retrieve the required inputs or execute a calculation"}

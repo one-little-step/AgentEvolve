@@ -1,0 +1,1 @@
+{"canonical_arguments":"{\"expression\":\"1+1\"}","content_digest":"sha256:cc11310c456c3690d5a74c23aa31cc25b4e74cdae146c71e54ad9dbc1d109fde","duration_ms":0.0743865966796875,"error":null,"original_bytes":3,"replay_eligible":true,"result":"2","retained_bytes":3,"sequence":0,"tool_name":"calculator","truncated":false,"withheld_reason":null}

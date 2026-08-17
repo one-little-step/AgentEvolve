@@ -218,8 +218,11 @@ class FakeAdapter:
                     ArtifactDescriptor(
                         artifact_id=aid,
                         kind="skill",
+                        format="text/plain",
                         version_hash=_hash_content(new_content),
+                        readable=True,
                         writable=True,
+                        merge_strategy=_MERGE_STRATEGY,
                     ),
                 )
             elif operation == "append":
