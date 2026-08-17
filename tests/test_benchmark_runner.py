@@ -718,6 +718,17 @@ KNOWN_RUN = REAL_GAIA_ROOT / "gaia_l1_validation__baseline__20260813_035541"
 KNOWN_EXPECTED_REGEX_PASSES = 17
 KNOWN_TASK_COUNT = 42
 
+#: Non-answer detection changed this run's *denominator*, not its numerator.
+#: 10 of the 42 recorded answers end in an explicit statement of inability
+#: ("I'm unable to verify the poem's stanza formatting from the available
+#: sources.", gaia_23dd907f, and 9 more). None of the 10 matched its
+#: ``expected_regex``, so all 10 previously counted as wrong answers and padded
+#: the denominator: 17/42 = 40.48%. They committed to no claim, so they are now
+#: unscorable and the honest rate is 17/32 = 53.13%. The numerator is
+#: deliberately unchanged -- verified: no flagged answer passed the regex.
+KNOWN_NON_ANSWERS = 10
+KNOWN_SCORED_COUNT = KNOWN_TASK_COUNT - KNOWN_NON_ANSWERS
+
 
 def _load_cli():
     """Import ``scripts/run_benchmark.py`` by path.
@@ -739,6 +750,12 @@ def _load_cli():
 
 @pytest.mark.skipif(not KNOWN_RUN.is_dir(), reason="known Gaia run not present")
 def test_replay_reproduces_the_known_pass_rate_of_a_real_run():
+    """The numerator is pinned; the denominator excludes the 10 non-answers.
+
+    ``pass_count`` must stay at 17 exactly: non-answer detection may only ever
+    remove ungradeable rollouts from the denominator, never change which answers
+    matched. A drop here would mean the predicate ate a passing answer.
+    """
     from agent_evolve.benchmarks import GaiaBenchmark
 
     bench = GaiaBenchmark.from_run_dir(KNOWN_RUN)
@@ -751,12 +768,38 @@ def test_replay_reproduces_the_known_pass_rate_of_a_real_run():
 
     assert result.executed_count == KNOWN_TASK_COUNT
     assert result.failed_count == 0
-    assert result.scored_count == KNOWN_TASK_COUNT
+    assert result.non_answer_count == KNOWN_NON_ANSWERS
+    assert result.scored_count == KNOWN_SCORED_COUNT
     assert result.pass_count == KNOWN_EXPECTED_REGEX_PASSES
     assert result.pass_rate == pytest.approx(
-        KNOWN_EXPECTED_REGEX_PASSES / KNOWN_TASK_COUNT
+        KNOWN_EXPECTED_REGEX_PASSES / KNOWN_SCORED_COUNT
     )
-    assert result.grader_stats.is_partial is False
+    assert result.grader_stats.is_partial is True
+
+
+@pytest.mark.skipif(not KNOWN_RUN.is_dir(), reason="known Gaia run not present")
+def test_no_flagged_non_answer_would_have_passed_the_regex_grader():
+    """Proves the denominator shrank without the numerator moving.
+
+    This is the audit that makes the 40.48% -> 53.13% change trustworthy: if any
+    excluded answer had matched its ``expected_regex``, the exclusion would be
+    hiding a pass and the new rate would be understated rather than corrected.
+    """
+    from agent_evolve.benchmarks import GaiaBenchmark
+
+    bench = GaiaBenchmark.from_run_dir(KNOWN_RUN)
+    result = run_benchmark(
+        bench,
+        _load_cli().make_replay_factory(bench),
+        grader="expected_regex",
+        max_workers=10,
+    )
+
+    for task_id in result.non_answer_task_ids:
+        answer = bench.recorded_answer(task_id)
+        assert answer is not None
+        outcome = bench.try_score(task_id, answer, grader="expected_regex")
+        assert outcome is None or not outcome.passed
 
 
 @pytest.mark.skipif(not KNOWN_RUN.is_dir(), reason="known Gaia run not present")
@@ -828,3 +871,148 @@ def test_replay_records_a_missing_answer_as_a_failure_not_an_empty_answer():
     assert result.grader_stats.is_partial is True
     assert result.grader_stats.denominator_label == "1/1 of 2 tasks PARTIAL"
 
+
+
+# --------------------------------------------------------------------------- #
+# non-answer detection (give-up text is unscorable, not wrong)
+# --------------------------------------------------------------------------- #
+
+
+def _giveup_factory(giving_up: frozenset[str]):
+    """Executor factory where named tasks return real observed give-up text.
+
+    The string is verbatim from ``data/traces/19f5417b.../causal-trace.json``.
+    """
+
+    def factory():
+        def execute(task: BenchmarkTask) -> str:
+            if task.task_id in giving_up:
+                return "I\u2019m unable to execute the tool call in this turn."
+            return f"answer-{task.task_id[1:]}"
+
+        return execute
+
+    return factory
+
+
+def test_a_give_up_answer_is_unscorable_and_leaves_the_denominator():
+    """A rollout that narrates inability is not a failure-to-match.
+
+    Grading it would put a rollout that never committed to a claim into the
+    denominator, so the pass rate would measure tool availability rather than
+    agent skill.
+    """
+    bench = _bench(10)
+    result = run_benchmark(
+        bench,
+        _giveup_factory(frozenset({"t00", "t01"})),
+        grader=GRADER_EXACT,
+        max_workers=4,
+    )
+
+    assert result.ok_count == 10
+    assert result.non_answer_count == 2
+    assert result.unscorable_count == 2
+    assert result.scored_count == 8
+    assert result.pass_count == 8
+    assert result.pass_rate == pytest.approx(1.0)
+    assert set(result.non_answer_task_ids) == {"t00", "t01"}
+
+
+def test_a_wrong_but_committed_answer_still_counts_against_the_pass_rate():
+    """The critical anti-regression: over-detection would fake a delta.
+
+    'The answer is 42' is a real, gradeable, wrong answer. If non-answer
+    detection swallowed it, every genuine failure could vanish from the
+    denominator and the reported pass rate would rise for free.
+    """
+    bench = _bench(4)
+
+    def factory():
+        def execute(task: BenchmarkTask) -> str:
+            return "The answer is 42"
+
+        return execute
+
+    result = run_benchmark(bench, factory, grader=GRADER_EXACT, max_workers=2)
+
+    assert result.non_answer_count == 0
+    assert result.scored_count == 4
+    assert result.pass_count == 0
+    assert result.pass_rate == pytest.approx(0.0)
+
+
+def test_pass_rate_is_none_when_every_answer_is_a_non_answer():
+    """Nothing committed means nothing to score -- not a 0% pass rate.
+
+    Mirrors the dead-worker guarantee in test_cuga_executor.py: an empty
+    denominator reports None rather than manufacturing a zero.
+    """
+    bench = _bench(5)
+    result = run_benchmark(
+        bench,
+        _giveup_factory(frozenset(f"t{i:02d}" for i in range(5))),
+        grader=GRADER_EXACT,
+        max_workers=3,
+    )
+
+    assert result.ok_count == 5
+    assert result.non_answer_count == 5
+    assert result.scored_count == 0
+    assert result.pass_rate is None
+
+
+def test_an_empty_answer_string_is_a_non_answer_not_a_wrong_answer():
+    """Observed in data/traces (5 of 235 final_outputs are empty).
+
+    The executor returned a string, so the execution is 'ok'; the content is
+    still not an answer.
+    """
+    bench = _bench(3)
+
+    def factory():
+        def execute(task: BenchmarkTask) -> str:
+            return "   " if task.task_id == "t00" else f"answer-{task.task_id[1:]}"
+
+        return execute
+
+    result = run_benchmark(bench, factory, grader=GRADER_EXACT, max_workers=2)
+
+    assert result.failed_count == 0
+    assert result.non_answer_count == 1
+    assert result.scored_count == 2
+    assert result.pass_rate == pytest.approx(1.0)
+
+
+def test_non_answers_are_visible_in_the_summary_line():
+    """An invisible exclusion is how an inflated denominator went unnoticed."""
+    bench = _bench(4)
+    result = run_benchmark(
+        bench,
+        _giveup_factory(frozenset({"t00"})),
+        grader=GRADER_EXACT,
+        max_workers=2,
+    )
+
+    assert "non_answer=1" in result.summary
+
+
+def test_grading_unavailable_and_non_answer_are_counted_separately():
+    """Different facts: 'we had no key' vs 'the agent never answered'.
+
+    Collapsing them would hide which one is degrading a run.
+    """
+    bench = _bench(6, ungradable=frozenset({"t00"}))
+    result = run_benchmark(
+        bench,
+        _giveup_factory(frozenset({"t01"})),
+        grader=GRADER_EXACT,
+        max_workers=3,
+    )
+
+    assert result.non_answer_count == 1
+    assert result.ungradable_count == 1
+    assert result.unscorable_count == 2
+    assert result.scored_count == 4
+    assert result.non_answer_task_ids == ("t01",)
+    assert result.ungradable_task_ids == ("t00",)

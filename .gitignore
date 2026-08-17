@@ -12,6 +12,10 @@ vendor/
 artifacts/
 terminal_output/
 data/traces/
+# Captured run logs (workers/analyzer/editor/pipeline). These hold raw prompts
+# and request bodies built from the environment, so they must never be
+# committed; they are regenerated per run and are evidence, not source.
+data/logs/
 *.egg-info/
 
 # Reference snapshot: keep only source, never bytecode
@@ -34,3 +38,11 @@ data/workspaces/
 # process-isolated parallel run. Each is a seeded copy of .cuga/knowledge plus
 # whatever that worker ingested, so it is regenerated state, never source.
 data/workers/
+
+# NOTE: data/harnesses/ is deliberately NOT ignored. Unlike traces, logs and
+# worker stores, an exported harness is a run's *result*: it is small, it is the
+# only durable record of what evolution produced, and it is the input the next
+# run seeds from via --harness. Ignoring it would restore the defect the export
+# was added to fix -- an improved harness that dies with the process. Do not add
+# a blanket data/ rule.
+

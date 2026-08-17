@@ -458,12 +458,39 @@ class HarnessVersion:
         return config
 
 
-#: The base harness: no injected artifacts, CUGA's own default instructions and
+#: Neutral task framing for the base harness. Deliberately says only what the
+#: agent is for and what shape its answer should take.
+#:
+#: It exists because ``instructions`` is the strongest editable lever the CUGA
+#: harness exposes, and the pipeline can only put an artifact in the editor's
+#: write set if the base harness already owns it. A vanilla harness with no
+#: instructions collapsed to a single empty skill slot, leaving the prompt
+#: unreachable by evolution.
+#:
+#: It must stay neutral. The measured non-answer mechanism is that the rollout
+#: model narrates a plan and never emits a fenced Python block, so CUGA extracts
+#: no code and routes straight to the final answer. Naming that remedy here
+#: would hand evolution the fix and invalidate every self-improvement
+#: measurement taken afterwards. Nothing about code execution, fences, or how to
+#: reach a tool belongs in this string; discovering that is the experiment.
+#: Pinned by ``test_vanilla_instructions_carry_no_code_execution_directive``.
+VANILLA_INSTRUCTIONS = (
+    "You are a question-answering agent. Answer the question you are given.\n"
+    "Report the final answer only, as briefly as the question allows: a number, "
+    "a name, a date, or a short phrase.\n"
+    "Do not restate the question and do not include your reasoning in the answer."
+)
+
+#: The base harness: neutral instructions, no injected workspace artifacts, and
 #: the wrapper's default tool set. This is the configuration the recorded Gaia
 #: baseline ran under, so it is the correct control arm and the only sane
 #: default for a smoke run. Named ``vanilla`` rather than ``default`` because it
 #: is still an explicit choice a caller has to make.
-VANILLA_HARNESS = HarnessVersion(version="vanilla", source="<builtin:vanilla>")
+VANILLA_HARNESS = HarnessVersion(
+    version="vanilla",
+    instructions=VANILLA_INSTRUCTIONS,
+    source="<builtin:vanilla>",
+)
 
 _BUILTINS: dict[str, HarnessVersion] = {"vanilla": VANILLA_HARNESS}
 

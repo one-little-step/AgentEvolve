@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from agent_evolve.core.errors import BudgetExceededError
+from agent_evolve.core.run_logging import LogCaptureConfig
 
 ProfileName = Literal["minimal", "research_sequential", "research_parallel", "full_ablation"]
 
@@ -132,6 +133,9 @@ class ResolvedConfig:
     champion_min_coverage_fraction: float = 0.0
     seed: int = 0
     deferred_features: tuple[str, ...] = ()
+    # Off by default: capture is opt-in so a measurement run writes nothing
+    # unless asked. Agent-neutral -- ``run_logging`` imports no adapter.
+    log_capture: LogCaptureConfig = field(default_factory=LogCaptureConfig)
 
     def __post_init__(self) -> None:
         for name in _FLOAT_UNIT_FIELDS:
@@ -150,6 +154,8 @@ class ResolvedConfig:
             raise ValueError("seed must be an integer")
         if self.seed < 0:
             raise ValueError("seed must be non-negative")
+        if not isinstance(self.log_capture, LogCaptureConfig):
+            raise ValueError("log_capture must be a LogCaptureConfig")
 
     def manifest_payload(self) -> dict:
         return {
@@ -202,6 +208,7 @@ class ResolvedConfig:
             "champion_min_coverage_fraction": self.champion_min_coverage_fraction,
             "seed": self.seed,
             "deferred_features": list(self.deferred_features),
+            "log_capture": self.log_capture.manifest_payload(),
         }
 
 
@@ -248,6 +255,7 @@ _VALID_OVERRIDES = {
     "champion_gamma",
     "champion_delta",
     "champion_min_coverage_fraction",
+    "log_capture",
 }
 
 

@@ -56,6 +56,7 @@ from agent_evolve.benchmarks.cuga_process_pool import (
     CugaProcessPool,
     WorkerProtocolError,
 )
+from agent_evolve.core.run_logging import LogCaptureConfig
 
 GRADER = "exact"
 
@@ -271,6 +272,52 @@ def test_non_object_harness_json_is_rejected(tmp_path):
 
 def test_vanilla_harness_needs_no_workspace():
     assert VANILLA_HARNESS.requires_workspace is False
+
+
+def test_vanilla_harness_carries_an_instructions_artifact():
+    """``instructions`` is the strongest editable lever CUGA exposes, and it is
+    only reachable by the editor when the base harness already owns it.
+
+    With no ``instructions`` the pipeline's write set collapses to a single
+    empty skill, so the loop can never touch the prompt at all.
+    """
+    assert isinstance(VANILLA_HARNESS.instructions, str)
+    assert VANILLA_HARNESS.instructions.strip()
+
+
+def test_vanilla_instructions_carry_no_code_execution_directive():
+    """Anti-contamination pin: the fix must be DISCOVERED, not pre-installed.
+
+    The measured non-answer mechanism is that the rollout model narrates a plan
+    and never emits a fenced Python block, so CUGA extracts no code and skips
+    straight to the final answer. Telling the vanilla harness to emit a fenced
+    block would hand evolution the answer and invalidate every subsequent
+    self-improvement measurement. The base prompt stays neutral task framing.
+    """
+    lowered = (VANILLA_HARNESS.instructions or "").lower()
+    for banned in (
+        "```",
+        "fence",
+        "fenced",
+        "code block",
+        "python block",
+        "execute code",
+        "write code",
+        "sandbox",
+        "tool call",
+        "call a tool",
+        "call the tools",
+    ):
+        assert banned not in lowered, f"contaminating directive in vanilla: {banned!r}"
+
+
+def test_vanilla_instructions_reach_run_task(tmp_path):
+    """An instructions artifact the wrapper never receives is not a lever."""
+    wrapper = FakeWrapper(tmp_path)
+    build(wrapper, VANILLA_HARNESS)()(TASK)
+
+    _, config = wrapper.calls[0]
+    assert config["instructions"] == VANILLA_HARNESS.instructions
 
 
 # --------------------------------------------------------------------------- #
@@ -1396,6 +1443,141 @@ def test_the_pool_reports_a_worker_error_verbatim(tmp_path):
         pool._decode("this is not json", "t-1")
     pool.close()
     assert lease is not None
+
+
+# --------------------------------------------------------------------------- #
+# worker stderr capture: the only channel CUGA routing decisions travel on
+# --------------------------------------------------------------------------- #
+#
+# The child's ``stderr`` went to ``DEVNULL``, and it is the *only* place CUGA
+# prints ``is_autonomous_subtask`` and ``Routing to:`` -- so a finished run could
+# not say why it routed as it did without a paid re-run.
+#
+# These tests start a real child through a real ``Popen`` (so the fd handed to
+# ``stderr=`` is actually exercised) but with a **stub interpreter** instead of
+# the CUGA worker module. Measured: one real ``lease`` costs ~12.9s of cold CUGA
+# import (``--durations`` on ``test_the_pool_reports_a_worker_error_verbatim``),
+# and nothing about redirecting fd 2 depends on what the child imports.
+
+
+def _stub_worker(tmp_path: Path, *, name: str = "stub-worker") -> str:
+    """A child that writes CUGA-shaped noise to stderr, then reports ready.
+
+    Speaks just enough of the worker protocol to be leased: two stderr lines
+    naming the worker (so a shared log file is detectable), the ready sentinel on
+    stdout, then it blocks on stdin like the real worker until the pool closes it.
+    """
+    script = tmp_path / f"{name}.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        'echo "is_autonomous_subtask: False [$AGENT_EVOLVE_WORKER_ID]" >&2\n'
+        'echo "Routing to: PlanControllerAgent [$AGENT_EVOLVE_WORKER_ID]" >&2\n'
+        "echo AGENT_EVOLVE_WORKER_READY\n"
+        "cat > /dev/null\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return str(script)
+
+
+def test_capture_disabled_leaves_no_worker_log_directory_at_all(tmp_path):
+    """Off must mean *absent*, not an empty tree.
+
+    A measurement run turns capture off; if the pool still created
+    ``workers/`` the "did this run capture logs?" question would have to be
+    answered by inspecting file sizes instead of by the directory's existence.
+    """
+    pool = CugaProcessPool(
+        root=tmp_path / "stores",
+        trace_root=tmp_path / "traces",
+        python_executable=_stub_worker(tmp_path),
+        knowledge_seed=None,
+    )
+    try:
+        assert pool.log_capture.enabled is False
+        assert pool._log_sink.active is False
+        lease = pool.lease("w0001", "cand-A")
+        assert lease is not None
+    finally:
+        pool.close()
+
+    # Nothing anywhere: no channel directory, and no stub log file either.
+    assert list(tmp_path.rglob("workers")) == []
+    assert list(tmp_path.rglob("*.log")) == []
+
+
+def test_capture_enabled_writes_each_workers_stderr_to_its_own_file(tmp_path):
+    """The routing lines reach disk, under the worker's id.
+
+    ``is_autonomous_subtask`` and ``Routing to:`` are stderr-only, so this file
+    is the whole reason the feature exists.
+    """
+    pool = CugaProcessPool(
+        root=tmp_path / "workers",
+        trace_root=tmp_path / "traces",
+        python_executable=_stub_worker(tmp_path),
+        knowledge_seed=None,
+        log_capture=LogCaptureConfig(enabled=True, root=tmp_path / "logs"),
+    )
+    try:
+        pool.lease("w0001", "cand-A")
+    finally:
+        pool.close()
+
+    log = tmp_path / "logs" / "workers" / "w0001.log"
+    assert log.is_file()
+    text = log.read_text(encoding="utf-8")
+    assert "is_autonomous_subtask: False [w0001]" in text
+    assert "Routing to: PlanControllerAgent [w0001]" in text
+
+
+def test_two_workers_never_share_a_log_file(tmp_path):
+    """Interleaved worker output cannot be attributed after the fact.
+
+    Two candidates' rollouts in one file would make "which harness routed this
+    way?" unanswerable, which is the question the capture was added to answer.
+    """
+    pool = CugaProcessPool(
+        root=tmp_path / "workers",
+        trace_root=tmp_path / "traces",
+        python_executable=_stub_worker(tmp_path),
+        knowledge_seed=None,
+        log_capture=LogCaptureConfig(enabled=True, root=tmp_path / "logs"),
+    )
+    try:
+        pool.lease("w0001", "cand-A")
+        pool.lease("w0002", "cand-B")
+    finally:
+        pool.close()
+
+    directory = tmp_path / "logs" / "workers"
+    assert sorted(p.name for p in directory.iterdir()) == ["w0001.log", "w0002.log"]
+    first = (directory / "w0001.log").read_text(encoding="utf-8")
+    second = (directory / "w0002.log").read_text(encoding="utf-8")
+    assert "[w0001]" in first and "[w0002]" not in first
+    assert "[w0002]" in second and "[w0001]" not in second
+
+
+def test_close_is_safe_and_idempotent_with_capture_enabled(tmp_path):
+    """Teardown must not fail a run that already produced its numbers.
+
+    Capture adds open file handles to the teardown path; a raise there would
+    discard results that were already computed.
+    """
+    pool = CugaProcessPool(
+        root=tmp_path / "workers",
+        trace_root=tmp_path / "traces",
+        python_executable=_stub_worker(tmp_path),
+        knowledge_seed=None,
+        log_capture=LogCaptureConfig(enabled=True, root=tmp_path / "logs"),
+    )
+    pool.lease("w0001", "cand-A")
+    pool.close()
+    pool.close()  # idempotent: a second close must not raise on closed handles
+
+    # The child is gone and its lines are on disk, flushed by close().
+    log = tmp_path / "logs" / "workers" / "w0001.log"
+    assert "Routing to:" in log.read_text(encoding="utf-8")
 
 
 # --------------------------------------------------------------------------- #

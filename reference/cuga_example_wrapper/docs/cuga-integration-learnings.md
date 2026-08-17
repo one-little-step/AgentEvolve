@@ -526,6 +526,156 @@ can schedule additional work.
 `cuga/backend/cuga_graph/nodes/cuga_lite/cuga_lite_node.py:267-273` and
 `:466-586`.
 
+> **This routing does NOT apply to the SDK.** The code above lives in a file the
+> SDK graph never imports. See the next section — reading `cuga_lite_node.py` and
+> assuming it describes `CugaAgent` behavior cost a full debugging cycle.
+
+## CUGA Ships TWO Graph Topologies; The SDK Gets The Simplified One (verified)
+
+The single most consequential architectural fact found so far, and the one most
+likely to make a wrapper author debug a non-existent bug. CUGA contains **one set
+of agent implementations** but **two independent graph assemblers** that wire them
+into fundamentally different topologies.
+
+|                        | Server / full graph                        | SDK graph (what a wrapper gets)              |
+| ---------------------- | ------------------------------------------ | -------------------------------------------- |
+| Assembled by           | `backend/cuga_graph/graph.py:63` (`DynamicAgentGraph`) | `sdk.py:2014` (`_create_hitl_wrapper_graph`) |
+| Reached via            | `DynamicAgentGraph(...)`                   | `CugaAgent(...)` → `_create_graph` (`:2006`) |
+| Real nodes             | ~20                                        | 5 real + 3 dummy stubs                       |
+| `PlanControllerAgent`? | **Yes** (`graph.py:164`)                   | **No — not even stubbed**                    |
+| CugaLite callback      | `CugaLiteCallback` (`graph.py:282`)        | `sdk_callback_node` (inline in `sdk.py`)     |
+
+### The symptom this explains
+
+`PlanControllerAgent` appeared in **0 of 15** rollouts with
+`force_autonomous_mode=True`, while `cuga_lite_node.py:529-571` plainly routes
+success there when autonomous. Two plausible hypotheses — `_has_error` firing
+every time, or early termination — were **both wrong**:
+
+* `_has_error`: applying CUGA's own error-indicator list (`cuga_lite_node.py:229`)
+  to `final_output` across 16 rollouts gave **0 hits**. And it would not have
+  mattered: under autonomous mode `:498` (error) and `:571` (success) *both* go to
+  `PlanControllerAgent`. If that code ran at all, it would be 15/15, not 0/15.
+* early termination: all 104 traces reach `SDKCallback` **and**
+  `FinalAnswerAgent`. Nothing terminated early.
+
+The actual reason: **our graph never contains the node.** `CugaLiteNode` (which
+holds that routing) is imported by exactly one non-test file — `graph.py:46`, the
+server graph. `sdk.py` contains no `PlanControllerAgent` reference in its node
+registration at all.
+
+### What the SDK registers (`sdk.py:2144-2154`)
+
+```python
+wrapper.add_node("CugaLiteSubgraph", compiled_subgraph)
+wrapper.add_node("SDKCallback", sdk_callback_node)
+wrapper.add_node(suggest_actions.name, suggest_actions.node)      # HITL
+wrapper.add_node(wait_for_response.name, wait_for_response.node)  # HITL
+wrapper.add_node(final_answer_node.final_answer_agent.name, final_answer_node.node)
+# Dummy nodes purely so internal CugaLiteSubgraph routing references resolve:
+wrapper.add_node(NodeNames.API_PLANNER_AGENT, dummy_api_planner_node)
+wrapper.add_node(NodeNames.CHAT_AGENT, dummy_chat_agent_node)
+wrapper.add_node(NodeNames.CUGA_LITE, dummy_cuga_lite_node)
+```
+
+Note lines 2152-2154: `APIPlannerAgent` and `ChatAgent` exist only as **stubs
+whose entire body routes back to `SDKCallback`**. Their presence in a node list
+is not evidence they do anything. `sdk.py:2017` states the shape outright:
+*"Graph structure (simplified for SDK): START -> CugaLiteSubgraph -> SDKCallback"*.
+
+### The substitution that removes planning
+
+The server graph uses `CugaLiteCallback` — the planning-capable callback in
+`cuga_lite_node.py`. The SDK uses `sdk_callback_node`, a **separate
+reimplementation defined inline in `sdk.py`**. It handles tool-approval HITL,
+applies output-formatter policies, then unconditionally finalizes
+(`sdk.py:2126-2134`):
+
+```python
+# Otherwise, route to FinalAnswerAgent
+answer = state.final_answer or "No answer found"
+state.sender = NodeNames.CUGA_LITE
+return Command(update=state.model_dump(), goto=NodeNames.FINAL_ANSWER_AGENT)
+```
+
+It never calls `_has_error` and never reads `is_autonomous_subtask`. **There is no
+code path from the SDK graph to `PlanControllerAgent`.**
+
+### What the SDK path actually is
+
+`create_cuga_lite_graph` (`cuga_lite_graph.py:159-214`) builds exactly three
+nodes — `prepare_node`, `call_model_node`, `sandbox_node` (`:204-206`). Confirmed
+by trace evidence: 104 traces, six distinct actors, **identical shape every
+time**, terminal always `FinalAnswerAgent`:
+
+```text
+CugaLiteSubgraph → prepare → call_model ⇄ sandbox → SDKCallback → FinalAnswerAgent
+```
+
+Actor counts across 104 traces: `call_model` 518, `prepare` 448,
+`CugaLiteSubgraph` 392, `sandbox` 248, `SDKCallback` 196, `FinalAnswerAgent` 196.
+`PlanControllerAgent` 0, `CugaLiteCallback` 0.
+
+So the SDK is a **single-agent ReAct/CodeAct loop**, not hierarchical
+planner/executor decomposition. It *does* re-plan — empirically, inside the
+`call_model ⇄ sandbox` loop, with observable mid-run correction ("The prior result
+used an incorrect time (2:01:09). I'll verify…") — but there is no distinct
+planner node and no inspectable plan artifact.
+
+**`force_autonomous_mode` is still consumed on the SDK path**, just not for
+routing: it changes *prompt content* (`prepare_node.py:630`, `sandbox_node.py:210`,
+and 5 conditionals in `mcp_prompt.jinja2`). It is not being ignored.
+
+### "Server CUGA" is prebuilt and local — not a hosted API
+
+Worth stating plainly, because "server" invites the wrong guess:
+
+* `DynamicAgentGraph` **ships in the same installed wheel**. There is nothing to
+  build or download.
+* It is not an IBM-hosted or online service. Its main consumer is a **local
+  FastAPI app** (`backend/server/main.py:1992`, `app = FastAPI(lifespan=lifespan)`)
+  with ~70 routes (`POST /stream`, `POST /reset`, `GET /api/agent/state`,
+  `/api/config/policies`, `/api/skills`, a browser-extension channel), started via
+  the `cuga` console script under `uvicorn` (`main.py:488`). Fully offline.
+* **You do not need the server to use the full graph.** Two call sites build
+  `DynamicAgentGraph` in-process with no HTTP at all:
+  `backend/cuga_graph/utils/controller.py:193` and `:299`, plus
+  `backend/cuga_graph/policy/tests/helpers.py:298`.
+
+The real migration cost is therefore **not** construction — it is that the two
+entry points take **different constructor surfaces**. `CugaAgent` takes
+`cuga_folder`, `skills_folder`, `enable_skills`, `auto_load_policies`,
+`reset_policy_storage`, `filesystem_sync`. `DynamicAgentGraph` takes
+`policy_system`, `tool_provider`, `llm_config`, `enable_todos`,
+`reflection_enabled`, `shortlisting_tool_threshold`, `cuga_lite_max_steps`
+(`main.py:951-960`). Every artifact-injection finding in this document was verified
+against the `CugaAgent` surface and **must be re-verified**, not assumed, before
+trusting it on `DynamicAgentGraph`.
+
+### Planning knobs available *without* changing graphs
+
+`enable_todos` and `reflection_enabled` are read at runtime from
+`config["configurable"]`, falling back to `settings.advanced_features`
+(`cuga_lite_graph.py:173`). Both default `false`. Enabling them gives explicit
+todo tracking (`create_update_todos`) and reflection inside the SDK graph — the
+closest thing to planning without leaving `CugaAgent`. Caveat: it changes prompt
+content, so **any baseline collected with them off is not comparable**.
+
+### Methodology rules this establishes
+
+* **Before believing a routing edge applies to you, prove the file containing it
+  is imported by *your* graph.** `grep` for the node class in the assembler you
+  actually construct. A routing block in the package is not a routing block in
+  your run.
+* **Enumerate node names from real traces before theorizing about a missing
+  node.** A single scan of on-disk traces (six actors, stable across 104 runs)
+  refuted two hypotheses at zero inference cost. Do this first; it is free.
+* **A node present in `add_node` may be a dummy.** Read its body before counting
+  it as a capability.
+* **Never describe SDK-path results as hierarchical planning.** The numbers are
+  valid; prose claiming a planner/executor split contradicts the trace and would
+  not survive review.
+
 ## Recommended Investigation And Fix Order
 
 1. Keep one agent execution per user task. Never restore a second same-prompt
@@ -549,6 +699,15 @@ can schedule additional work.
 
 ## Practical Wrapper Checklist
 
+- **Know which graph you are on.** `CugaAgent` (SDK) builds a 5-node simplified
+  graph with NO `PlanControllerAgent`; `DynamicAgentGraph` (server) builds the
+  ~20-node hierarchical one. Routing code in `cuga_lite_node.py` applies only to
+  the latter. Verify by enumerating node names in a real trace, not by reading
+  package source.
+- **`DynamicAgentGraph` is prebuilt and local**, not a hosted API, and is
+  constructible in-process without the FastAPI server
+  (`cuga_graph/utils/controller.py:193`). Migration cost is the *different
+  constructor surface*, not building anything.
 - Normalize blank optional CUGA environment variables before importing CUGA.
 - Set `DYNACONF_ADVANCED_FEATURES__FORCE_AUTONOMOUS_MODE=true` in `.env` for
   autonomous research and benchmark workloads.

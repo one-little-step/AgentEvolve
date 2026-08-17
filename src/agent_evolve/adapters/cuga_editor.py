@@ -36,6 +36,7 @@ from agent_evolve.adapters.cuga_editor_tools import (
 from agent_evolve.core.contracts import ExecutionTrace
 from agent_evolve.core.editor import EditorOutcome, EditorRequest, EditorResponse
 from agent_evolve.core.memory import EditMemory
+from agent_evolve.core.run_logging import RunLogSink
 
 
 class EditorDeclined(RuntimeError):
@@ -172,6 +173,10 @@ class CugaEditorAgent:
     _active_ctx: EditorToolContext | None = None
     # SDK-reported tool calls from the last real run (independent evidence).
     last_sdk_tool_calls: tuple = ()
+    #: When set and active, records the prompt, the raw answer, the ordered
+    #: tool-call ledger and the terminal outcome. Off by default so a
+    #: measurement run writes nothing.
+    log_sink: RunLogSink | None = None
 
     def propose_edit(self, request: EditorRequest) -> EditorResponse:
         ctx = self._build_context(request)
@@ -181,17 +186,22 @@ class CugaEditorAgent:
         prompt = build_editor_prompt(
             _evidence_summary(ctx.evidence) + "\n" + _parent_summary(request)
         )
+        self._log(request, {"event": "editor_prompt", "prompt": prompt})
 
         try:
-            self._run_agent(recorded, prompt)
+            answer = self._run_agent(recorded, prompt)
         except Exception as exc:  # noqa: BLE001 - classify, never propagate raw
             self.last_tools_called = tuple(names)
             self.last_outcome = EditorOutcome.UNAVAILABLE
+            self._log_outcome(
+                request, names, error=f"{type(exc).__name__}: {exc}"
+            )
             raise EditorDeclined(
                 EditorOutcome.UNAVAILABLE, f"editor agent failed: {exc}"
             ) from exc
 
         self.last_tools_called = tuple(names)
+        self._log(request, {"event": "editor_answer", "answer": str(answer)})
         plan = submitted_plan(ctx)
 
         if plan is None:
@@ -199,6 +209,9 @@ class CugaEditorAgent:
             # unfinalized work is discarded, not silently applied.
             self.last_outcome = EditorOutcome.NO_TOOL_CALL
             self.last_parents_read = ()
+            self._log_outcome(
+                request, names, error="never called submit_edit_plan"
+            )
             raise EditorDeclined(
                 EditorOutcome.NO_TOOL_CALL,
                 "editor agent never called submit_edit_plan",
@@ -208,12 +221,14 @@ class CugaEditorAgent:
 
         if plan["declined"]:
             self.last_outcome = EditorOutcome.NO_OP
+            self._log_outcome(request, names, plan=plan)
             raise EditorDeclined(
                 EditorOutcome.NO_OP,
                 f"editor declined to edit: {plan['rationale']}",
             )
 
         self.last_outcome = EditorOutcome.VALID
+        self._log_outcome(request, names, plan=plan)
         writes = {
             edit.artifact_id: str(edit.payload.get("content", ""))
             for edit in plan["edits"]
@@ -235,6 +250,61 @@ class CugaEditorAgent:
     # -------------------------------------------------------------- #
     # Internals
     # -------------------------------------------------------------- #
+    def _log(self, request: EditorRequest, record: dict[str, object]) -> None:
+        """Best-effort write. Never raises: an observer must not fail an edit.
+
+        A logging failure that propagated would discard a multi-turn agent run
+        that has already been paid for, so every error is swallowed -- including
+        a sink that does not behave like one.
+        """
+        sink = self.log_sink
+        if sink is None:
+            return
+        try:
+            sink.write_record(
+                f"{request.base_workspace.version}__{request.task.task_id}",
+                {
+                    "candidate_version": request.base_workspace.version,
+                    "task_id": request.task.task_id,
+                    "issue_id": request.issue_id,
+                    "attempt_id": request.base_workspace.attempt_id,
+                    **record,
+                },
+            )
+        except Exception:  # noqa: BLE001 - capture is an observer, never a gate
+            pass
+
+    def _log_outcome(
+        self,
+        request: EditorRequest,
+        names: list[str],
+        *,
+        plan: dict | None = None,
+        error: str | None = None,
+    ) -> None:
+        """One terminal record per attempt, on every path including a decline.
+
+        The declined paths are the reason this exists: ``no_op`` and
+        ``no_tool_call`` produce no plan and no response, so without this record
+        the most informative outcomes were the only ones leaving no artifact.
+        """
+        record: dict[str, object] = {
+            "event": "editor_outcome",
+            "outcome": self.last_outcome.value,
+            "tools_called": list(names),
+            "sdk_tool_calls": [str(c) for c in self.last_sdk_tool_calls],
+            "parents_read": list(self.last_parents_read),
+        }
+        if plan is not None:
+            record["declined"] = bool(plan["declined"])
+            record["rationale"] = plan["rationale"]
+            record["risks"] = plan["risks"]
+            record["expected_effect"] = plan["expected_effect"]
+            record["artifact_ids"] = [e.artifact_id for e in plan["edits"]]
+        if error is not None:
+            record["error"] = error
+        self._log(request, record)
+
     def _build_context(self, request: EditorRequest) -> EditorToolContext:
         pool_created = request.pool_created_count
         staging = EditStagingArea(

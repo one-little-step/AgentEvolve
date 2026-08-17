@@ -135,8 +135,52 @@ def test_every_tool_has_a_cluster_assignment() -> None:
 
 def test_expected_cluster_names() -> None:
     assert set(TOOL_APP_NAMES.values()) == {
-        "evidence", "harness", "history", "parents", "submit",
+        "evidence", "harness", "history", "parents", "submit", "rollout",
     }
+
+
+# ------------------------------------------------------------------ #
+# rollout cluster
+# ------------------------------------------------------------------ #
+def test_list_rollout_tools_reports_every_tool_the_rollout_agent_owns() -> None:
+    """A capability absent from the prompt is a capability the agent will not
+    use, and the editor had no way at all to learn the rollout tool inventory.
+
+    Expected names are derived from the wrapper module rather than duplicated,
+    so a tool added or removed there cannot silently drift out of this view.
+    """
+    from agent_evolve.cuga_wrapper import tools as rollout_tools
+
+    _, tools = _tools()
+    payload = json.loads(tools["list_rollout_tools"]())
+
+    expected = [func.__name__ for func in rollout_tools._RAW_TOOLS]
+    assert [entry["name"] for entry in payload["tools"]] == sorted(expected)
+    assert payload["count"] == len(expected)
+
+
+def test_list_rollout_tools_carries_a_signature_and_purpose_per_tool() -> None:
+    """A bare name does not tell the editor how to invoke a tool; the signature
+    and the tool's own one-line docstring do."""
+    _, tools = _tools()
+    payload = json.loads(tools["list_rollout_tools"]())
+
+    calculator = next(e for e in payload["tools"] if e["name"] == "calculator")
+    assert calculator["signature"] == "calculator(expression: str) -> str"
+    assert calculator["purpose"] == (
+        "Evaluate a mathematical expression safely and return its value."
+    )
+
+
+def test_list_rollout_tools_needs_no_cuga_sdk() -> None:
+    """The inventory is read from the plain tool functions, not from
+    ``build_tools``, which imports the SDK and would make the whole offline
+    editor test surface depend on a live CUGA install."""
+    _, tools = _tools()
+
+    payload = json.loads(tools["list_rollout_tools"]())
+
+    assert payload["tools"]
 
 
 # ------------------------------------------------------------------ #
@@ -328,10 +372,12 @@ def test_every_tool_callable_has_a_docstring() -> None:
     pinned here where it costs nothing to catch.
     """
     ctx = _ctx()
-    missing = [
-        name for name, fn in build_tool_callables(ctx).items() if not fn.__doc__
-    ]
+    callables = build_tool_callables(ctx)
+    missing = [name for name, fn in callables.items() if not fn.__doc__]
     assert missing == []
+    # Guards the loop above against passing vacuously if the tool dict ever
+    # shrinks: every declared cluster member must actually be present.
+    assert set(callables) == set(TOOL_APP_NAMES)
 
 
 def test_submit_edit_plan_docstring_states_the_finalize_requirement() -> None:

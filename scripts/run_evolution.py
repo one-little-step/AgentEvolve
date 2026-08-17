@@ -33,10 +33,22 @@ What the output guarantees
 * Every reported delta carries the measured 16.67 pp noise floor.
 * No grading material is printed -- only counts.
 
+What survives the run
+---------------------
+Nothing, unless ``--export-harness`` is passed. Candidate artifacts live in the
+adapter's memory, so a finished run otherwise prints a pass rate and destroys the
+harness that earned it: the delta becomes unreproducible and unshippable. With
+the flag, every pool candidate plus the champion is written as a harness JSON
+file that ``--harness`` accepts directly, so the next run seeds from this one.
+
 Usage::
 
     # offline rehearsal, no network
     uv run python scripts/run_evolution.py --dry-run --tasks 3 --iterations 1
+
+    # keep what the run produced (champion + every pool candidate)
+    uv run python scripts/run_evolution.py --dry-run --tasks 3 --iterations 1 \\
+        --export-harness data/harnesses/my-run
 
     # a real run, serial (the only safe in-process mode)
     uv run python scripts/run_evolution.py \\
@@ -71,12 +83,18 @@ from agent_evolve.benchmarks.cuga_executor import (  # noqa: E402
     CugaExecutorError,
 )
 from agent_evolve.core.evaluation import ScoreTally  # noqa: E402
+from agent_evolve.core.run_logging import (  # noqa: E402
+    ALL_LOG_CHANNELS,
+    LogCaptureConfig,
+)
 from agent_evolve.pipeline import (  # noqa: E402
     DEFAULT_WORKER_KNOWLEDGE_SEED,
     EvolutionStack,
     build_live_stack,
     build_offline_stack,
     format_delta,
+    nothing_accepted_warning,
+    nothing_accepted_warning_applies,
 )
 
 #: Matches the observed baseline configuration.
@@ -84,7 +102,7 @@ DEFAULT_TASK_TIMEOUT = 1200.0
 DEFAULT_WORKER_ROOT = Path("data/cuga-workers")
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Run the evolution pipeline: rollout -> analyze -> select -> edit -> "
@@ -204,6 +222,53 @@ def _build_parser() -> argparse.ArgumentParser:
         help="config profile name (default: research_sequential)",
     )
     parser.add_argument(
+        "--capture-logs",
+        action="store_true",
+        help=(
+            "capture run logs (worker CUGA stderr, analyzer transcripts, editor "
+            "transcripts, pipeline decisions). OFF by default: capture writes "
+            "files a measurement run has no use for, and worker stderr is not "
+            "cheap. On, nothing about the run is unrecoverable; off, nothing is "
+            "written and no directory is created."
+        ),
+    )
+    parser.add_argument(
+        "--log-root",
+        type=Path,
+        default=None,
+        help=(
+            "where captured logs are written, one subdirectory per channel. "
+            "Defaults to <--trace-root>/logs, because traces and logs describe "
+            "the same run and belong next to each other. Ignored without "
+            "--capture-logs."
+        ),
+    )
+    parser.add_argument(
+        "--log-channels",
+        default=",".join(ALL_LOG_CHANNELS),
+        help=(
+            f"comma-separated channels to capture (default: all -- "
+            f"{', '.join(ALL_LOG_CHANNELS)}). Narrow it to skip the expensive "
+            f"one: 'workers' is per-rollout CUGA stderr, while an operator "
+            f"debugging the editor needs only 'editor,pipeline'."
+        ),
+    )
+    parser.add_argument(
+        "--export-harness",
+        type=Path,
+        default=None,
+        help=(
+            "persist the evolved harness so the run's result outlives the "
+            "process. OFF by default; without it a finished run leaves only a "
+            "pass rate on stdout, because candidate artifacts are held in "
+            "memory. A path ending in '.json' writes the champion to that one "
+            "file; any other path is a directory receiving "
+            "'candidate-<id>.json' per pool candidate plus 'champion.json'. "
+            "Every file is valid input to --harness, so the next run seeds "
+            "directly from this one."
+        ),
+    )
+    parser.add_argument(
         "--allow-unsafe-concurrency",
         action="store_true",
         help=(
@@ -214,6 +279,23 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     return parser
+
+
+def log_capture_from_args(args: argparse.Namespace) -> LogCaptureConfig:
+    """Build the capture config, refusing an unknown channel.
+
+    The refusal comes from :class:`LogCaptureConfig` itself and is deliberate: a
+    typo'd channel name that was silently dropped would disable capture for
+    exactly the channel the operator asked for, and the run would look captured.
+    """
+    channels = tuple(
+        part.strip() for part in str(args.log_channels).split(",") if part.strip()
+    )
+    if not args.capture_logs:
+        # Not merely disabled: no root either, so nothing downstream can write.
+        return LogCaptureConfig(enabled=False, root=None, channels=channels)
+    root = args.log_root if args.log_root is not None else args.trace_root / "logs"
+    return LogCaptureConfig(enabled=True, root=Path(root), channels=channels)
 
 
 def _print_header(stack: EvolutionStack) -> None:
@@ -227,7 +309,9 @@ def _print_tally(label: str, tally: ScoreTally) -> None:
     print(f"{label:<16}: {tally.summary}")
 
 
-def _build_live(args: argparse.Namespace) -> EvolutionStack | int:
+def _build_live(
+    args: argparse.Namespace, log_capture: LogCaptureConfig
+) -> EvolutionStack | int:
     """Build the live stack, or return an exit code explaining why not."""
     from agent_evolve.benchmarks.cuga_executor import HarnessVersion
     from agent_evolve.benchmarks.gaia import GaiaBenchmark
@@ -280,6 +364,7 @@ def _build_live(args: argparse.Namespace) -> EvolutionStack | int:
             seed=args.seed,
             profile=args.profile,
             allow_unsafe_concurrency=args.allow_unsafe_concurrency,
+            log_capture=log_capture,
         )
     except CugaExecutorError as exc:
         # Every refusal here is a measured one: an unsafe worker count, an
@@ -292,13 +377,19 @@ def _build_live(args: argparse.Namespace) -> EvolutionStack | int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+    args = build_parser().parse_args(argv)
 
     if args.tasks < 1:
         print("--tasks must be >= 1")
         return 2
     if args.iterations < 1:
         print("--iterations must be >= 1")
+        return 2
+
+    try:
+        log_capture = log_capture_from_args(args)
+    except ValueError as exc:
+        print(f"cannot start: {exc}")
         return 2
 
     if args.dry_run:
@@ -312,9 +403,10 @@ def main(argv: list[str] | None = None) -> int:
             analyzer_workers=args.analyzer_workers,
             seed=args.seed,
             profile=args.profile,
+            log_capture=log_capture,
         )
     else:
-        built = _build_live(args)
+        built = _build_live(args, log_capture)
         if isinstance(built, int):
             return built
         stack = built
@@ -331,25 +423,31 @@ def main(argv: list[str] | None = None) -> int:
         for summary in summaries:
             print(f"  {summary.line}")
 
-        if len(stack.tasks) > 1 and not any(s.accepted for s in summaries):
-            # Known pre-existing defect in core.editor.weighted_net_gain: a
-            # REGRESSION probe that PASSES is weighted -1.0, so with >= 2 tasks a
-            # repair that breaks nothing still nets negative and is rejected.
-            # Surfaced here because a silently inert run is worse than a loud one.
-            print(
-                "\nwarning: nothing was accepted, and with "
-                f"{len(stack.tasks)} tasks that is expected regardless of edit "
-                "quality: core.editor.weighted_net_gain scores a *passing* "
-                "regression probe as -1.0, so origin(+1.0) + N passing "
-                "regression probes(-N) is negative for N >= 1. Evolution is "
-                "arithmetically inert above one task until that is fixed. "
-                "Re-run with --tasks 1 to see the loop accept an edit."
-            )
+        if nothing_accepted_warning_applies(
+            len(stack.tasks), any(s.accepted for s in summaries)
+        ):
+            # Surfaced loudly because a silently inert run is worse than a loud
+            # one. The text names causes an operator can check; it deliberately
+            # no longer claims a multi-task arithmetic floor, which was true of
+            # the pre-fix weighted_net_gain and is false now.
+            print(nothing_accepted_warning(len(stack.tasks)))
 
         champion = stack.champion_version()
         print(f"\nmeasuring the champion ({champion})...")
         after = stack.measure(champion, prefix="after")
         _print_tally("champion", after)
+
+        if args.export_harness is not None:
+            # After measurement, so the exported provenance carries scores the
+            # champion actually earned rather than an empty tensor.
+            written = stack.export_pool(args.export_harness)
+            print(f"\nexported {len(written)} harness file(s):")
+            for path in written:
+                print(f"  {path}")
+            print(
+                f"note   : re-run against the champion with --harness "
+                f"{written[-1]}"
+            )
 
         print()
         for line in format_delta(before, after):

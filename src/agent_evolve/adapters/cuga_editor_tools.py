@@ -42,6 +42,8 @@ TOOL_APP_NAMES: dict[str, str] = {
     # parents
     "list_parents": "parents",
     "read_parent_artifact": "parents",
+    # rollout
+    "list_rollout_tools": "rollout",
     # submit
     "submit_edit_plan": "submit",
 }
@@ -218,6 +220,21 @@ def build_tool_callables(ctx: EditorToolContext) -> dict[str, Callable[..., str]
             content=contents[artifact_id],
         )
 
+    # ---------------------------------------------------------- rollout
+    def list_rollout_tools() -> str:
+        """List the tools the failing rollout agent has, with signature and purpose.
+
+        Use this before claiming a task was impossible: the agent may already own
+        a capability its harness never told it about.
+        """
+        try:
+            from agent_evolve.cuga_wrapper.tools import rollout_tool_inventory
+
+            inventory = rollout_tool_inventory()
+        except Exception as exc:  # noqa: BLE001 - never raise into the agent
+            return _err(f"list_rollout_tools failed: {exc}")
+        return _ok(tools=[dict(entry) for entry in inventory], count=len(inventory))
+
     # ---------------------------------------------------------- submit
     def submit_edit_plan(
         rationale: str, risks: str = "", expected_effect: str = ""
@@ -262,6 +279,7 @@ def build_tool_callables(ctx: EditorToolContext) -> dict[str, Callable[..., str]
         "get_attempt_outcome": get_attempt_outcome,
         "list_parents": list_parents,
         "read_parent_artifact": read_parent_artifact,
+        "list_rollout_tools": list_rollout_tools,
         "submit_edit_plan": submit_edit_plan,
     }
 

@@ -77,6 +77,7 @@ from agent_evolve.benchmarks.cuga_process_pool import (
     CugaProcessPool,
     default_knowledge_seed,
 )
+from agent_evolve.core.run_logging import LogCaptureConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -197,7 +198,9 @@ def _print_report(
     print(f"    answered           : {result.ok_count}")
     print(f"    no answer (failed) : {result.failed_count}")
     print(f"    of which timed out : {result.timeout_count}")
-    print(f"    answered, ungraded : {result.unscorable_count}")
+    print(f"    non-answer (gave up): {result.non_answer_count}")
+    print(f"    answered, ungraded : {result.ungradable_count}")
+    print(f"    unscorable total   : {result.unscorable_count}")
     print(f"    scoring errors     : {len(result.scoring_errors)}")
     print(f"    scored (DENOMINATOR): {stats.evaluated}")
     print(f"    passed             : {stats.passed}")
@@ -225,9 +228,18 @@ def _print_report(
                 f"{execution.elapsed_seconds:6.2f}s  {execution.error[:110]}"
             )
 
-    if result.unscorable_count:
+    if result.non_answer_count:
+        categories = dict(result.non_answer_categories)
+        print(
+            "\n    non-answers (agent committed no answer; EXCLUDED from the "
+            "denominator, not counted as wrong):"
+        )
+        for task_id in result.non_answer_task_ids:
+            print(f"      {task_id:<40} {categories.get(task_id, '')}")
+
+    if result.ungradable_count:
         print("\n    answered but ungraded (no grading material, excluded):")
-        for task_id in result.unscorable_task_ids:
+        for task_id in result.ungradable_task_ids:
             print(f"      {task_id}")
 
     for task_id, error in result.scoring_errors:
@@ -250,7 +262,7 @@ def _select(tasks: Sequence[BenchmarkTask], limit: int | None) -> Sequence[Bench
     return tasks[:limit]
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run a benchmark's tasks with bounded concurrency and score them."
     )
@@ -376,10 +388,50 @@ def main(argv: list[str] | None = None) -> int:
         help="print each task as its result is resolved (coordinator thread)",
     )
     parser.add_argument(
+        "--capture-logs",
+        action="store_true",
+        help=(
+            "capture each process-isolated worker's CUGA stderr to "
+            "<--log-root>/workers/<worker_id>.log. That stream is the only place "
+            "CUGA reports its routing decisions (is_autonomous_subtask, "
+            "'Routing to:'), and it is discarded by default -- so a finished run "
+            "cannot say why it routed as it did without a paid re-run. OFF by "
+            "default: on, nothing is written and no directory is created."
+        ),
+    )
+    parser.add_argument(
+        "--log-root",
+        type=Path,
+        default=None,
+        help=(
+            "where captured worker logs are written. Defaults to "
+            "<--trace-root>/logs, because traces and logs describe the same run. "
+            "Ignored without --capture-logs."
+        ),
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="print per-task pass/fail outcomes",
     )
+    return parser
+
+
+def log_capture_from_args(args: argparse.Namespace) -> LogCaptureConfig:
+    """Build a workers-only capture config.
+
+    Only ``workers`` is offered here: this script runs rollouts and grades them,
+    with no analyzer, editor or evolution loop, so the other three channels have
+    nothing to write and offering them would imply otherwise.
+    """
+    if not args.capture_logs:
+        return LogCaptureConfig(enabled=False, root=None, channels=("workers",))
+    root = args.log_root if args.log_root is not None else args.trace_root / "logs"
+    return LogCaptureConfig(enabled=True, root=Path(root), channels=("workers",))
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
 
     chosen = [
@@ -483,6 +535,7 @@ def main(argv: list[str] | None = None) -> int:
                     if args.empty_worker_knowledge
                     else default_knowledge_seed()
                 ),
+                log_capture=log_capture_from_args(args),
             )
             factory = make_cuga_executor_factory(
                 harness, trace_root=args.trace_root, recorder=recorder, worker_pool=pool

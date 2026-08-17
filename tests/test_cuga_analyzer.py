@@ -27,6 +27,7 @@ from agent_evolve.core.analysis import RolloutGroupReport
 from agent_evolve.core.contracts import EvolutionTask, ExecutionTrace, TraceEvent
 from agent_evolve.core.evidence import rollout_group_report
 from agent_evolve.core.parallel_analysis import ParallelAnalysisRunner
+from agent_evolve.core.run_logging import LogCaptureConfig, RunLogSink
 
 # ---------------------------------------------------------------------- #
 # Fixtures / builders
@@ -587,6 +588,131 @@ def test_the_system_prompt_forbids_generic_mechanisms():
     assert "causal sentence" in system
 
 
+def test_the_system_prompt_describes_the_real_sdk_graph_shape():
+    """A judge that thinks it is looking at a hierarchical planner mis-attributes.
+
+    Measured this session: all 104 traces on disk show one shape,
+    ``CugaLiteSubgraph -> prepare -> call_model <-> sandbox -> SDKCallback ->
+    FinalAnswerAgent``. There is no PlanControllerAgent on the SDK path (it
+    exists only in the server graph, which this project does not run), so a
+    prompt that lets the judge assume a planner/executor split invites blame on
+    an actor that never ran. Prose-only, so nothing but this test would notice
+    if the shape were dropped or a phantom actor reintroduced.
+    """
+    calls: list[dict] = []
+    _analyzer(_observed_payload(), calls=calls).analyze(_report())
+    system = calls[0]["messages"][0]["content"]
+
+    for node in ("call_model", "sandbox", "FinalAnswerAgent"):
+        assert node in system, f"graph node {node} missing from the judge prompt"
+    assert "PlanControllerAgent" not in system
+
+
+def test_the_system_prompt_names_the_no_executable_code_pattern():
+    """The dominant measured failure must be a pattern the judge can recognise.
+
+    Signature: prose narration, zero tool_call events, and an inability claim.
+    CUGA's code extractor returns "" and routing skips the sandbox entirely.
+    Without this named in the prompt, the judge produced mechanisms blaming the
+    tools -- an attribution nothing can act on.
+    """
+    system = _system_prompt_of()
+    flat = " ".join(system.lower().split())
+
+    assert "no executable code" in flat
+    assert "tool_call" in flat
+    assert "narrat" in flat
+
+
+def test_the_system_prompt_warns_that_self_reports_are_unreliable():
+    """"I'm unable to call the tool" was measured FALSE: tools were reachable.
+
+    A judge that takes the model's self-report at face value produces a
+    tool-failure mechanism for a prompt-contract failure.
+    """
+    flat = " ".join(_system_prompt_of().lower().split())
+
+    assert "self-report" in flat or "self report" in flat
+    assert "corroborat" in flat
+
+
+def test_the_system_prompt_requires_an_actionable_mechanism():
+    """A mechanism no editable surface can act on yields no edit downstream."""
+    flat = " ".join(_system_prompt_of().lower().split())
+
+    assert "actionable" in flat
+    for surface in ("instructions", "skill", "policy", "memory"):
+        assert surface in flat, f"editable surface {surface} missing"
+
+
+def test_the_system_prompt_still_withholds_the_answer_and_final_output():
+    """The new prose must not have loosened the two blindness invariants."""
+    system = _system_prompt_of()
+
+    assert "never see the expected answer" in system
+    assert "never see the agent's final output" in system
+
+
+def _system_prompt_of() -> str:
+    calls: list[dict] = []
+    _analyzer(_observed_payload(), calls=calls).analyze(_report())
+    return str(calls[0]["messages"][0]["content"])
+
+
+def test_the_user_prompt_states_the_tool_call_count_per_trace():
+    """The no-executable-code signature is "zero tool_call events".
+
+    Models count badly over a JSON blob, and the whole point of the pattern is
+    that the count is what discriminates a prompt-contract failure from a tool
+    failure. So the count is computed here and stated, rather than left for the
+    judge to infer. Derived purely from event kinds already in the evidence, so
+    it leaks nothing new.
+    """
+    calls: list[dict] = []
+    _analyzer(_observed_payload(), calls=calls).analyze(_report())
+    user = str(calls[0]["messages"][1]["content"])
+
+    # The fixture trace carries exactly two tool_call events.
+    assert "trace-1: 2 tool_call event(s)" in user
+
+
+def test_a_trace_with_no_tool_calls_is_stated_as_zero():
+    trace = ExecutionTrace(
+        trace_id="trace-narrated",
+        candidate_id="cand-1",
+        task_id="task-1",
+        events=(
+            TraceEvent(
+                event_id="n1",
+                kind="graph_node_start",
+                actor_id="call_model",
+                parent_event_id=None,
+                payload={},
+            ),
+        ),
+        final_output="I'm unable to verify this.",
+        status="failure",
+    )
+    calls: list[dict] = []
+    analyzer = _analyzer(
+        {"findings": [{"trace_id": "trace-narrated", "status": "insufficient_evidence"}]},
+        calls=calls,
+    )
+    analyzer.analyze(_report(trace))
+    user = str(calls[0]["messages"][1]["content"])
+
+    assert "trace-narrated: 0 tool_call event(s)" in user
+
+
+def test_the_tool_call_count_does_not_leak_the_answer_key():
+    calls: list[dict] = []
+    _analyzer(_observed_payload(), calls=calls).analyze(_report())
+    blob = json.dumps(calls[0]["messages"])
+
+    assert ANSWER_KEY not in blob
+    assert "a flight to Boston" not in blob
+
+
 def test_missing_model_configuration_raises_rather_than_guessing(monkeypatch):
     for var in (
         "CUGA_MODEL",
@@ -724,3 +850,116 @@ def test_runner_records_a_transport_failure_as_a_failed_outcome():
     assert [o.ok for o in outcomes] == [False, False]
     assert all("provider 503" in o.error for o in outcomes)
     assert ParallelAnalysisRunner.flatten(outcomes) == ()
+
+
+# ---------------------------------------------------------------------- #
+# Analyzer transcript capture
+# ---------------------------------------------------------------------- #
+def test_capture_persists_the_prompt_and_the_raw_response_together(tmp_path):
+    """Both halves, or the transcript cannot separate two different failures.
+
+    Without the request messages a later reader cannot tell "the analyzer was
+    wrong about the evidence" from "the analyzer never saw the evidence"; without
+    the raw response text it cannot tell a model that abstained from a model
+    whose output we failed to parse.
+    """
+    sink = RunLogSink(
+        LogCaptureConfig(enabled=True, root=tmp_path), channel="analyzer"
+    )
+    analyzer = _analyzer(_observed_payload(), log_sink=sink)
+
+    analyzer.analyze(_report())
+    sink.close()
+
+    path = tmp_path / "analyzer" / "cand-1__task-1.jsonl"
+    records = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    assert len(records) == 1
+    record = records[0]
+    roles = [m["role"] for m in record["request_messages"]]
+    assert roles == ["system", "user"]
+    # The evidence the model was shown, verbatim, not a summary of it.
+    assert "trace-1" in record["request_messages"][1]["content"]
+    assert GOOD_MECHANISM in record["response_text"]
+
+
+def test_capture_records_the_finding_statuses_the_response_produced(tmp_path):
+    """The verdict belongs next to its transcript, not only in the pool.
+
+    A malformed response and a well-formed abstention look identical in the
+    score tensor; only the status recorded beside the raw text distinguishes
+    them.
+    """
+    sink = RunLogSink(
+        LogCaptureConfig(enabled=True, root=tmp_path), channel="analyzer"
+    )
+    analyzer = _analyzer("not json at all", log_sink=sink)
+
+    analyzer.analyze(_report())
+    sink.close()
+
+    path = tmp_path / "analyzer" / "cand-1__task-1.jsonl"
+    record = json.loads(path.read_text().splitlines()[0])
+    assert record["finding_statuses"] == ["malformed"]
+
+
+def test_capture_is_off_by_default_and_writes_nothing(tmp_path):
+    """A measurement run must be able to spend nothing on capture."""
+    analyzer = _analyzer(_observed_payload())
+
+    findings = analyzer.analyze(_report())
+
+    assert findings[0].status == "observed"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_disabled_sink_leaves_no_analyzer_directory(tmp_path):
+    """Disabled means absent: an empty tree is still an observable side effect."""
+    sink = RunLogSink(LogCaptureConfig(enabled=False), channel="analyzer")
+
+    _analyzer(_observed_payload(), log_sink=sink).analyze(_report())
+    sink.close()
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_sink_that_cannot_write_does_not_break_the_analysis():
+    """Logging is an observer. A full disk must not cost a paid model call."""
+
+    class _BrokenSink:
+        def write_record(self, name, record):
+            raise OSError("no space left on device")
+
+    findings = _analyzer(_observed_payload(), log_sink=_BrokenSink()).analyze(
+        _report()
+    )
+
+    assert [f.status for f in findings] == ["observed"]
+    assert findings[0].mechanism_description == GOOD_MECHANISM
+
+
+def test_a_transport_failure_still_leaves_the_prompt_on_disk(tmp_path):
+    """The request is the only artifact a failed call can leave behind.
+
+    A provider error propagates by design (it says nothing about the trajectory),
+    and ``ParallelAnalysisRunner`` records it as ``ok=False`` -- but without the
+    prompt an operator cannot tell an over-long request from an endpoint outage.
+    """
+    sink = RunLogSink(
+        LogCaptureConfig(enabled=True, root=tmp_path), channel="analyzer"
+    )
+
+    def boom(**_request):
+        raise RuntimeError("provider 503")
+
+    analyzer = CugaTrajectoryAnalyzer(
+        completion_fn=boom, model="test/model", log_sink=sink
+    )
+    with pytest.raises(RuntimeError, match="provider 503"):
+        analyzer.analyze(_report())
+    sink.close()
+
+    record = json.loads(
+        (tmp_path / "analyzer" / "cand-1__task-1.jsonl").read_text().splitlines()[0]
+    )
+    assert record["error"] == "RuntimeError: provider 503"
+    assert record["request_messages"][0]["role"] == "system"

@@ -222,6 +222,53 @@ def test_failing_regression_probe_still_penalizes_net_gain():
     assert regressed.weighted_net_gain() < clean.weighted_net_gain()
 
 
+def test_passing_regression_probes_are_free_at_every_probe_count():
+    """Pins the exact arithmetic, not just its sign.
+
+    ``run_evolution`` used to warn that multi-task runs were arithmetically
+    inert because passing probes were charged -1.0 each. The values are pinned
+    here so a regression to a per-probe charge is caught as a number rather than
+    rediscovered as an inert run, and so the CLI's diagnostic text cannot drift
+    back to claiming inertness.
+    """
+    for probe_count in (0, 1, 2, 3, 5):
+        r = FocusedValidationReport(
+            origin=(_vr(ValidationKind.ORIGIN, "t0", 1.0),),
+            worked=(),
+            regression=tuple(
+                _vr(ValidationKind.REGRESSION, f"r{i}", 1.0)
+                for i in range(probe_count)
+            ),
+        )
+        assert r.weighted_net_gain() == pytest.approx(1.0), (
+            f"{probe_count} passing regression probes changed the gain; passing "
+            "probes are evidence for the edit and must cost exactly nothing"
+        )
+
+
+@pytest.mark.parametrize(
+    "probe_score,expected_gain",
+    [(0.1, 0.1), (0.5, 0.5), (0.9, 0.9)],
+)
+def test_a_failing_regression_probe_is_charged_one_minus_its_score(
+    probe_score: float, expected_gain: float
+):
+    """The charge is the size of the fall, so a worse regression costs more.
+
+    Pinning the exact value keeps the penalty from being quietly flattened to a
+    constant, which would make a collapse to 0.1 cost the same as a dip to 0.9.
+    """
+    r = FocusedValidationReport(
+        origin=(_vr(ValidationKind.ORIGIN, "t0", 1.0),),
+        worked=(),
+        regression=(
+            _vr(ValidationKind.REGRESSION, "r0", probe_score, passed=False),
+        ),
+    )
+
+    assert r.weighted_net_gain() == pytest.approx(expected_gain)
+
+
 def test_worse_regression_costs_more_than_a_mild_one():
     """The penalty scales with how far the probe fell."""
     mild = FocusedValidationReport(

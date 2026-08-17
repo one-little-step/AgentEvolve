@@ -58,6 +58,7 @@ from agent_evolve.core.blame import (
     BlameNode,
     CausalFinding,
 )
+from agent_evolve.core.run_logging import RunLogSink
 
 # ---------------------------------------------------------------------- #
 # Constants
@@ -129,6 +130,90 @@ Do not speculate about what the correct answer was. Reason only about the
 observable causal structure of the trajectory: which actor did what, what it
 omitted, what it passed downstream, and what consequence followed.
 
+THE HARNESS YOU ARE LOOKING AT
+------------------------------
+The rollout agent is a SINGLE-AGENT ReAct/CodeAct loop, not a hierarchy of
+planners. The graph is:
+
+  CugaLiteSubgraph -> prepare -> call_model <-> sandbox -> SDKCallback
+                                                       -> FinalAnswerAgent
+
+* prepare assembles the turn's context (always-on instructions, any loaded
+  skill or policy text, retrieved memory) before the model is called.
+* call_model produces one assistant message. If that message contains a fenced
+  code block, the harness extracts it and runs it in sandbox, and the loop
+  returns to call_model with the execution output. If it contains NO extractable
+  code block, there is nothing to run: the loop exits toward the final answer
+  without any tool ever being invoked.
+* sandbox is the ONLY place a tool can be called. A tool that is never named
+  inside executed code is never called, whatever the assistant message claims.
+* FinalAnswerAgent produces the terminal answer from whatever context exists at
+  that point, including none.
+
+Actor ids in the evidence are graph node names from this shape. There is no
+separate planner actor and no plan-controller actor on this path; do not
+attribute blame to a stage that does not appear in the evidence.
+
+READING THE EVIDENCE HONESTLY
+-----------------------------
+* The model's own words are a CLAIM, not an observation. Statements like "I am
+  unable to call that tool", "the tool returned nothing", "I don't have access
+  to the web" are self-reports and are frequently FALSE. A self-report must be
+  corroborated against the event stream before you build a mechanism on it: a
+  tool failure requires an actual tool_call event whose payload shows the
+  failure. If no tool_call event exists, the tool was not attempted, and the
+  cause lies upstream of the tool.
+* Absence of an actor is different from failure of an actor. An actor with no
+  events did not run.
+* payload_redacted marks a payload that was withheld, not a payload that was
+  empty. Do not read a redaction as evidence of nothing happening.
+
+FAILURE PATTERNS WORTH RECOGNISING
+----------------------------------
+These are recurring shapes, not a taxonomy to label with. When one fits, still
+write a specific causal sentence about THIS trace.
+
+1. NO EXECUTABLE CODE EMITTED. The assistant message narrates an intention
+   ("first I will fetch the page, then I will count them"), contains no fenced
+   code block, and often ends with an inability claim or an apology. Signature
+   in the evidence: zero tool_call events for the whole trace, the loop never
+   re-enters call_model from sandbox, and the run reaches the final answer in
+   one model turn. The mechanism here is that the turn produced narration
+   instead of runnable code, so no capability was ever exercised. This is a
+   failure of the turn-level output contract the model was operating under -- it
+   is NOT a tool failure, NOT a missing tool, and NOT a missing capability, even
+   when the model says it is.
+2. CODE EXECUTED BUT WRONG. tool_call events exist and show wrong arguments,
+   the wrong tool for the goal, or results that were ignored. Blame belongs to
+   the step that produced or consumed the bad values.
+3. CAPABILITY PRESENT BUT NEVER SELECTED. An optional capability exists and the
+   model had to opt into it (for instance by calling a loader tool) and did not,
+   so its content was absent from context at answer time. Distinguish this from
+   pattern 1: here code ran, it simply never selected the thing.
+4. LOOP EXHAUSTION OR PREMATURE TERMINATION. Repeated equivalent calls with no
+   progress, or a jump to the final answer while the evidence shows the needed
+   information had not been obtained yet.
+
+MAKE THE MECHANISM ACTIONABLE
+-----------------------------
+Downstream, an editor can only change these four surfaces of the harness:
+
+* instructions -- always-present, unconditional per-turn behavioral
+  configuration; governs how every turn is conducted.
+* skills -- optional procedures the model must choose to load; govern how a
+  multi-step job is carried out once selected.
+* policies -- conditional guidance that applies only when the request matches
+  its trigger.
+* memory -- retrievable facts and context, not behavior.
+
+A mechanism that no surface can act on produces no edit, so the analysis is
+wasted. Prefer the most specific mechanism the evidence supports, and locate it
+where an editor could plausibly intervene: which stage of the loop misbehaved,
+what the harness's own configuration led it to do there, and what followed. Do
+NOT name a surface or prescribe a remedy in the mechanism -- choosing the fix is
+the editor's job. Your obligation is that the mechanism be concrete enough for
+that choice to be possible.
+
 Answer with a single JSON object and nothing else. Schema:
 
 {
@@ -166,7 +251,12 @@ MECHANISM RULES (this is the point of the whole task):
   skill body was never in the model's context when it answered".
 - GOOD: "the api_agent called search_flights with the destination string in the
   origin field, so every returned itinerary started from the wrong city".
+- GOOD: "call_model answered with a prose description of the steps it intended
+  to take and no runnable block, so sandbox never executed and no tool was
+  reached before FinalAnswerAgent produced the answer".
 - FORBIDDEN: category labels ("tool error", "planning failure", "bad output").
+- FORBIDDEN: repeating a self-report as if it were an observation ("the tool was
+  unavailable" when no tool_call event exists).
 - FORBIDDEN: restatements of failure ("the agent failed the task", "the output
   did not match", "incorrect answer", "failed-to-match").
 - FORBIDDEN: templated text that would read identically for a different root
@@ -224,6 +314,10 @@ class CugaTrajectoryAnalyzer:
     max_events_in_prompt: int = 40
     request_json_object: bool = False
     analyzer_model_id: str = "cuga-trajectory-analyzer"
+    #: When set and active, one record per model call: the request messages, the
+    #: raw response text, and the statuses the response produced. Off by default
+    #: because a measurement run must be able to spend nothing on capture.
+    log_sink: RunLogSink | None = None
     _request_base: dict[str, object] | None = field(
         default=None, init=False, repr=False, compare=False
     )
@@ -255,17 +349,27 @@ class CugaTrajectoryAnalyzer:
         if not evidences:
             return ()
 
-        response = self._call_model(report, evidences)
+        response, messages = self._call_model(report, evidences)
 
         text = _response_text(response)
         if not text.strip():
-            return self._all_malformed(
-                report, evidences, "model returned an empty response body"
+            return self._captured(
+                report,
+                messages,
+                text,
+                self._all_malformed(
+                    report, evidences, "model returned an empty response body"
+                ),
             )
 
         parsed, parse_error = _parse_findings_payload(text)
         if parse_error is not None:
-            return self._all_malformed(report, evidences, parse_error)
+            return self._captured(
+                report,
+                messages,
+                text,
+                self._all_malformed(report, evidences, parse_error),
+            )
 
         by_trace, unmatched = _index_by_trace(
             parsed, tuple(str(e.get("trace_id", "")) for e in evidences)
@@ -290,7 +394,59 @@ class CugaTrajectoryAnalyzer:
                 )
                 continue
             findings.append(self._build_finding(report, evidence, raw))
-        return tuple(findings)
+        return self._captured(report, messages, text, tuple(findings))
+
+    # ------------------------------------------------------------------ #
+    # Transcript capture
+    # ------------------------------------------------------------------ #
+    def _captured(
+        self,
+        report: RolloutGroupReport,
+        messages: Sequence[Mapping[str, object]],
+        response_text: str,
+        findings: tuple[CausalFinding, ...],
+    ) -> tuple[CausalFinding, ...]:
+        """Record one judge transcript, then return ``findings`` unchanged.
+
+        Placed on the return path of every branch so an abstention and a
+        malformed response are as recoverable as a well-formed one. Returns the
+        findings so a call site cannot record a transcript and forget the value.
+        """
+        self._write_transcript(
+            report,
+            {
+                "event": "analyzer_call",
+                "request_messages": [dict(m) for m in messages],
+                "response_text": response_text,
+                "finding_statuses": [f.status for f in findings],
+            },
+        )
+        return findings
+
+    def _write_transcript(
+        self, report: RolloutGroupReport, record: Mapping[str, object]
+    ) -> None:
+        """Best-effort write. Never raises: an observer must not fail the run.
+
+        A logging failure that killed an analysis would throw away a model call
+        that has already been paid for, so every error here is swallowed --
+        including a sink that does not behave like one.
+        """
+        sink = self.log_sink
+        if sink is None:
+            return
+        try:
+            sink.write_record(
+                f"{report.candidate_id}__{report.task_id}",
+                {
+                    "candidate_id": report.candidate_id,
+                    "task_id": report.task_id,
+                    "analyzer_model_id": self.analyzer_model_id,
+                    **dict(record),
+                },
+            )
+        except Exception:  # noqa: BLE001 - capture is an observer, never a gate
+            pass
 
     # ------------------------------------------------------------------ #
     # Model call
@@ -299,14 +455,36 @@ class CugaTrajectoryAnalyzer:
         self,
         report: RolloutGroupReport,
         evidences: Sequence[Mapping[str, object]],
-    ) -> object:
+    ) -> tuple[object, tuple[Mapping[str, object], ...]]:
+        """The response and the messages that produced it.
+
+        The messages are returned rather than rebuilt for the transcript: a
+        second ``_user_prompt`` call would trim the evidence again and could
+        record a prompt the model never received.
+        """
         request = dict(self._resolve_request_base())
-        request["messages"] = [
+        messages: tuple[Mapping[str, object], ...] = (
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": self._user_prompt(report, evidences)},
-        ]
+        )
+        request["messages"] = [dict(m) for m in messages]
         invoke = self.completion_fn or _litellm_completion
-        return invoke(**request)
+        try:
+            return invoke(**request), messages
+        except Exception as exc:
+            # The request is the only artifact a failed call can leave, and
+            # without it an over-long prompt is indistinguishable from an
+            # endpoint outage. The exception still propagates: a transport
+            # failure says nothing about the trajectory.
+            self._write_transcript(
+                report,
+                {
+                    "event": "analyzer_call_failed",
+                    "request_messages": [dict(m) for m in messages],
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
+            raise
 
     def _resolve_request_base(self) -> dict[str, object]:
         """Model/connection settings, resolved once and reused.
@@ -353,7 +531,8 @@ class CugaTrajectoryAnalyzer:
         return (
             f"candidate_id: {report.candidate_id}\n"
             f"task_id: {report.task_id}\n"
-            f"traces to analyze (one finding each): {trace_ids}\n\n"
+            f"traces to analyze (one finding each): {trace_ids}\n"
+            f"tool invocations actually observed:\n{_tool_call_census(evidences)}\n\n"
             "SANITIZED EVIDENCE (JSON):\n"
             f"{json.dumps(trimmed, indent=2, default=_jsonable)}\n\n"
             "Return the JSON object described in the schema. No prose outside it."
@@ -891,6 +1070,31 @@ def _string_tuple(value: object) -> tuple[str, ...]:
 def _join_rationale(rationale: str, notes: Sequence[str]) -> str:
     parts = [p for p in (rationale.strip(), *notes) if p]
     return " | ".join(parts)
+
+
+def _tool_call_census(evidences: Sequence[Mapping[str, object]]) -> str:
+    """One line per trace stating how many tool_call events it really has.
+
+    Derived only from event ``kind`` values already present in the sanitized
+    evidence, so it exposes nothing the model cannot see -- but it removes the
+    step the judge was measured to get wrong. A zero here is the discriminating
+    observation between "the model could not use a tool" (a claim) and "no tool
+    was ever invoked" (a fact), and asking a model to count occurrences inside a
+    multi-kilobyte JSON blob is exactly the operation it does unreliably.
+    """
+    lines: list[str] = []
+    for evidence in evidences:
+        trace_id = str(evidence.get("trace_id") or "unknown-trace")
+        count = sum(
+            1 for e in _events(evidence) if str(e.get("kind")) == "tool_call"
+        )
+        note = (
+            "  (zero: no tool was invoked in this trace, whatever the model said)"
+            if count == 0
+            else ""
+        )
+        lines.append(f"  {trace_id}: {count} tool_call event(s){note}")
+    return "\n".join(lines)
 
 
 def _trim_evidence(

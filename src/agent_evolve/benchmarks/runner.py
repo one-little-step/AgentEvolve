@@ -53,6 +53,8 @@ from dataclasses import dataclass, field
 from time import monotonic
 from typing import Callable, Sequence
 
+from agent_evolve.core.non_answer import classify_non_answer
+
 from .base import (
     Benchmark,
     BenchmarkTask,
@@ -134,12 +136,27 @@ class BenchmarkRunResult:
     ``outcomes`` contains an entry only for a task that both produced an answer
     and could be graded, so ``len(outcomes)`` is the honest denominator and is
     generally smaller than ``len(executions)``.
+
+    Two distinct reasons keep an *answered* task out of the denominator, and they
+    are counted separately because they call for different remedies:
+
+    ``ungradable_task_ids``
+        The grader had no material for the task (``GradingUnavailableError``).
+        A dataset problem.
+    ``non_answer_task_ids``
+        The agent returned text that is not an answer -- an apology, a statement
+        of inability, pure narration. An agent/tooling problem.
+
+    :attr:`unscorable_task_ids` is their union, kept because callers and reports
+    speak in terms of "answered but not scored".
     """
 
     executions: tuple[TaskExecution, ...]
     outcomes: tuple[TaskOutcome, ...]
     grader_name: str
-    unscorable_task_ids: tuple[str, ...] = ()
+    ungradable_task_ids: tuple[str, ...] = ()
+    non_answer_task_ids: tuple[str, ...] = ()
+    non_answer_categories: tuple[tuple[str, str], ...] = ()
     scoring_errors: tuple[tuple[str, str], ...] = ()
     wall_seconds: float = 0.0
     max_workers: int = 1
@@ -148,7 +165,11 @@ class BenchmarkRunResult:
     def __post_init__(self) -> None:
         object.__setattr__(self, "executions", tuple(self.executions))
         object.__setattr__(self, "outcomes", tuple(self.outcomes))
-        object.__setattr__(self, "unscorable_task_ids", tuple(self.unscorable_task_ids))
+        object.__setattr__(self, "ungradable_task_ids", tuple(self.ungradable_task_ids))
+        object.__setattr__(self, "non_answer_task_ids", tuple(self.non_answer_task_ids))
+        object.__setattr__(
+            self, "non_answer_categories", tuple(self.non_answer_categories)
+        )
         object.__setattr__(self, "scoring_errors", tuple(self.scoring_errors))
 
     # -- execution-side counts -------------------------------------------- #
@@ -189,8 +210,27 @@ class BenchmarkRunResult:
         return sum(1 for o in self.outcomes if o.passed)
 
     @property
-    def unscorable_count(self) -> int:
+    def ungradable_count(self) -> int:
         """Answered tasks the grader had no material for (not failures)."""
+        return len(self.ungradable_task_ids)
+
+    @property
+    def non_answer_count(self) -> int:
+        """Answered tasks whose text was not an answer (not wrong answers)."""
+        return len(self.non_answer_task_ids)
+
+    @property
+    def unscorable_task_ids(self) -> tuple[str, ...]:
+        """Every answered-but-unscored task, in execution order.
+
+        The union of the two reasons. Preserved as the single name callers and
+        reports already use for "answered but absent from the denominator".
+        """
+        return self.ungradable_task_ids + self.non_answer_task_ids
+
+    @property
+    def unscorable_count(self) -> int:
+        """Answered tasks that reached no measurement, for either reason."""
         return len(self.unscorable_task_ids)
 
     @property
@@ -232,6 +272,8 @@ class BenchmarkRunResult:
             f"attempted={self.executed_count} answered={self.ok_count} "
             f"failed={self.failed_count} timed_out={self.timeout_count} "
             f"unscorable={self.unscorable_count} "
+            f"non_answer={self.non_answer_count} "
+            f"ungradable={self.ungradable_count} "
             f"scoring_errors={len(self.scoring_errors)}"
         )
 
@@ -380,13 +422,17 @@ def run_benchmark(
         )
     wall = monotonic() - started
 
-    outcomes, unscorable, scoring_errors = _score_all(benchmark, executions, grader)
+    outcomes, ungradable, non_answers, categories, scoring_errors = _score_all(
+        benchmark, executions, grader
+    )
 
     return BenchmarkRunResult(
         executions=executions,
         outcomes=outcomes,
         grader_name=grader,
-        unscorable_task_ids=unscorable,
+        ungradable_task_ids=ungradable,
+        non_answer_task_ids=non_answers,
+        non_answer_categories=categories,
         scoring_errors=scoring_errors,
         wall_seconds=wall,
         max_workers=max_workers,
@@ -695,25 +741,44 @@ def _score_all(
     benchmark: Benchmark,
     executions: Sequence[TaskExecution],
     grader: str,
-) -> tuple[tuple[TaskOutcome, ...], tuple[str, ...], tuple[tuple[str, str], ...]]:
+) -> tuple[
+    tuple[TaskOutcome, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[tuple[str, str], ...],
+    tuple[tuple[str, str], ...],
+]:
     """Score every answered task, sequentially, on the calling thread.
 
     Scoring is cheap next to execution and a benchmark may be stateful, so it is
-    deliberately not parallelised. Three outcomes are kept apart:
+    deliberately not parallelised. Four outcomes are kept apart:
 
     * a graded task contributes a :class:`TaskOutcome` (pass or fail);
+    * an answer that is not an answer (an apology, a statement of inability, or
+      empty text) is recorded as a non-answer and never handed to the grader:
+      matching ground truth against a rollout that committed to nothing records
+      a failure-to-match that did not happen;
     * ``GradingUnavailableError`` means "no measurement" and is recorded as
-      unscorable, excluded from the denominator;
+      ungradable, excluded from the denominator;
     * any other scoring exception is recorded and the run continues, so one
       unknown task id cannot discard 41 valid results.
     """
     outcomes: list[TaskOutcome] = []
-    unscorable: list[str] = []
+    ungradable: list[str] = []
+    non_answers: list[str] = []
+    categories: list[tuple[str, str]] = []
     errors: list[tuple[str, str]] = []
     for execution in executions:
         if not execution.ok:
             continue
         assert execution.answer is not None  # guaranteed by TaskExecution
+        verdict = classify_non_answer(
+            execution.answer, question=execution.task.question or None
+        )
+        if verdict.is_non_answer:
+            non_answers.append(execution.task.task_id)
+            categories.append((execution.task.task_id, verdict.category))
+            continue
         try:
             outcomes.append(
                 benchmark.score(
@@ -721,9 +786,15 @@ def _score_all(
                 )
             )
         except GradingUnavailableError:
-            unscorable.append(execution.task.task_id)
+            ungradable.append(execution.task.task_id)
         except Exception as exc:  # noqa: BLE001 - one bad task must not abort
             errors.append(
                 (execution.task.task_id, f"{type(exc).__name__}: {exc}")
             )
-    return tuple(outcomes), tuple(unscorable), tuple(errors)
+    return (
+        tuple(outcomes),
+        tuple(ungradable),
+        tuple(non_answers),
+        tuple(categories),
+        tuple(errors),
+    )

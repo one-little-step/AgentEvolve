@@ -131,3 +131,128 @@ def test_editor_agent_kwargs_bind_the_editor_skills_folder(tmp_path) -> None:
     assert kwargs["cuga_folder"] == str(tmp_path)
     assert kwargs["skills_folder"] == str(tmp_path)
     assert kwargs["enable_skills"] is True
+
+
+# ---------------------------------------------------------------------- #
+# Surface literacy
+#
+# All four editable surfaces reach the rollout model by different mechanics,
+# and choosing the wrong one produces an edit that validates, materializes,
+# and changes nothing. That is a silent failure: no test outside this block
+# would notice if the surface guidance were dropped, so these pin it.
+# ---------------------------------------------------------------------- #
+_SURFACE_DOC = "\n".join([EDITOR_INSTRUCTIONS, *EDITOR_SKILLS.values()]).lower()
+
+
+def test_all_four_editable_surfaces_are_described() -> None:
+    for surface in ("instructions", "skill", "polic", "memory"):
+        assert surface in _SURFACE_DOC, f"surface {surface} never described"
+
+
+def test_instructions_surface_is_described_as_unconditional() -> None:
+    """`instructions` is delivered on every turn with no opt-in by the model.
+
+    Verified this session with an unguessable marker: the artifact's text
+    reached the rollout model's context unconditionally. It is therefore the
+    only surface that can govern turn-level behavior, and the editor must know
+    it is editable at all -- it was previously read-only.
+    """
+    flat = " ".join(_SURFACE_DOC.split())
+    assert "unconditional" in flat
+    assert "every turn" in flat
+
+
+def test_the_skill_opt_in_trap_is_stated() -> None:
+    """A skill body is only read if the model chooses to call load_skill.
+
+    So a skill cannot repair a failure that prevents tool invocation in the
+    first place; that is circular. An editor that does not know this authors a
+    plausible skill for a mechanism the skill can never reach.
+    """
+    flat = " ".join(_SURFACE_DOC.split())
+    assert "load_skill" in flat
+    assert "opt in" in flat or "opt into" in flat or "choose to" in flat
+
+
+def test_the_skill_description_selection_criterion_is_stated() -> None:
+    """The description is what the model selects on, not decoration.
+
+    Trigger-oriented descriptions ("Use when ...") were selected; passive
+    titles were not, so the skill existed on disk and was never loaded.
+    """
+    flat = " ".join(_SURFACE_DOC.split())
+    assert "first line" in flat
+    assert "description" in flat
+
+
+def test_the_always_true_policy_trap_is_stated() -> None:
+    """A policy whose only trigger is `always: true` loads and never matches.
+
+    Verified against cuga 0.3.1: no evaluator selects an AlwaysTrigger. A
+    policy needs a real intent trigger or it is inert.
+    """
+    flat = " ".join(_SURFACE_DOC.split())
+    assert "trigger" in flat
+    assert "never matches" in flat or "never match" in flat
+
+
+def test_memory_is_described_as_facts_not_behavior() -> None:
+    flat = " ".join(_SURFACE_DOC.split())
+    assert "memory" in flat
+    assert "not behavior" in flat or "not for behavior" in flat
+
+
+def test_the_directness_heuristic_is_stated() -> None:
+    """Prefer the surface with the most direct unconditional path to the model.
+
+    Without this the editor picks by familiarity and produces valid-looking
+    edits with zero measurable effect.
+    """
+    flat = " ".join(_SURFACE_DOC.split())
+    assert "most direct" in flat
+
+
+def test_the_instructions_surface_is_stated_to_be_editable() -> None:
+    """`instructions` became editable this session; before that the editor could
+    only ever write skills. A prompt that does not say so leaves the strongest
+    lever unused, and nothing else in the suite would catch the omission."""
+    flat = " ".join(EDITOR_INSTRUCTIONS.lower().split())
+    assert "instructions" in flat
+    assert "may edit" in flat or "editable" in flat
+    assert "highest leverage" in flat or "highest-leverage" in flat
+
+
+def test_the_create_skill_warns_that_creation_is_confined_to_one_surface() -> None:
+    """The creatable prefix is a skills prefix, so a created artifact inherits
+    the opt-in delivery route. An editor that reaches for creation to fix a
+    turn-level mechanism produces an artifact that can never apply."""
+    flat = " ".join(EDITOR_SKILLS["create-artifact"].lower().split())
+    assert "surface" in flat
+    assert "load_skill" in flat or "opt in" in flat or "selected" in flat
+
+
+def test_the_refine_skill_requires_choosing_a_surface_deliberately() -> None:
+    flat = " ".join(EDITOR_SKILLS["refine-artifact"].lower().split())
+    assert "surface" in flat
+
+
+def test_surface_guidance_prescribes_no_specific_remedy() -> None:
+    """The prompts must teach reasoning, not carry the answer.
+
+    If the fix for the current measured bug were written here, the editor would
+    be scored on a recipe rather than on its ability to derive one, and the
+    result would not generalize to the next mechanism.
+    """
+    banned = (
+        "add a fence directive",
+        "always emit a fenced block",
+        "roy white",
+        "at-bats",
+        "519",
+        "gaia",
+        "web_fetch",
+        "wikipedia_search",
+        "calculator",
+    )
+    for phrase in banned:
+        assert phrase not in _SURFACE_DOC, f"prompt encodes a specific remedy: {phrase}"

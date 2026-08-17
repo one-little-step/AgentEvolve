@@ -56,6 +56,7 @@ from agent_evolve.core.contracts import (
     ValidationCase,
     ValidationResult,
 )
+from agent_evolve.core.non_answer import classify_non_answer
 
 #: Trace statuses that mean "this rollout produced an answer". Deliberately a
 #: whitelist rather than a blacklist of failure words: an unrecognised status is
@@ -375,18 +376,29 @@ class RolloutBatch(Protocol):
     ) -> tuple[RolloutOutcome, ...]: ...
 
 
-def _answer_or_reason(trace: ExecutionTrace) -> tuple[str | None, str]:
+def _answer_or_reason(
+    trace: ExecutionTrace, *, question: str | None = None
+) -> tuple[str | None, str]:
     """The rollout's answer, or the reason there is not one.
 
-    A status outside :data:`ANSWERED_TRACE_STATUSES` and an empty
-    ``final_output`` are both "no answer". Both must be excluded from the
-    denominator; neither is a wrong answer.
+    Three things are "no answer" and none of them is a wrong answer:
+
+    * a status outside :data:`ANSWERED_TRACE_STATUSES`;
+    * an empty ``final_output``;
+    * output that is not an answer -- an apology, a stated inability, pure
+      narration, or an echo of the task (see
+      :mod:`agent_evolve.core.non_answer`).
+
+    The third case is the one a grader would otherwise silently record as a
+    failure-to-match, inflating the denominator with rollouts that committed to
+    no claim.
     """
     status = str(trace.status or "").strip().lower()
     if status not in ANSWERED_TRACE_STATUSES:
         return None, f"rollout produced no answer: trace status {trace.status!r}"
-    if not str(trace.final_output or "").strip():
-        return None, "rollout produced no answer: empty final_output"
+    verdict = classify_non_answer(trace.final_output, question=question)
+    if verdict.is_non_answer:
+        return None, f"rollout produced no answer: {verdict.reason}"
     return trace.final_output, ""
 
 
@@ -409,7 +421,7 @@ class ContractScorer:
     def score_rollout(
         self, task: EvolutionTask, trace: ExecutionTrace
     ) -> RolloutScore:
-        answer, reason = _answer_or_reason(trace)
+        answer, reason = _answer_or_reason(trace, question=task.input_text or None)
         if answer is None:
             return RolloutScore(
                 task_id=task.task_id,
@@ -465,7 +477,7 @@ class BenchmarkScorer:
     def score_rollout(
         self, task: EvolutionTask, trace: ExecutionTrace
     ) -> RolloutScore:
-        answer, reason = _answer_or_reason(trace)
+        answer, reason = _answer_or_reason(trace, question=task.input_text or None)
         if answer is None:
             return RolloutScore(
                 task_id=task.task_id,

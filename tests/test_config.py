@@ -14,6 +14,7 @@ from agent_evolve.core.config import (
     resolve_profile,
 )
 from agent_evolve.core.errors import BudgetExceededError
+from agent_evolve.core.run_logging import ALL_LOG_CHANNELS, LogCaptureConfig
 
 
 def test_research_parallel_is_resolved_but_inactive_for_json_storage() -> None:
@@ -192,4 +193,49 @@ def test_resolved_config_rejects_nan_champion_weight() -> None:
                 url="http://localhost:11434", model="embeddinggemma", provider="ollama",
             ),
             champion_alpha=float("nan"),
+        )
+
+
+def test_log_capture_defaults_to_disabled() -> None:
+    """Capture is opt-in: a measurement run must not silently start writing logs."""
+    config = resolve_profile("minimal", environ={})
+    assert config.log_capture.enabled is False
+
+
+def test_log_capture_override_reaches_resolved_config(tmp_path) -> None:
+    """An operator enabling capture at profile resolution is how a run turns it on."""
+    capture = LogCaptureConfig(enabled=True, root=tmp_path)
+    config = resolve_profile("minimal", environ={}, log_capture=capture)
+    assert config.log_capture is capture
+    assert config.log_capture.enabled is True
+    assert config.log_capture.root == tmp_path
+
+
+def test_manifest_payload_records_log_capture(tmp_path) -> None:
+    """A run whose manifest omits its logging config cannot be reproduced."""
+    config = resolve_profile(
+        "minimal",
+        environ={},
+        log_capture=LogCaptureConfig(enabled=True, root=tmp_path),
+    )
+    payload = config.manifest_payload()
+
+    json.dumps(payload)
+
+    assert payload["log_capture"]["enabled"] is True
+    assert payload["log_capture"]["root"] == str(tmp_path)
+    assert payload["log_capture"]["channels"] == list(ALL_LOG_CHANNELS)
+
+
+def test_resolved_config_rejects_non_log_capture_config() -> None:
+    """A bare path or dict would silently disable capture instead of failing loudly."""
+    with pytest.raises(ValueError):
+        ResolvedConfig(
+            profile_name="minimal",
+            features=FeatureGates(),
+            budgets=BudgetLimits(),
+            embedding=EmbeddingConfig(
+                url="http://localhost:11434", model="embeddinggemma", provider="ollama",
+            ),
+            log_capture={"enabled": True},
         )

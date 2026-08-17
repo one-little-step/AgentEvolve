@@ -114,6 +114,8 @@ from pathlib import Path
 from time import monotonic as _monotonic
 from typing import Any, Mapping
 
+from agent_evolve.core.run_logging import LogCaptureConfig, RunLogSink
+
 __all__ = [
     "DEFAULT_WORKER_START_TIMEOUT",
     "default_knowledge_seed",
@@ -218,6 +220,7 @@ class CugaProcessPool:
         start_timeout: float = DEFAULT_WORKER_START_TIMEOUT,
         task_timeout: float | None = None,
         knowledge_seed: Path | str | None = _UNSET,
+        log_capture: LogCaptureConfig | None = None,
     ) -> None:
         """
         :param root: directory under which each worker's private knowledge and
@@ -233,12 +236,20 @@ class CugaProcessPool:
             run would use -- an empty worker store measurably changes the pass
             rate (see the module docstring). Pass ``None`` to start workers empty
             on purpose.
+        :param log_capture: when enabled, each child's ``stderr`` is written to
+            ``<root>/workers/<worker_id>.log`` instead of being discarded. That
+            stream is the *only* place CUGA reports its routing decisions
+            (``is_autonomous_subtask``, ``Routing to:``), so discarding it leaves
+            a finished run unable to say why it routed as it did. Defaults to
+            disabled, i.e. today's ``DEVNULL`` behaviour byte for byte.
         """
         self.root = Path(root)
         self.trace_root = Path(trace_root)
         self.python_executable = python_executable or sys.executable
         self.start_timeout = start_timeout
         self.task_timeout = task_timeout
+        self.log_capture = log_capture or LogCaptureConfig()
+        self._log_sink = RunLogSink(config=self.log_capture, channel="workers")
         self.knowledge_seed = (
             default_knowledge_seed()
             if knowledge_seed is _UNSET
@@ -318,6 +329,10 @@ class CugaProcessPool:
         self.trace_root.mkdir(parents=True, exist_ok=True)
 
         try:
+            # DEVNULL only when capture is off. The child's stderr is the sole
+            # channel for CUGA's routing decisions, so discarding it is a choice
+            # the caller makes, not the default we impose silently.
+            stderr = self._log_sink.open_stream(worker_id) or subprocess.DEVNULL
             process = subprocess.Popen(
                 [
                     self.python_executable,
@@ -329,7 +344,7 @@ class CugaProcessPool:
                 env=self.worker_environment(worker_id, harness_version),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=stderr,
                 text=True,
                 bufsize=1,
             )
@@ -504,6 +519,9 @@ class CugaProcessPool:
             workers, self._workers = list(self._workers), []
         for worker in workers:
             self._kill(worker)
+        # After the children are gone: closing a log a live child still holds
+        # would lose its final lines.
+        self._log_sink.close()
 
     def _kill(self, worker: _Worker) -> None:
         process = worker.process

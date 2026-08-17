@@ -9,6 +9,7 @@ imported until the wrapper explicitly constructs a runtime.
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 import math
 import os
@@ -259,7 +260,7 @@ _RAW_TOOLS: tuple[Callable[..., str], ...] = (
 def build_tools() -> list:
     """Construct the tracked LangChain tools, deferring the CUGA import.
 
-    This is the only place the CUGA SDK is imported from the tools module.
+    This is the only place the CUGA SDK is imported from this module.
     """
     from langchain_core.tools import tool
 
@@ -269,3 +270,30 @@ def build_tools() -> list:
         tool(tracked_tool(app_name=_TOOL_APP_NAMES[func.__name__])(func))
         for func in _RAW_TOOLS
     ]
+
+
+def rollout_tool_inventory() -> tuple[dict[str, str], ...]:
+    """Describe the rollout agent's tools: name, signature, one-line purpose.
+
+    Derived from ``_RAW_TOOLS`` by introspection rather than from a written-out
+    list, so a tool added, renamed, or removed above cannot drift away from what
+    a caller is told the agent can do. Reads the same functions ``build_tools``
+    wraps, but imports no SDK, so an offline caller can ask this question.
+
+    Entries are sorted by name for a stable, diffable order.
+    """
+    entries = []
+    for func in _RAW_TOOLS:
+        try:
+            signature = str(inspect.signature(func, eval_str=True))
+        except Exception:  # noqa: BLE001 - a describable tool beats no inventory
+            signature = str(inspect.signature(func))
+        doc = inspect.getdoc(func) or ""
+        entries.append(
+            {
+                "name": func.__name__,
+                "signature": f"{func.__name__}{signature}",
+                "purpose": doc.splitlines()[0] if doc else "",
+            }
+        )
+    return tuple(sorted(entries, key=lambda entry: entry["name"]))

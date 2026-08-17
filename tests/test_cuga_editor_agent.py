@@ -26,6 +26,7 @@ from agent_evolve.core.editor import (
     repair_once_then_classify,
 )
 from agent_evolve.core.memory import EditMemory
+from agent_evolve.core.run_logging import LogCaptureConfig, RunLogSink
 from agent_evolve.cuga_wrapper import CugaWrapper, InMemoryRuntime, RuntimeSettings
 
 
@@ -266,3 +267,159 @@ def test_recording_wrapper_preserves_docstring_and_signature() -> None:
     assert params == ["artifact_id", "content"], (
         "signature lost: LangChain would build an empty args schema"
     )
+
+
+# ------------------------------------------------------------------ #
+# editor transcript capture
+# ------------------------------------------------------------------ #
+def _sink(tmp_path) -> RunLogSink:
+    return RunLogSink(
+        LogCaptureConfig(enabled=True, root=tmp_path), channel="editor"
+    )
+
+
+def _records(tmp_path) -> list[dict]:
+    path = tmp_path / "editor" / "v-primary__task-a.jsonl"
+    return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+
+
+def test_capture_records_the_prompt_the_answer_and_the_tool_ledger(tmp_path) -> None:
+    """All three, because each one alone explains a different failure.
+
+    The prompt says what the editor was told, the raw answer says what it
+    concluded, and the ordered ledger says what it actually did -- an agent that
+    read no artifact before writing one is only visible in the ledger.
+    """
+    sink = _sink(tmp_path)
+    editor, _ = _editor([
+        ("get_mechanism", ()),
+        ("read_artifact", ("skills/retrieval",)),
+        ("stage_replace", ("skills/retrieval", "improved body")),
+        ("submit_edit_plan", ("addresses the mechanism",)),
+    ])
+    editor.log_sink = sink
+
+    editor.propose_edit(_request())
+    sink.close()
+
+    records = _records(tmp_path)
+    by_event = {r["event"]: r for r in records}
+    assert "skill never loaded" in by_event["editor_prompt"]["prompt"]
+    assert by_event["editor_answer"]["answer"] == "done"
+    assert by_event["editor_outcome"]["tools_called"] == [
+        "get_mechanism",
+        "read_artifact",
+        "stage_replace",
+        "submit_edit_plan",
+    ]
+
+
+def test_a_valid_plan_records_its_outcome_and_written_artifacts(tmp_path) -> None:
+    """The accepted plan's shape belongs beside the prompt that produced it."""
+    sink = _sink(tmp_path)
+    editor, _ = _editor([("stage_replace", ("skills/retrieval", "improved body")),
+                         ("submit_edit_plan", ("addresses the mechanism",))])
+    editor.log_sink = sink
+
+    editor.propose_edit(_request())
+    sink.close()
+
+    outcome = [r for r in _records(tmp_path) if r["event"] == "editor_outcome"][0]
+    assert outcome["outcome"] == "valid"
+    assert outcome["artifact_ids"] == ["skills/retrieval"]
+    assert outcome["rationale"] == "addresses the mechanism"
+
+
+def test_an_explicit_decline_leaves_a_record(tmp_path) -> None:
+    """A decline is the most informative case and left no artifact at all.
+
+    ``NO_OP`` means the agent judged no edit warranted; with nothing on disk that
+    judgement was unrecoverable, so a run could not distinguish it from an agent
+    that never engaged.
+    """
+    sink = _sink(tmp_path)
+    editor, _ = _editor([("submit_edit_plan", ("evidence does not justify a change",))])
+    editor.log_sink = sink
+
+    with pytest.raises(EditorDeclined):
+        editor.propose_edit(_request())
+    sink.close()
+
+    outcome = [r for r in _records(tmp_path) if r["event"] == "editor_outcome"][0]
+    assert outcome["outcome"] == "no_op"
+    assert "does not justify" in outcome["rationale"]
+
+
+def test_never_calling_submit_leaves_a_record_naming_the_missing_call(tmp_path) -> None:
+    """``no_tool_call`` must stay distinguishable from ``no_op`` on disk too."""
+    sink = _sink(tmp_path)
+    editor, _ = _editor([("get_mechanism", ())])
+    editor.log_sink = sink
+
+    with pytest.raises(EditorDeclined):
+        editor.propose_edit(_request())
+    sink.close()
+
+    outcome = [r for r in _records(tmp_path) if r["event"] == "editor_outcome"][0]
+    assert outcome["outcome"] == "no_tool_call"
+    assert outcome["tools_called"] == ["get_mechanism"]
+
+
+def test_an_agent_error_records_unavailable_with_the_reason(tmp_path) -> None:
+    """A crashed agent produced no plan; the reason is the whole evidence."""
+    sink = _sink(tmp_path)
+
+    def exploding_factory(tools, prompt):
+        raise RuntimeError("CUGA execution failed")
+
+    editor = CugaEditorAgent(
+        adapter=_adapter(), memory=EditMemory(),
+        agent_factory=exploding_factory, log_sink=sink,
+    )
+
+    with pytest.raises(EditorDeclined):
+        editor.propose_edit(_request())
+    sink.close()
+
+    outcome = [r for r in _records(tmp_path) if r["event"] == "editor_outcome"][0]
+    assert outcome["outcome"] == "unavailable"
+    assert "CUGA execution failed" in outcome["error"]
+
+
+def test_capture_is_off_by_default_and_writes_nothing(tmp_path) -> None:
+    """Opt-in: an unconfigured editor must behave exactly as it did before."""
+    editor, _ = _editor([("stage_replace", ("skills/retrieval", "x")),
+                         ("submit_edit_plan", ("r",))])
+
+    response = editor.propose_edit(_request())
+
+    assert response.rationale == "r"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_disabled_sink_leaves_no_editor_directory(tmp_path) -> None:
+    """Disabled means absent, not an empty tree."""
+    editor, _ = _editor([("stage_replace", ("skills/retrieval", "x")),
+                         ("submit_edit_plan", ("r",))])
+    editor.log_sink = RunLogSink(LogCaptureConfig(enabled=False), channel="editor")
+
+    editor.propose_edit(_request())
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_sink_that_cannot_write_does_not_break_the_edit() -> None:
+    """Logging is an observer. A full disk must not discard a paid edit."""
+
+    class _BrokenSink:
+        def write_record(self, name, record):
+            raise OSError("no space left on device")
+
+    editor, _ = _editor([("stage_replace", ("skills/retrieval", "improved body")),
+                         ("submit_edit_plan", ("r",))])
+    editor.log_sink = _BrokenSink()
+
+    response = editor.propose_edit(_request())
+
+    assert response.edits[0].payload["content"] == "improved body"
+    assert editor.last_outcome is EditorOutcome.VALID

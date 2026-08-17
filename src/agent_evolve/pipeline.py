@@ -51,9 +51,10 @@ Constraints this module enforces, all of them measured
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 from agent_evolve.adapters.cuga_adapter import CugaAdapter
 from agent_evolve.benchmarks.base import Benchmark, BenchmarkTask
@@ -86,10 +87,18 @@ from agent_evolve.core.fake_editor import FakeEditor
 from agent_evolve.core.memory import EditMemory
 from agent_evolve.core.orchestrator import SequentialGepaRunner
 from agent_evolve.core.pool import PersistentPool
+from agent_evolve.core.run_logging import (
+    LogCaptureConfig,
+    RunLogSink,
+    build_sinks,
+)
 from agent_evolve.core.storage import StorageBackend
 
 __all__ = [
+    "CANDIDATE_FILENAME_PREFIX",
+    "CHAMPION_FILENAME",
     "DEFAULT_WORKER_KNOWLEDGE_SEED",
+    "EXPORT_FORMAT",
     "NOISE_FLOOR_PP",
     "CugaRolloutRunner",
     "EvolutionStack",
@@ -97,7 +106,12 @@ __all__ = [
     "build_live_stack",
     "build_offline_stack",
     "describe_knowledge_choice",
+    "export_harness",
     "format_delta",
+    "harness_payload",
+    "harness_version_name",
+    "nothing_accepted_warning",
+    "nothing_accepted_warning_applies",
     "require_safe_rollout_concurrency",
 ]
 
@@ -407,6 +421,9 @@ class EvolutionStack:
     uses_real_agent: bool
     rollout_workers: int = 1
     trace_root: Path | None = None
+    #: Every sink this stack owns, by channel. Held so :meth:`close` can flush
+    #: them: a stream still open at exit loses its final lines.
+    log_sinks: Mapping[str, RunLogSink] = field(default_factory=dict)
     _closers: tuple[Callable[[], None], ...] = ()
 
     # -- inspection ------------------------------------------------------- #
@@ -440,6 +457,7 @@ class EvolutionStack:
             f"analyzer workers: {self.analyzer_workers}",
             f"knowledge store : {describe_knowledge_choice(self.knowledge_seed)}",
             f"trace root      : {self.trace_root if self.trace_root else '<none>'}",
+            f"log capture     : {self._describe_capture()}",
             (
                 f"candidates      : {self.candidate_count()} (base only -- no RHO "
                 f"seeder exists, so cross-candidate entropy and DPP diversity are "
@@ -447,11 +465,39 @@ class EvolutionStack:
             ),
         )
 
+    def _describe_capture(self) -> str:
+        """Name the capture choice: it decides what survives the run.
+
+        Printed for the same reason the knowledge store is: "were the analyzer
+        transcripts kept?" is a question asked after the run, when the answer can
+        no longer be changed.
+        """
+        capture = getattr(self.runner.config, "log_capture", None)
+        if capture is None or not capture.enabled:
+            return "OFF (nothing written; a later 'why did it route that way?' needs a re-run)"
+        return f"{capture.root} channels={','.join(capture.channels)}"
+
     # -- execution -------------------------------------------------------- #
 
     def measure(self, version: str, *, prefix: str = "measure") -> ScoreTally:
         """Score one version over this stack's task set."""
-        return self.runner.measure(version, self.tasks, prefix=prefix)
+        tally = self.runner.measure(version, self.tasks, prefix=prefix)
+        self._record(
+            f"{prefix}__{version}",
+            {
+                "event": "measured",
+                "version": version,
+                "prefix": prefix,
+                "grader_name": tally.grader_name,
+                "passed": tally.passed,
+                "evaluated": tally.evaluated,
+                "attempted": tally.attempted,
+                "unscorable": tally.unscorable,
+                "unscorable_task_ids": list(tally.unscorable_task_ids),
+                "pass_rate": tally.pass_rate,
+            },
+        )
+        return tally
 
     def run_iterations(self, iterations: int) -> tuple[IterationSummary, ...]:
         """Run ``iterations`` outer iterations, one GEPA attempt each."""
@@ -463,23 +509,56 @@ class EvolutionStack:
         for index in range(1, iterations + 1):
             probes_before = self.runner.unscorable_probe_count
             failures_before = len(self.runner.analysis_failures)
+            self._record(
+                f"iteration-{index}",
+                {
+                    "event": "iteration_start",
+                    "iteration": index,
+                    "pool_size": len(self.pool),
+                    "tasks": [t.task_id for t in self.tasks],
+                },
+            )
             outcome = self.runner.run_attempt(self.tasks)
             pending = outcome.status.value == "pending"
-            summaries.append(
-                IterationSummary(
-                    iteration=index,
-                    attempts=1,
-                    accepted=1 if outcome.accepted else 0,
-                    rejected=0 if (outcome.accepted or pending) else 1,
-                    no_issue=1 if pending else 0,
-                    pool_size=len(self.pool),
-                    unscorable_probes=(
-                        self.runner.unscorable_probe_count - probes_before
-                    ),
-                    analysis_failures=(
-                        len(self.runner.analysis_failures) - failures_before
-                    ),
-                )
+            summary = IterationSummary(
+                iteration=index,
+                attempts=1,
+                accepted=1 if outcome.accepted else 0,
+                rejected=0 if (outcome.accepted or pending) else 1,
+                no_issue=1 if pending else 0,
+                pool_size=len(self.pool),
+                unscorable_probes=(
+                    self.runner.unscorable_probe_count - probes_before
+                ),
+                analysis_failures=(
+                    len(self.runner.analysis_failures) - failures_before
+                ),
+            )
+            summaries.append(summary)
+            # The attempt's own identity travels with the counts: an accepted or
+            # rejected edit is only attributable through its attempt and issue,
+            # and ``reason`` is the only record of *why* a rejection happened.
+            self._record(
+                f"iteration-{index}",
+                {
+                    "event": "iteration_end",
+                    "iteration": index,
+                    "accepted": summary.accepted,
+                    "rejected": summary.rejected,
+                    "no_issue": summary.no_issue,
+                    "pool_size": summary.pool_size,
+                    "unscorable_probes": summary.unscorable_probes,
+                    "analysis_failures": summary.analysis_failures,
+                    "attempt_id": outcome.attempt_id,
+                    "issue_id": outcome.issue_id,
+                    "parent_candidate_id": outcome.parent_candidate_id,
+                    "result_candidate_id": outcome.result_candidate_id,
+                    "status": outcome.status.value,
+                    "weighted_net_gain": outcome.weighted_net_gain,
+                    "reason": outcome.reason,
+                    "artifact_ids": list(outcome.artifact_ids),
+                    "fallback_reason": outcome.fallback_reason,
+                },
             )
         return tuple(summaries)
 
@@ -491,9 +570,103 @@ class EvolutionStack:
             return self.base_version
         return self.pool.get(champion.candidate_id).version
 
+    def export_pool(self, path: Path) -> tuple[Path, ...]:
+        """Persist every pool candidate as a re-runnable harness file.
+
+        Two shapes, chosen by the target's suffix:
+
+        ``*.json``
+            One file, the champion only, ready to hand straight to ``--harness``.
+        anything else
+            A directory: ``candidate-<id>.json`` per pool member plus
+            ``champion.json``. Every candidate is written because a sibling
+            proposal cost real rollouts to produce and is exactly what an RHO
+            seeded run starts from; only the champion would throw the frontier
+            away.
+
+        Returns the files written, champion last, so a caller can report them.
+        """
+        target = Path(path)
+        try:
+            champion_id: str | None = self.pool.select_champion(
+                config=self.runner.config
+            ).candidate_id
+        except ValueError:
+            # No candidate carries comparable evidence yet, so selection has no
+            # opinion. The base is still exported and still named the champion:
+            # it is what the next run would execute against.
+            champion_id = None
+
+        def provenance_for(entry: object, *, is_champion: bool) -> dict[str, object]:
+            record = _entry_provenance(entry, is_champion=is_champion)
+            record["source_base_version"] = self.base_version
+            record["grader_name"] = self.grader_name
+            record["task_ids"] = [t.task_id for t in self.tasks]
+            return record
+
+        champion_entry = (
+            self.pool.get(champion_id) if champion_id is not None else self.pool.base
+        )
+
+        if target.suffix == ".json":
+            return (
+                export_harness(
+                    self.adapter,
+                    version=champion_entry.version,
+                    candidate_id=champion_entry.candidate_id,
+                    path=target,
+                    provenance=provenance_for(champion_entry, is_champion=True),
+                ),
+            )
+
+        written: list[Path] = []
+        for entry in self.pool.all_entries():
+            is_champion = entry.candidate_id == champion_entry.candidate_id
+            written.append(
+                export_harness(
+                    self.adapter,
+                    version=entry.version,
+                    candidate_id=entry.candidate_id,
+                    path=(
+                        target
+                        / f"{CANDIDATE_FILENAME_PREFIX}"
+                        f"{_safe_filename_part(entry.candidate_id)}.json"
+                    ),
+                    provenance=provenance_for(entry, is_champion=is_champion),
+                )
+            )
+        written.append(
+            export_harness(
+                self.adapter,
+                version=champion_entry.version,
+                candidate_id=champion_entry.candidate_id,
+                path=target / CHAMPION_FILENAME,
+                provenance=provenance_for(champion_entry, is_champion=True),
+            )
+        )
+        return tuple(written)
+
+    def _record(self, name: str, record: Mapping[str, object]) -> None:
+        """Best-effort pipeline record. Never raises and never changes a number.
+
+        Swallows every error for the same reason the adapters do: a logging
+        failure must not discard rollouts that have already been paid for.
+        """
+        sink = self.log_sinks.get("pipeline")
+        if sink is None:
+            return
+        try:
+            sink.write_record(name, record)
+        except Exception:  # noqa: BLE001 - capture is an observer, never a gate
+            pass
+
     def close(self) -> None:
         for closer in self._closers:
             closer()
+        # After the components: a sink closed first would drop records written
+        # during a component's own teardown.
+        for sink in self.log_sinks.values():
+            sink.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -526,6 +699,7 @@ def build_offline_stack(
     storage: StorageBackend | None = None,
     seed: int = 0,
     profile: str = "research_sequential",
+    log_capture: LogCaptureConfig | None = None,
 ) -> EvolutionStack:
     """Assemble the fake stack: no CUGA, no model endpoint, no network.
 
@@ -575,9 +749,16 @@ def build_offline_stack(
         )
     )
 
+    capture = log_capture if log_capture is not None else LogCaptureConfig()
     config = resolve_profile(
-        profile, seed=seed, max_analyzer_workers=max(1, int(analyzer_workers))
+        profile,
+        seed=seed,
+        max_analyzer_workers=max(1, int(analyzer_workers)),
+        log_capture=capture,
     )
+    # Every channel, active or not, so a fake analyzer or editor that grows a
+    # sink later needs no change here and ``close()`` has one thing to close.
+    sinks = build_sinks(capture)
     runner = SequentialGepaRunner(
         adapter=resolved_adapter,  # type: ignore[arg-type]
         pool=pool,
@@ -603,6 +784,7 @@ def build_offline_stack(
         uses_real_agent=False,
         rollout_workers=1,
         trace_root=None,
+        log_sinks=sinks,
     )
 
 
@@ -646,6 +828,7 @@ def build_live_stack(
     seed: int = 0,
     profile: str = "research_sequential",
     allow_unsafe_concurrency: bool = False,
+    log_capture: LogCaptureConfig | None = None,
 ) -> EvolutionStack:
     """Assemble the live stack: real CUGA rollouts, real analyzer, real editor.
 
@@ -658,11 +841,15 @@ def build_live_stack(
     """
     from agent_evolve.adapters.cuga_analyzer import CugaTrajectoryAnalyzer
     from agent_evolve.adapters.cuga_editor import CugaEditorAgent
-    from agent_evolve.benchmarks.cuga_process_pool import CugaProcessPool
+    from agent_evolve.benchmarks import cuga_process_pool
     from agent_evolve.core.trace import PayloadLevel
     from agent_evolve.cuga_wrapper import CugaWrapper, RuntimeSettings, TraceConfig
 
     trace_root = Path(trace_root)
+    capture = log_capture if log_capture is not None else LogCaptureConfig()
+    # One sink per channel, built before the components that write to them so
+    # the analyzer factory, the editor and the pool all receive the same config.
+    sinks = build_sinks(capture)
     # Refused first, before any CUGA process, wrapper or model lookup: an unsafe
     # worker count is unsafe regardless of credentials, and diagnosing it as a
     # missing model would send an operator to fix the wrong thing.
@@ -703,13 +890,16 @@ def build_live_stack(
         )
     )
 
-    worker_pool: CugaProcessPool | None = None
+    worker_pool: object | None = None
     if isolation == PROCESS_ISOLATION:
-        worker_pool = CugaProcessPool(
+        # Resolved through the module rather than imported by name so the pool a
+        # test substitutes is the pool the composition root builds.
+        worker_pool = cuga_process_pool.CugaProcessPool(
             root=Path(worker_root),
             trace_root=trace_root,
             task_timeout=task_timeout_seconds,
             knowledge_seed=knowledge_seed,
+            log_capture=capture,
         )
 
     rollout_batch = CugaRolloutRunner(
@@ -723,17 +913,25 @@ def build_live_stack(
     )
 
     config = resolve_profile(
-        profile, seed=seed, max_analyzer_workers=max(1, int(analyzer_workers))
+        profile,
+        seed=seed,
+        max_analyzer_workers=max(1, int(analyzer_workers)),
+        log_capture=capture,
     )
     # No temperature is ever passed: the endpoint rejects any non-default value.
-    analyzer_factory = CugaTrajectoryAnalyzer.factory()
+    # The sink goes through the factory, not onto the single instance: the runner
+    # rebuilds one analyzer per worker thread, and an instance-only sink would
+    # capture nothing from a fanned-out analysis.
+    analyzer_factory = CugaTrajectoryAnalyzer.factory(log_sink=sinks["analyzer"])
     runner = SequentialGepaRunner(
         adapter=adapter,
         pool=pool,
         # The report-based analyzer is adapted by the runner's own shim; the
         # static mismatch here is the whole reason the shim exists.
         analyzer_judge=analyzer_factory(),  # type: ignore[arg-type]
-        editor=CugaEditorAgent(adapter=adapter, memory=EditMemory()),
+        editor=CugaEditorAgent(
+            adapter=adapter, memory=EditMemory(), log_sink=sinks["editor"]
+        ),
         embedder=LexicalEmbedder(dim=32),
         storage=storage,
         config=config,
@@ -755,6 +953,7 @@ def build_live_stack(
         uses_real_agent=True,
         rollout_workers=max_workers,
         trace_root=trace_root,
+        log_sinks=sinks,
         _closers=(rollout_batch.close,),
     )
 
@@ -776,3 +975,185 @@ def _harness_artifacts(harness: HarnessVersion) -> dict[str, str]:
     if not artifacts:
         artifacts["skills/generated-evolved"] = ""
     return artifacts
+
+
+# --------------------------------------------------------------------------- #
+# Exporting an evolved harness
+# --------------------------------------------------------------------------- #
+#: File written for the selected champion inside an export directory. Fixed so
+#: an operator can wire the next run's ``--harness`` without re-deriving
+#: selection from the per-candidate files.
+CHAMPION_FILENAME = "champion.json"
+
+#: Prefix for the per-candidate files. Every pool member is exported, not only
+#: the winner: with RHO seeding the frontier is what the next run seeds from,
+#: and a sibling discarded here cost real rollouts to produce.
+CANDIDATE_FILENAME_PREFIX = "candidate-"
+
+#: Marks an exported harness so a later reader can tell an evolved artifact set
+#: from a hand-written one. ``HarnessVersion.from_path`` reads only its named
+#: keys via ``raw.get`` and ignores the rest, so this and ``provenance`` travel
+#: inside the harness file without stopping ``--harness`` from loading it.
+EXPORT_FORMAT = "agent-evolve-harness-v1"
+
+
+def harness_version_name(candidate_id: str) -> str:
+    """The ``version`` string an exported candidate declares.
+
+    ``HarnessVersion.from_path`` refuses to guess a version from the filename,
+    and should: the version is stamped onto every trace the next run writes and
+    is the only way to attribute a later result back to this candidate. Renaming
+    the file therefore cannot change what the harness claims to be.
+    """
+    text = str(candidate_id).strip()
+    if not text:
+        raise ValueError(
+            "cannot export a harness for an unnamed candidate: the version is "
+            "stamped onto every trace and will not be guessed"
+        )
+    return f"evolved-{text}"
+
+
+def _safe_filename_part(text: str) -> str:
+    """Flatten a candidate id into one path segment.
+
+    Candidate versions contain ``:`` and ``/`` (``base:att-1``,
+    ``skills/x``), either of which would silently write outside the export
+    directory or fail to open.
+    """
+    return "".join(ch if ch.isalnum() or ch in "-_." else "-" for ch in text)
+
+
+def harness_payload(
+    adapter: object,
+    *,
+    version: str,
+    candidate_id: str,
+    provenance: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Invert :func:`_harness_artifacts` back into a ``--harness`` JSON payload.
+
+    The exact inverse of the forward mapping: an artifact id the adapter holds
+    becomes the harness key it came from. Artifacts are read through the neutral
+    adapter contract (``artifact_inventory`` + ``read_artifacts``) so the offline
+    rehearsal exercises this same path.
+
+    An artifact id with no CUGA harness slot cannot be expressed in a file
+    ``--harness`` loads. Such an id is never quietly dropped and never
+    reinterpreted as a skill -- inventing a slot would ship a harness that is not
+    the one the run measured -- so it is preserved verbatim under
+    ``provenance.unexported_artifacts`` instead, where it is recoverable but
+    cannot be mistaken for something the agent loaded.
+    """
+    artifact_ids = tuple(
+        d.artifact_id
+        for d in adapter.artifact_inventory(version)  # type: ignore[attr-defined]
+    )
+    artifacts = adapter.read_artifacts(version, artifact_ids)  # type: ignore[attr-defined]
+
+    payload: dict[str, object] = {"version": harness_version_name(candidate_id)}
+    groups: dict[str, dict[str, str]] = {}
+    unexported: dict[str, str] = {}
+    for artifact_id in sorted(artifacts):
+        content = artifacts[artifact_id]
+        try:
+            key, member = CugaAdapter._harness_slot(artifact_id)
+        except ValueError:
+            unexported[artifact_id] = content
+            continue
+        if member is None:
+            payload[key] = content
+        else:
+            groups.setdefault(key, {})[member] = content
+    payload.update(groups)
+    payload["export_format"] = EXPORT_FORMAT
+    record: dict[str, object] = {
+        "candidate_id": candidate_id,
+        "candidate_version": version,
+        **dict(provenance or {}),
+    }
+    if unexported:
+        record["unexported_artifacts"] = unexported
+    payload["provenance"] = record
+    return payload
+
+
+def export_harness(
+    adapter: object,
+    *,
+    version: str,
+    candidate_id: str,
+    path: Path,
+    provenance: Mapping[str, object] | None = None,
+) -> Path:
+    """Write one candidate's artifact set as a loadable harness JSON file.
+
+    Without this, a finished run left nothing behind but a pass rate on stdout:
+    the adapter holds candidate artifacts in memory only, so the improved
+    harness died with the process and its delta was unreproducible.
+    """
+    payload = harness_payload(
+        adapter, version=version, candidate_id=candidate_id, provenance=provenance
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def nothing_accepted_warning(task_count: int) -> str:
+    """The diagnostic for a run that accepted nothing.
+
+    An earlier version of this text told the operator that a run above one task
+    could not accept an edit regardless of edit quality, because
+    ``weighted_net_gain`` charged -1.0 for every *passing* regression probe. That
+    defect is fixed -- a passing probe now costs exactly nothing, and only a
+    failing one is charged ``1 - score`` (pinned by
+    ``tests/test_editor.py::test_passing_regression_probes_are_free_at_every_probe_count``)
+    -- so the claim is false and the ``--tasks 1`` advice sent operators away
+    from the real cause.
+
+    The warning stays loud, because a silently inert run is still worse than a
+    loud one; it now lists causes that can actually be checked.
+    """
+    return (
+        f"\nwarning: nothing was accepted across {task_count} tasks. This is a "
+        "real outcome, not an arithmetic floor -- acceptance is reachable at any "
+        "task count. Check, in order:\n"
+        "  - no issue was attributed: analysis found no blamable artifact, so no "
+        "attempt was made (look for no_issue=1 in the iteration lines above)\n"
+        "  - the editor declined or produced no valid plan (an unauthorized "
+        "write or an empty edit set)\n"
+        "  - validation rejected the edit: a genuine regression, a failed origin "
+        "or worked probe, or a protected-floor violation\n"
+        "  - the retry budget was exhausted before a plan validated\n"
+        "Re-run with --capture-logs to get the analyzer, editor and pipeline "
+        "records that name which of these happened."
+    )
+
+
+def nothing_accepted_warning_applies(
+    task_count: int, accepted_any: bool
+) -> bool:
+    """Whether the run should print :func:`nothing_accepted_warning`."""
+    return task_count >= 1 and not accepted_any
+
+
+def _entry_provenance(entry: object, *, is_champion: bool) -> dict[str, object]:
+    """Lineage and scores for one pool entry, for the exported file's record."""
+    candidate = getattr(entry, "candidate")
+    scored = [
+        cell.mean
+        for cell in getattr(entry, "score_tensor", {}).values()
+        if cell.rollout_count
+    ]
+    return {
+        "is_champion": is_champion,
+        "is_base": bool(getattr(entry, "is_base", False)),
+        "parent_ids": list(getattr(candidate, "parent_ids", ())),
+        "ancestor_ids": list(getattr(candidate, "ancestor_ids", ())),
+        "attempt_ids": list(getattr(candidate, "attempt_ids", ())),
+        "origin_attempt_ids": list(getattr(entry, "origin_attempt_ids", ())),
+        "scored_cells": len(scored),
+        "mean_score": (sum(scored) / len(scored)) if scored else None,
+    }
+

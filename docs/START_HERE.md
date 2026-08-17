@@ -1,5 +1,13 @@
 # AgentEvolve Handoff
 
+> **To run something right now:** `docs/USER-MANUAL.md` — both CLIs with every
+> flag, custom harness JSON, the four editable surfaces, and where every trace and
+> log is written.
+>
+> **To resume in-flight work:** the newest
+> `docs/superpowers/plans/RESUME-HERE-*.md` — current state, measured facts, and
+> open decisions.
+
 ## Why This Repository Exists
 
 This repository was created to continue a RHO-GEPA evolution effort without
