@@ -1,0 +1,1 @@
+{"difficulty": 2.5, "abstract_fingerprint": "task shape: aggregation over a set\nbinding constraint: the agent must enumerate only the entries belonging to the requested category and exclude other release types\nfailure locus: committed without verifying, the agent relied on a general reference page and supplied an unsupported count instead of extracting the relevant set"}

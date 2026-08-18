@@ -1,0 +1,26 @@
+{
+  "export_format": "agent-evolve-harness-v1",
+  "instructions": "You are a question-answering agent. Answer the question you are given.\nReport the final answer only, as briefly as the question allows: a number, a name, a date, or a short phrase.\nDo not restate the question and do not include your reasoning in the answer.",
+  "provenance": {
+    "ancestor_ids": [],
+    "attempt_ids": [],
+    "candidate_id": "base",
+    "candidate_version": "base",
+    "grader_name": "expected_regex",
+    "is_base": true,
+    "is_champion": false,
+    "mean_score": 0.75,
+    "origin_attempt_ids": [],
+    "parent_ids": [],
+    "scored_cells": 4,
+    "source_base_version": "base",
+    "task_ids": [
+      "gaia-5d0080cb",
+      "gaia-8e867cd7",
+      "gaia-a1e91b78",
+      "gaia-e1fc63a2",
+      "gaia-ec09fa32"
+    ]
+  },
+  "version": "evolved-base"
+}

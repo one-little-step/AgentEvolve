@@ -1,0 +1,1 @@
+{"canonical_arguments":"{\"expression\":\"17/27 - 47/81\"}","content_digest":"sha256:172d84e0e09b6683951ef3f78258593cbabf4df94d05fbb86a222c75209b9ab3","duration_ms":0.031948089599609375,"error":null,"original_bytes":21,"replay_eligible":true,"result":"0.04938271604938271","retained_bytes":21,"sequence":2,"tool_name":"calculator","truncated":false,"withheld_reason":null}

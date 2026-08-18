@@ -607,7 +607,8 @@ def test_every_tool_callable_has_a_docstring_and_a_real_signature() -> None:
 
     RhoOptimizer(agent_factory=factory).propose(BASE, (_diagnosis(),), 1)
 
-    assert set(captured) == set(APP_NAMES)
+    # list_tools is injected by run_workspace_agent for every Interface B agent.
+    assert set(captured) == set(APP_NAMES) | {"list_tools"}
     for name, fn in captured.items():
         assert fn.__doc__, f"{name} has no docstring"
         params = inspect.signature(fn).parameters

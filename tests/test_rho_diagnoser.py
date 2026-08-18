@@ -516,6 +516,8 @@ def test_every_tool_is_a_real_typed_documented_callable() -> None:
         "read_rollout_events",
         "note_rollout",
         "submit_diagnosis",
+        # Injected by run_workspace_agent for every Interface B agent.
+        "list_tools",
     }
     for name, fn in captured.items():
         assert (fn.__doc__ or "").strip(), f"{name} has no docstring"
@@ -608,11 +610,30 @@ def test_prompt_ends_with_an_explicit_execute_directive() -> None:
     successfully" -- with an empty tool ledger. Reordering alone flipped the
     same task to seven executed calls, so the trailing directive is load
     bearing, not decoration.
+
+    The directive is appended by ``run_workspace_agent`` (after the injected
+    tool roster), so this asserts on the prompt the AGENT actually receives
+    rather than on the template. The builder contributes only the
+    "where to start" hint.
     """
-    built = build_diagnosis_prompt("gaia-1", "q", _traces())
-    tail = built[-500:]
-    assert "Write and execute Python code" in tail
-    assert "fenced" in tail
+    seen: dict[str, str] = {}
+
+    def factory(callables: dict, prompt: str) -> str:
+        seen["prompt"] = prompt
+        return "narrated instead of acting"
+
+    RhoGroupDiagnoser(agent_factory=factory).diagnose("gaia-1", "q", _traces())
+
+    tail = seen["prompt"][-600:]
+    assert "BEGIN NOW" in tail
+    assert "fenced Python block" in tail
+    # Wrapped across a newline in the source, so normalise before matching.
+    assert "describe a plan" in " ".join(tail.split())
+    # The roster must come BEFORE the directive, never after it.
+    prompt = seen["prompt"]
+    assert prompt.index("TOOLS AVAILABLE") < prompt.index("BEGIN NOW")
+    # The builder's own hint still names the first calls to make.
+    assert "get_task() and list_rollouts()" in prompt
 
 
 def test_instructions_are_passed_as_special_instructions(monkeypatch) -> None:

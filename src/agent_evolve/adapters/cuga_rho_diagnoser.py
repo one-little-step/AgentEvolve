@@ -383,22 +383,15 @@ def _clip(value: object) -> object:
     return f"{text[:_MAX_PAYLOAD_CHARS]}... [truncated]"
 
 
-#: Closing directive. Appended AFTER the schema so it is the last thing the
-#: model reads before its first turn. Measured on ``azure/gpt-5.6-luna``, tool
-#: invocation is a deterministic function of prompt wording, and an explicit
-#: "write and execute Python code that calls X" is one of only two reliable
-#: phrasings (see reference/cuga_example_wrapper/docs/cuga-integration-learnings
-#: .md). A prompt that ENDS on a schema description instead was observed to
-#: produce a full narration -- including "Diagnosis submitted successfully" --
-#: with zero executed tool calls.
+#: Closing directive for THIS prompt. ``run_workspace_agent`` also appends a
+#: shared execute directive after the tool roster; this one names the specific
+#: first calls, which the shared text cannot know.
 _ACT_NOW = """\
 
-BEGIN NOW
+WHERE TO START
 
-Write and execute Python code that calls get_task() and list_rollouts() in a
-single fenced Python block, and print both results. Do not describe what you
-plan to do -- emit the fenced block. Your first response must contain a fenced
-Python block, and nothing you write counts until submit_diagnosis has executed.
+Call get_task() and list_rollouts() first, in one executed block, and print both
+results before you assess anything.
 """
 
 

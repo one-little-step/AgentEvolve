@@ -306,7 +306,8 @@ def test_every_tool_has_a_docstring_and_a_real_signature() -> None:
 
     PreferenceJudge(agent_factory=factory).compare(_task(), _baseline(), _candidate())
 
-    assert set(seen) == set(APP_NAMES)
+    # list_tools is injected by run_workspace_agent for every Interface B agent.
+    assert set(seen) == set(APP_NAMES) | {"list_tools"}
     for name, fn in seen.items():
         assert (fn.__doc__ or "").strip(), f"{name} has no docstring"
         inspect.signature(fn)  # must not raise

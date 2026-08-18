@@ -1,0 +1,1 @@
+{"difficulty": 4.5, "abstract_fingerprint": "task shape: aggregation over a set\nbinding constraint: the agent must identify distinct entities satisfying a simultaneous-occurrence condition before counting them\nfailure locus: no failure, the agent retrieved the relevant entity set and returned the resulting count"}

@@ -24,6 +24,7 @@ cosmetic gain.
 from __future__ import annotations
 
 import functools
+import inspect
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,6 +99,61 @@ class WorkspaceAgentRun:
     def no_tool_call(self) -> bool:
         """True when the agent completed but executed no tool at all."""
         return self.ok and not self.tools_called
+
+
+#: Appended as the LAST thing in every Interface B prompt.
+#:
+#: Measured: with the same body, a prompt ending on a submission schema produced
+#: a complete narration and an empty tool ledger, while the same prompt ending
+#: on this directive executed seven tools. Whatever the model reads last decides
+#: whether it emits a fenced block, so nothing may be appended after this.
+_EXECUTE_NOW = """
+BEGIN NOW
+
+Your first response must contain one fenced Python block that calls list_tools()
+and the read-only tools you need, and prints their results. Do not describe a
+plan -- emit the block. Nothing you write counts until the terminal submit tool
+has actually executed.
+"""
+
+
+def tool_roster(callables: Mapping[str, Callable[..., str]]) -> str:
+    """Render each tool's exact call signature and one-line purpose.
+
+    CUGA's tool use is strongly prompt-conditioned: the model decides whether to
+    emit an executable block at all partly from how concretely the tools are
+    presented. Naming every tool with its real signature -- derived from the
+    callable, so it cannot drift from what is actually registered -- removes the
+    "I am unable to call a tool in this environment" failure mode, where the
+    model narrates because it is unsure what it may call.
+    """
+    rows: list[str] = []
+    for name, fn in callables.items():
+        try:
+            sig = str(inspect.signature(fn))
+        except (TypeError, ValueError):  # pragma: no cover - exotic callables
+            sig = "(...)"
+        doc = (inspect.getdoc(fn) or "").strip().splitlines()
+        purpose = doc[0] if doc else "no description"
+        rows.append(f"  {name}{sig}\n      {purpose}")
+    return "\n".join(rows)
+
+
+def build_list_tools(callables: Mapping[str, Callable[..., str]]) -> Callable[[], str]:
+    """Build a ``list_tools`` callable describing ``callables``.
+
+    Injected into every Interface B agent. It gives the model a cheap first
+    action that always succeeds, which both confirms the sandbox is live and
+    establishes the executed-code pattern before anything load-bearing runs.
+    The roster is computed from the real callables, so it cannot go stale.
+    """
+    roster = tool_roster(callables)
+
+    def list_tools() -> str:
+        """List every tool available in this session with its exact signature."""
+        return roster
+
+    return list_tools
 
 
 def recording_wrapper(
@@ -253,8 +309,25 @@ def run_workspace_agent(
     ``agent_factory`` is the test seam: it receives the RECORDED callables dict
     and the prompt, and returns the agent's answer string. When ``None``, a real
     ``CugaAgent`` is constructed.
+
+    A ``list_tools`` tool is injected automatically, its roster is inserted into
+    the prompt, and a short execute directive is appended LAST. The ordering is
+    load bearing: a prompt that ends on a tool listing or a schema was observed
+    to produce a full narration -- including a claimed "submitted successfully"
+    -- with an empty tool ledger, while the same content ending on an explicit
+    "write and execute a fenced block" directive executed seven tools. The model
+    acts on whatever it read last, so the roster goes in the middle and the
+    directive goes at the end. ``list_tools`` never overrides a caller's own tool
+    of that name.
     """
-    recorded, names = recording_wrapper(callables)
+    with_listing = dict(callables)
+    with_listing.setdefault("list_tools", build_list_tools(callables))
+    recorded, names = recording_wrapper(with_listing)
+    prompt = (
+        f"{prompt}\n\nTOOLS AVAILABLE IN THIS SESSION "
+        f"(exact signatures; every one is registered and callable):\n"
+        f"{tool_roster(with_listing)}\n{_EXECUTE_NOW}"
+    )
     instructions = (
         WORKSPACE_AGENT_TOOL_CONTRACT
         if special_instructions is None

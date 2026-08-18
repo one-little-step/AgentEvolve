@@ -1,0 +1,1 @@
+{"difficulty": 1.5, "abstract_fingerprint": "task shape: single-hop lookup\nbinding constraint: the answer is a reported value in a referenced source, requiring retrieval and exact extraction\nfailure locus: no failure, the agent located the source, retrieved it, and extracted the requested value"}

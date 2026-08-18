@@ -1,0 +1,1 @@
+{"what_was_attempted": "Determine the result of the arithmetic expression 1+1.", "approach_taken": "The agent used a calculator for 1+1, which returned 2, then committed to the answer 3.", "where_it_went_wrong": "It ignored the calculator's returned result and gave 3 instead of the computed value.", "tools_used": ["calculator"], "outcome": "wrong_answer"}

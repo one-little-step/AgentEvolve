@@ -1,0 +1,1 @@
+{"difficulty": 10.0, "abstract_fingerprint": "task shape: ambiguous or under-specified request\nbinding constraint: the task specification is unavailable, so no reliable procedure or target quantity can be inferred\nfailure locus: never acted, the agent made no tool calls and committed an unsupported bare answer"}
