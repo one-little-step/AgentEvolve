@@ -57,7 +57,7 @@ from agent_evolve.core.clustering import (
     MechanismClusterer,
     MechanismEmbedder,
 )
-from agent_evolve.core.config import ResolvedConfig
+from agent_evolve.core.config import BudgetLimits, BudgetUsage, ResolvedConfig
 from agent_evolve.core.contracts import (
     ArtifactEdit,
     CandidateWorkspace,
@@ -226,6 +226,16 @@ class Orchestrator:
     entropy: EntropyTracker = field(default_factory=EntropyTracker)
     selector: HierarchicalDPPSelector = field(default_factory=HierarchicalDPPSelector)
     protected_floors: tuple[ProtectedFloor, ...] = ()
+    #: Run-scoped spend caps. ``None`` means unlimited, which is the historical
+    #: behaviour: nothing enforced these before, so a run had no reachable
+    #: ceiling on attempts or accepted edits.
+    budgets: BudgetLimits | None = None
+    #: Run-scoped spend ledger, accumulating ACROSS outer iterations on purpose:
+    #: a cap means "for this run", so a per-iteration counter would let N
+    #: iterations each spend the full cap.
+    _budget: BudgetUsage = field(
+        default_factory=BudgetUsage, init=False, repr=False, compare=False
+    )
     _iteration: int = 0
     _attempt_seq: int = 0
     #: Every mechanism string that reached clustering, in record order. Kept so a
@@ -617,6 +627,13 @@ class Orchestrator:
         )
 
         # 4. Run attempts (sequential or parallel).
+        # Trim to what the run budget can still afford, before either branch, so
+        # --max-attempts / --max-accepted-edits bound the whole run rather than
+        # each iteration. Trimming (not raising) keeps the iteration's already
+        # -collected rollout evidence: hitting a cap is a planned stop, not a
+        # failure, and the surviving issues are still reported.
+        if self.budgets is not None:
+            issues = self._affordable_issues(issues)
         if self.profile.use_parallel_batch:
             batch_results = self._run_parallel_attempts(
                 base_entry, issues, write_set
@@ -625,6 +642,7 @@ class Orchestrator:
                 attempts.append(attempt)
                 if decision.accepted:
                     accepted.append(attempt.attempt_id)
+                    self._budget.accepted_edits += 1
                 elif decision.status == AttemptStatus.REGRESSION:
                     regressions.append(attempt.attempt_id)
                 else:
@@ -655,6 +673,7 @@ class Orchestrator:
                 attempts.append(attempt)
                 if decision.accepted:
                     accepted.append(attempt.attempt_id)
+                    self._budget.accepted_edits += 1
                 elif decision.status == AttemptStatus.REGRESSION:
                     regressions.append(attempt.attempt_id)
                 else:
@@ -669,6 +688,33 @@ class Orchestrator:
             pool_size=len(self.pool),
             pareto_frontier=self.pool.pareto_frontier(),
         )
+
+    def _affordable_issues(self, issues: list) -> list:
+        """Trim ``issues`` to what the run's attempt budget can still fund.
+
+        Reserves one attempt per surviving issue up front, so the cap is checked
+        before any editor call rather than discovered mid-attempt. Trimming
+        rather than raising is deliberate: reaching a cap is a planned stop, and
+        the rollout evidence already gathered this iteration stays reportable.
+
+        ``max_accepted_edits`` also trims here, because an attempt that cannot
+        possibly be accepted is pure spend.
+        """
+        limits = self.budgets
+        if limits is None:
+            return issues
+        room = len(issues)
+        if limits.max_attempts is not None:
+            room = min(room, max(0, limits.max_attempts - self._budget.attempts))
+        if limits.max_accepted_edits is not None:
+            room = min(
+                room,
+                max(0, limits.max_accepted_edits - self._budget.accepted_edits),
+            )
+        allowed = issues[:room]
+        if allowed:
+            self._budget.reserve(limits, attempts=len(allowed))
+        return allowed
 
     def _run_parallel_attempts(
         self,
@@ -928,6 +974,12 @@ class SequentialGepaRunner:
     #: Probes whose rollout produced no measurement. Counted, never scored: a
     #: probe with no evidence must not become a passing validation result.
     _unscorable_probes: int = field(default=0, init=False, repr=False)
+    #: Run-scoped spend ledger. Accumulates across outer iterations on purpose:
+    #: ``--max-rollouts`` means "for this run", not "per iteration", so a
+    #: per-iteration counter would let N iterations spend N times the cap.
+    _budget: BudgetUsage = field(
+        default_factory=BudgetUsage, init=False, repr=False, compare=False
+    )
     #: Analyzer failures observed this run, as data. A model outage is recorded,
     #: not converted into a diagnosis and not allowed to abort the batch.
     _analysis_failures: list[AnalysisOutcome] = field(
@@ -1072,7 +1124,14 @@ class SequentialGepaRunner:
 
         An adapter that raises is recorded as one failed rollout, not propagated:
         one broken task must not discard the evidence from its siblings.
+
+        The whole batch is reserved against the run budget BEFORE any rollout is
+        issued, so ``--max-rollouts`` refuses a batch it cannot afford rather
+        than stopping halfway through one and leaving a partially-measured
+        candidate that looks like a real result.
         """
+        if tasks and self.config is not None:
+            self._budget.reserve(self.config.budgets, rollouts=len(tasks))
         if self.rollout_batch is not None:
             return tuple(self.rollout_batch.run_rollouts(version, tasks, prefix=prefix))
 
@@ -1847,7 +1906,35 @@ class SequentialGepaRunner:
     # One attempt
     # ------------------------------------------------------------------ #
     def run_attempt(self, tasks: Sequence[EvolutionTask]) -> GepaAttemptOutcome:
-        """Execute one full GEPA attempt over the given task coreset."""
+        """Execute one full GEPA attempt over the given task coreset.
+
+        The attempt is reserved against the run budget first, so ``--max-attempts``
+        and ``--max-accepted-edits`` refuse before any rollout or editor call is
+        issued. Reaching a cap is reported as a normal non-accepted outcome, not
+        raised: a planned stop must not look like a crash, and the caller's loop
+        keeps its already-collected evidence.
+        """
+        limits = self.config.budgets if self.config is not None else None
+        if limits is not None:
+            exhausted = (
+                limits.max_attempts is not None
+                and self._budget.attempts >= limits.max_attempts
+            ) or (
+                limits.max_accepted_edits is not None
+                and self._budget.accepted_edits >= limits.max_accepted_edits
+            )
+            if exhausted:
+                return GepaAttemptOutcome(
+                    attempt_id=self._next_attempt_id(),
+                    issue_id="",
+                    parent_candidate_id=self.pool.base.candidate_id,
+                    result_candidate_id=None,
+                    status=AttemptStatus.PENDING,
+                    accepted=False,
+                    weighted_net_gain=0.0,
+                    reason="budget exhausted: attempt cap reached",
+                )
+            self._budget.attempts += 1
         self._iteration += 1
         issues = self.build_issues(tasks)
         report = self.select_issues(issues, k=1)
@@ -1944,6 +2031,7 @@ class SequentialGepaRunner:
 
         result_candidate_id: str | None = None
         if decision.accepted:
+            self._budget.accepted_edits += 1
             committed = self.commit_to_pool(
                 parent,
                 workspace,

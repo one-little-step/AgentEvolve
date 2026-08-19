@@ -397,16 +397,24 @@ class IterationSummary:
     pool_size: int
     unscorable_probes: int
     analysis_failures: int
+    #: Iterations that did nothing because a spend cap was already reached.
+    #: Separate from ``no_issue``: "found nothing to fix" and "was not allowed to
+    #: try" have opposite meanings, and reporting a budget stop as no_issue sends
+    #: the reader to the analyzer to debug a cap they set themselves.
+    budget_exhausted: int = 0
 
     @property
     def line(self) -> str:
-        return (
+        base = (
             f"iteration {self.iteration}: attempts={self.attempts} "
             f"accepted={self.accepted} rejected={self.rejected} "
             f"no_issue={self.no_issue} pool={self.pool_size} "
             f"unscorable_probes={self.unscorable_probes} "
             f"analysis_failures={self.analysis_failures}"
         )
+        if self.budget_exhausted:
+            base += " BUDGET EXHAUSTED (no attempt issued)"
+        return base
 
 
 @dataclass(slots=True)
@@ -549,12 +557,16 @@ class EvolutionStack:
             )
             outcome = self.runner.run_attempt(self.tasks)
             pending = outcome.status.value == "pending"
+            # A budget stop is a planned non-attempt, so it must not be counted
+            # as an attempt or as "no issue found".
+            capped = pending and "budget exhausted" in (outcome.reason or "")
             summary = IterationSummary(
                 iteration=index,
-                attempts=1,
+                attempts=0 if capped else 1,
                 accepted=1 if outcome.accepted else 0,
                 rejected=0 if (outcome.accepted or pending) else 1,
-                no_issue=1 if pending else 0,
+                no_issue=1 if (pending and not capped) else 0,
+                budget_exhausted=1 if capped else 0,
                 pool_size=len(self.pool),
                 unscorable_probes=(
                     self.runner.unscorable_probe_count - probes_before
@@ -713,6 +725,17 @@ def _offline_tasks(count: int, token: str) -> tuple[EvolutionTask, ...]:
     )
 
 
+def _override_kwargs(overrides: Mapping[str, object] | None) -> dict:
+    """Sanitize caller overrides before they are splatted into resolve_profile.
+
+    ``environ`` is a positional parameter of ``resolve_profile``, not a config
+    field, so an override carrying that key would bind to it and silently
+    replace the environment mapping. Every other key is validated by
+    ``resolve_profile`` itself against ``_VALID_OVERRIDES``.
+    """
+    return {k: v for k, v in dict(overrides or {}).items() if k != "environ"}
+
+
 def build_offline_stack(
     *,
     task_count: int = 3,
@@ -729,6 +752,7 @@ def build_offline_stack(
     seed: int = 0,
     profile: str = "research_sequential",
     log_capture: LogCaptureConfig | None = None,
+    config_overrides: Mapping[str, object] | None = None,
 ) -> EvolutionStack:
     """Assemble the fake stack: no CUGA, no model endpoint, no network.
 
@@ -784,6 +808,10 @@ def build_offline_stack(
         seed=seed,
         max_analyzer_workers=max(1, int(analyzer_workers)),
         log_capture=capture,
+        # Overrides land last so an explicit flag beats the profile. Keys are
+        # validated by resolve_profile against _VALID_OVERRIDES; ``environ`` is
+        # filtered out because it is positional there, not a config field.
+        **_override_kwargs(config_overrides),
     )
     # Every channel, active or not, so a fake analyzer or editor that grows a
     # sink later needs no change here and ``close()`` has one thing to close.
@@ -858,6 +886,7 @@ def build_live_stack(
     profile: str = "research_sequential",
     allow_unsafe_concurrency: bool = False,
     log_capture: LogCaptureConfig | None = None,
+    config_overrides: Mapping[str, object] | None = None,
 ) -> EvolutionStack:
     """Assemble the live stack: real CUGA rollouts, real analyzer, real editor.
 
@@ -946,6 +975,10 @@ def build_live_stack(
         seed=seed,
         max_analyzer_workers=max(1, int(analyzer_workers)),
         log_capture=capture,
+        # Overrides land last so an explicit flag beats the profile. Keys are
+        # validated by resolve_profile against _VALID_OVERRIDES; ``environ`` is
+        # filtered out because it is positional there, not a config field.
+        **_override_kwargs(config_overrides),
     )
     # No temperature is ever passed: the endpoint rejects any non-default value.
     # The sink goes through the factory, not onto the single instance: the runner

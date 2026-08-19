@@ -155,6 +155,32 @@ WHAT YOU SHOULD REWARD
   instead of abandoning the task.
 * Committing a definite answer in the required form. A trajectory that ends
   without answering has not answered.
+* Reaching that answer with less wasted work -- fewer redundant tool calls, fewer
+  re-derivations of something already established, fewer turns spent circling a
+  step that was already done. Two trajectories that both answer correctly are NOT
+  equivalent if one took five times the steps to get there.
+
+EFFICIENCY, AND HOW IT IS RANKED
+
+This is subordinate to correctness, and the order is not negotiable:
+
+1. First ask which trajectory actually answered the task correctly.
+2. Only when both reached an equally sound outcome does wasted work decide.
+
+Fewer steps never redeems a wrong answer, and a trajectory that stopped early,
+crashed, or never committed an answer is the WORST case available -- never the
+most efficient one. Quitting cheaply is not efficiency.
+
+Wasted work means steps the harness could have avoided. It does NOT mean:
+  * retries forced on the agent by a tool that errored, timed out, or was
+    unavailable -- that is infrastructure noise and no harness text prevents it;
+  * work that genuinely was needed for a harder route through the same task.
+Count only the redundancy the agent chose.
+
+Efficiency is also NOT the same as brevity. Length is how much prose the model
+emitted; efficiency is how many steps it burned. A terse summary of a wasteful
+trajectory is still wasteful, and a verbose account of four clean steps is still
+efficient.
 
 CALIBRATION
 
@@ -202,14 +228,20 @@ Judge the whole trajectory, not just the final string.
   the same answer reached by checking.
 * An answer that was never committed is not an answer, however good the reasoning
   leading up to it looked.
+* When both sides reached an equally sound outcome, prefer the one that got there
+  with less wasted work. `event_count` and the event list are given to you for
+  exactly this: compare how much work each side actually did. A short trajectory
+  whose status is an error, or which never committed an answer, is a failure and
+  not an efficient run.
 * Ignore length. Ignore how confident either side sounds. Ignore which slot a
-  trajectory is in.
+  trajectory is in. Length is not the same as wasted steps.
 
 RATIONALE
 
 State the concrete difference you observed -- a tool that ran or did not run, a
-value that was or was not verified, an answer that was or was not committed. Do
-not restate the score in words.
+value that was or was not verified, an answer that was or was not committed, or
+wasted steps one side took and the other did not. Do not restate the score in
+words.
 
 You MUST call submit_preference or your comparison is discarded entirely; it is
 not counted as a tie.

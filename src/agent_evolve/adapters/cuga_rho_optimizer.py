@@ -106,6 +106,22 @@ change them. The only thing you can change is the text the harness delivers into
 that model's context, and the only thing that matters is whether your text
 reaches the model at the moment the failure happens.
 
+WHAT "BETTER" MEANS
+
+Better performance means the agent's final answer more directly and correctly
+answers what each task asks, WITH FEWER WASTED STEPS. Both halves count. A harness
+edit that improves accuracy while sending the agent down a longer route is a
+partial win; one that makes the agent reliably reach the same answer with less
+redundant work is a real one.
+
+Reliability is part of this. If the diagnoses show the rollouts for one task
+disagreeing with each other, the harness left something underdetermined, and
+pinning that down is as valuable as fixing an outright failure.
+
+Do not pursue brevity for its own sake. Cutting the agent's steps by making it
+stop before it has verified anything trades a wrong answer for a fast one, which
+is a regression however short the trajectory looks.
+
 WHAT THE AGENT ACTUALLY IS
 
 The agent under study runs this graph:
@@ -585,28 +601,47 @@ def _fingerprint(artifacts: Mapping[str, str]) -> str:
 #:
 #: Each framing names a different surface to consider first, so the N candidates
 #: explore genuinely different repairs instead of re-deriving one.
-_CANDIDATE_FRAMINGS: tuple[str, ...] = (
-    "Write and execute Python code that calls list_artifacts(), then "
-    "read_artifact() on the artifact the diagnosis most directly implicates. "
-    "Make the SMALLEST edit that closes the gap, then submit_candidate.",
-    "Write and execute Python code that calls list_artifacts() and read every "
-    "artifact before deciding. Prefer changing the artifact that DELIVERS the "
-    "missing behaviour at the moment it is needed, even if the diagnosis names "
-    "a different one. Then stage your edit and submit_candidate.",
-    "Write and execute Python code that calls list_artifacts(), then "
-    "read_artifact() on each candidate surface. Consider whether a NEW "
-    "generated skill closes the gap more directly than editing existing text; "
-    "stage either, then submit_candidate.",
-)
-
+# _CANDIDATE_FRAMINGS: tuple[str, ...] = (
+#     "Write and execute Python code that calls list_artifacts(), then "
+#     "read_artifact() on the artifact the diagnosis most directly implicates. "
+#     "Make the SMALLEST edit that closes the gap, then submit_candidate.",
+#     "Write and execute Python code that calls list_artifacts() and read every "
+#     "artifact before deciding. Prefer changing the artifact that DELIVERS the "
+#     "missing behaviour at the moment it is needed, even if the diagnosis names "
+#     "a different one. Then stage your edit and submit_candidate.",
+#     "Write and execute Python code that calls list_artifacts(), then "
+#     "read_artifact() on each candidate surface. Consider whether a NEW "
+#     "generated skill closes the gap more directly than editing existing text; "
+#     "stage either, then submit_candidate.",
+# )
+#: EMPTY by design. The framings existed to work around a misdiagnosis: identical
+#: prompts were collapsing because the upstream gateway served a CACHED response
+#: (verified: four identical requests shared one response ``id``), not because
+#: reasoning models decode greedily. With the cache disabled at the transport
+#: layer the N invocations diverge on their own, and a per-candidate nudge is a
+#: confound -- it permanently biases which surface each candidate considers
+#: first, so "candidate 3 created a skill" would be an artifact of the prompt
+#: rather than a finding. Restore only as a deliberate, documented ablation.
+_CANDIDATE_FRAMINGS: tuple[str, ...] = ()
 
 def _per_candidate_prompt(prompt: str, index: int, n: int) -> str:
     """Append a per-candidate framing so the N prompts are not byte-identical.
 
     Deterministic in ``index``, so rerunning a round reproduces the same N
     prompts. Only the framing rotates; the evidence is identical for all N.
+
+    With ``_CANDIDATE_FRAMINGS`` empty the N prompts become byte-identical by
+    design -- the intended state now that the upstream response cache is
+    disabled, since diversity should come from independent trajectories rather
+    than from a per-candidate nudge that also biases WHICH repair each candidate
+    explores. ``APPROACH i of n`` is still appended so a transcript remains
+    attributable to its invocation.
     """
-    framing = _CANDIDATE_FRAMINGS[index % len(_CANDIDATE_FRAMINGS)]
+    framing = (
+        _CANDIDATE_FRAMINGS[index % len(_CANDIDATE_FRAMINGS)]
+        if _CANDIDATE_FRAMINGS
+        else ""
+    )
     return f"{prompt}\nAPPROACH {index + 1} of {n}\n\n{framing}\n"
 
 

@@ -164,16 +164,29 @@ have.
 
 ANALYSIS ORDER
 
-1. get_task, then list_rollouts. Note which rollouts executed tools at all.
+1. get_task, then list_rollouts. Note which rollouts executed tools at all, and
+   which never got started -- a rollout whose events are mostly errors and which
+   produced no answer tells you about the infrastructure, not the harness. Say so
+   and exclude it from your conclusions rather than reading it as fast or lean.
 2. Per rollout, read its events and decide:
    - did it likely satisfy the task's actual requirements?
    - did it VERIFY its own answer before committing - re-derived it, cross
      checked a second source, or re-ran a computation? Reasserting the answer
      more confidently is not verification. Answer yes only if some concrete
      checking step happened.
-   - what went wrong: wrong assumption, tool misuse, missing evidence,
-     unfinished work, stopped too early, wasted steps.
-   Record each one with note_rollout.
+   - what evidence, tools, or reasoning steps did it actually rely on?
+   - which of these four went wrong, naming them explicitly when present:
+       UNNECESSARY WORK   steps it chose to take that were not needed - redundant
+                          calls, re-deriving something already established,
+                          circling a step already done. Retries forced by a tool
+                          that errored do not count; those are not its choice.
+       MISSED INFORMATION something available to it that it never looked at
+       MISLEADING EVIDENCE something it trusted that did not support the
+                          conclusion it drew
+       INCORRECT DECISION a choice that was wrong given what it already knew
+   Record each one with note_rollout. Name which of the four applies, so the
+   optimizer can attend to the same category across tasks; a single word like
+   "wasteful" does not survive that comparison.
 3. Compare the rollouts. Where do they DISAGREE in interpretation of the task,
    plan, actions taken, or final answer? Separate harmless variation (different
    wording, different but equivalent route) from consequential divergence
@@ -214,12 +227,33 @@ SEVERITY, ANCHORED
 severity orders every task's diagnosis for the optimizer, so an uncalibrated
 number destroys that ordering. Use these anchors, not a default:
 
-    0.0  nothing recurs; the rollouts differ only harmlessly
-    0.2  a minor inefficiency; the task was still handled
-    0.4  one rollout was derailed by it; the others absorbed it
+    0.0  nothing recurs; all rollouts handled the task accurately and without
+         wasted work
+    0.2  a minor inefficiency or a weak concern; the task was still handled, and
+         this alone is not worth a harness edit
+    0.4  one rollout was derailed by it and the others absorbed it, OR the
+         rollouts disagreed consequentially even though none outright failed
     0.6  it recurs and degrades results, but some rollout still recovered
     0.8  it recurs in most rollouts and none recovered
     1.0  it recurs in every rollout and blocks the task outright
+
+CONSISTENCY IS RELIABILITY
+
+Recurrence is not the only thing that earns severity. Identical inputs that
+produce consequentially DIFFERENT behaviour are themselves a harness weakness,
+because it means the harness underdetermined what the agent should do and left
+the outcome to chance. A task where the rollouts disagreed on the answer, or
+where one verified and the others did not, belongs at 0.4 or above even if you
+cannot point to a single rollout that failed -- you have learned that success
+here is not reproducible.
+
+Two things that are NOT inconsistency of this kind, and must not be scored as it:
+  * harmless variation -- different wording, or a different but equivalent route
+    to the same answer;
+  * divergence caused by a tool erroring, timing out, or being unavailable in one
+    rollout. That is infrastructure noise, not a harness gap. A rollout that
+    crashed before doing any work is not evidence about the harness at all;
+    exclude it and say you excluded it.
 
 IMPROVEMENT DIRECTION
 

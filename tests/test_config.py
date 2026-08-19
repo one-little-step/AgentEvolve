@@ -6,6 +6,7 @@ import json
 import pytest
 
 from agent_evolve.core.config import (
+    PROFILE_GATES,
     BudgetLimits,
     BudgetUsage,
     EmbeddingConfig,
@@ -91,11 +92,70 @@ def test_overrides_apply_to_resolved_config() -> None:
     assert config.dpp_theta == 0.5
 
 
-def test_overrides_reject_structural_fields() -> None:
-    with pytest.raises(ValueError):
-        resolve_profile("minimal", features=FeatureGates(parallel_execution=True))
+def test_overrides_reject_identity_fields() -> None:
+    """``profile_name`` and ``deferred_features`` stay non-overridable.
+
+    They are the run's identity, not tuning: letting a caller pass
+    ``profile_name="full_ablation"`` while the gates came from ``minimal`` would
+    stamp a manifest that misdescribes the run it recorded.
+    """
     with pytest.raises(ValueError):
         resolve_profile("minimal", profile_name="full_ablation")
+    with pytest.raises(ValueError):
+        resolve_profile("minimal", deferred_features=("parallel_execution",))
+
+
+def test_features_are_overridable_for_per_gate_ablation() -> None:
+    """``features`` IS overridable, deliberately.
+
+    An ablation study has to move exactly one gate while holding the rest at the
+    profile's values. Previously the only lever was ``--profile``, which swaps
+    all five gates at once, so "same profile, entropy selection off" was
+    unreachable from the CLI. ``PROFILE_GATES`` exposes the profile's own bundle
+    so a caller starts from it and changes one member.
+    """
+    base = PROFILE_GATES["research_sequential"]
+    config = resolve_profile(
+        "research_sequential",
+        environ={},
+        features=FeatureGates(**{**base, "use_entropy_selection": True}),
+    )
+    assert config.features.use_entropy_selection is True
+    # The untouched gates still match the profile.
+    assert config.features.use_causal_blame is base["use_causal_blame"]
+    assert config.features.use_edit_memory is base["use_edit_memory"]
+    # And the profile name still describes which profile was asked for.
+    assert config.profile_name == "research_sequential"
+
+
+def test_profile_gates_matches_every_profile() -> None:
+    """``PROFILE_GATES`` is derived, so it cannot drift from the profile table."""
+    for name in PROFILE_GATES:
+        gates = resolve_profile(name, environ={}).features
+        assert PROFILE_GATES[name] == {
+            "use_causal_blame": gates.use_causal_blame,
+            "use_edit_memory": gates.use_edit_memory,
+            "use_focused_validation": gates.use_focused_validation,
+            "use_entropy_selection": gates.use_entropy_selection,
+            "parallel_execution": gates.parallel_execution,
+        }
+
+
+def test_budgets_are_overridable_so_a_run_can_be_capped() -> None:
+    """Without this, no caller can cap spend.
+
+    Every :class:`BudgetLimits` field defaults to ``None`` (unlimited) and
+    ``resolve_profile`` hardcoded ``BudgetLimits()``, so a run had no reachable
+    ceiling on rollouts, attempts or editor calls.
+    """
+    config = resolve_profile(
+        "minimal",
+        environ={},
+        budgets=BudgetLimits(max_rollouts=50, max_attempts=4),
+    )
+    assert config.budgets.max_rollouts == 50
+    assert config.budgets.max_attempts == 4
+    assert resolve_profile("minimal", environ={}).budgets.max_rollouts is None
 
 
 def test_embedding_defaults_when_environ_absent() -> None:

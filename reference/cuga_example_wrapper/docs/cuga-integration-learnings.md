@@ -377,12 +377,13 @@ which is simply false: the tool was in the prompt and registered in the sandbox.
 
 Consequences for methodology:
 
-- **Repeating an identical prompt is not sampling.** Reasoning models often skip
-  temperature (`Skipping temperature for reasoning model: ...` in CUGA's log), so
-  decoding is effectively greedy: the same prompt gives byte-identical output.
-  Three "trials" of one prompt is one observation reported three times. Vary the
-  **prompt**, not the trial index, and treat identical-prompt repeats as one
-  sample.
+- **Repeating an identical prompt may return a cached response, not a new
+  sample.** Identical prompts repeated back-to-back can come back byte-identical.
+  **This is an upstream response cache, not greedy decoding** — see "Identical
+  Repeats Are A Proxy Cache, Not Greedy Decoding" below for the disproof and the
+  fix. Until you disable that cache, three "trials" of one prompt may be one
+  observation reported three times. Diagnose with the response `id`, never with
+  text equality.
 - **Do not call this "flaky".** It is reproducible per prompt. Calling it flaky
   invites a retry loop that will never converge.
 - **A/B one variable at a time, and re-run the control in the same session.** A
@@ -729,8 +730,10 @@ content, so **any baseline collected with them off is not comparable**.
 - Phrase any tool-exercising task as an explicit code-execution instruction
   ("write and execute Python code that calls `X()`, then report ..."). Vague
   "use the tool" wording deterministically fails on some models.
-- Never repeat an identical prompt and call it N trials; reasoning models with
-  temperature skipped decode greedily. Vary the prompt to get real samples.
+- Identical repeated prompts can return a **cached** response (verified: same
+  response `id` four times). Disable the upstream cache via
+  `model_kwargs={"extra_body": {"caching": False}}` before treating N repeats as
+  N samples; do not attribute the collapse to greedy decoding.
 - Attach tracing via `invoke(config={"callbacks": [handler]})`, and make the
   handler a real `BaseCallbackHandler` subclass. Assert `isinstance` in a test.
 - Read final graph state with `agent.graph.get_state({"configurable":
@@ -1177,3 +1180,137 @@ stage can silently drop it (see the `description: None` entry above).
 But note precisely what that proves: the artifact *reaches* the agent. Whether
 it makes the agent better is a separate measurement requiring a rerun and a
 score. Keep the two claims apart in reporting.
+
+## Sampling, Temperature, And The Upstream Response Cache (verified)
+
+Validated `2026-08-18` against `cuga==0.3.1`, a LiteLLM OpenAI-compatible
+gateway, and two models: `openai/azure/gpt-5.6-luna` and
+`openai/gcp/gemini-3.6-flash`. This section supersedes the earlier claim that
+identical prompts collapse because reasoning models "decode greedily".
+
+### Temperature support is per-model, and the endpoint is the authority
+
+Probed directly against the gateway, bypassing CUGA:
+
+```text
+model                     temperature=0.0   temperature=0.7   temperature=1.0
+azure/gpt-5.6-luna        HTTP 400          HTTP 400          accepted
+gcp/gemini-3.6-flash      accepted          accepted          accepted
+```
+
+The luna rejection is upstream and explicit:
+
+```text
+AzureException BadRequestError - Unsupported value: 'temperature' does not
+support 0.7 with this model. Only the default (1) value is supported.
+```
+
+Consequences:
+
+- **`temperature` is not a knob you can rely on cross-model.** On a `gpt-5*`
+  deployment it is unavailable at *any* non-default value, including `0.0`.
+- **CUGA's suppression is load-bearing, not a bug.**
+  `_is_reasoning_model` (`backend/llm/models.py:973-985`) strips the provider
+  prefix and matches `("o1", "o3", "o4", "gpt-5")`; the litellm branch then omits
+  `temperature` entirely (`:1302-1317`). Defeating that check converts a working
+  call into a guaranteed `400`.
+- **The prefix test is name-based, so it silently does not cover other vendors.**
+  `gcp/gemini-3.6-flash` does not match, so CUGA sends `temperature` for it —
+  from `configurations/models/settings.litellm.toml`, which sets
+  `temperature = 0.1` for **every** agent role. Know which of the two regimes
+  your configured model is in before reasoning about diversity.
+- Do not "fix" a missing-temperature complaint with a front-door LiteLLM proxy
+  that injects one. If the upstream rejects the value, adding a hop only moves
+  where the rejected field is set.
+
+### Identical repeats are a proxy cache, not greedy decoding
+
+The earlier conclusion in this document — reasoning models skip temperature,
+therefore decoding is greedy, therefore identical prompts give identical output —
+was **wrong**. The real mechanism is an upstream response cache.
+
+Same prompt, four sequential requests, on **both** models:
+
+```text
+default            n=4  distinct_ids=1  distinct_text=1   <-- one shared id
+extra_body caching n=4  distinct_ids=4  distinct_text=4
+```
+
+**A repeated response `id` is the proof.** Four calls sharing one
+`chatcmpl-...` id never reached the model; the gateway also returns an
+`x-litellm-cache-key` header. Greedy decoding would produce four *distinct* ids
+with equal text.
+
+Diagnostic rules:
+
+- **Use the response `id` (or `x-litellm-cache-key`), never text equality, to
+  detect caching.** A low-entropy prompt legitimately produces identical text
+  from four genuine samples: `"what is 2+2"` gives `distinct_ids=4,
+  distinct_text=1`. Text equality alone cannot separate cache from agreement.
+- **Probe with a high-entropy prompt.** "Name one random fruit" returned
+  `Mango` from four real samples and looked deterministic; "invent a unique
+  two-sentence novel opening" separated the cases immediately.
+- Cache hits are prompt-identity dependent, so collapse is **patchy** across a
+  real run — some tasks collapse, most do not. Do not conclude "no cache" from an
+  aggregate diversity ratio.
+
+### Disabling the cache: `extra_body` is the only path that works
+
+Three plausible injection points, all tested end-to-end through CUGA's own
+constructed client against the live gateway:
+
+```text
+control (nothing)                                          n=4  DISTINCT=1
+settings extra_params={"caching": False}                   dropped before the wire
+model_kwargs={"caching": False}                            reaches litellm, still DISTINCT=1
+model_kwargs={"extra_body": {"caching": False}}            n=4  DISTINCT=4
+model_kwargs={"extra_body": {"cache": {"no-cache": True}}} n=4  DISTINCT=4
+```
+
+Why each behaves that way:
+
+1. **`extra_params` is a dead end.** CUGA merges it into `litellm_params`
+   (`models.py:1311`, via `_merge_optional_sampling` → `_safe_extra_params`), and
+   `caching` is not in `_BLOCKED_EXTRA_PARAM_KEYS`, so this *looks* correct. But
+   the langchain wrapper `ReasoningChatLiteLLM` is a pydantic model with no
+   `caching` field and no extras: after construction,
+   `has 'caching' field? False`, `model_kwargs == {}`,
+   `__pydantic_extra__ is None`. The value is silently discarded. Config-level
+   injection cannot work.
+2. **A bare `caching` kwarg is consumed locally.** With
+   `model_kwargs={"caching": False}` a wire spy confirms litellm receives
+   `caching: False` — yet output stays `DISTINCT=1`. litellm treats `caching` as
+   its own *client-side* cache setting and never forwards it upstream.
+3. **`extra_body` puts it in the HTTP body**, where the gateway actually reads
+   it. This is the only form that defeats the cache.
+
+So the working form is a `model_kwargs` assignment on the constructed client:
+
+```python
+llm.model_kwargs = {"extra_body": {"caching": False}}
+```
+
+Two cautions:
+
+- **`extra_body` is a passthrough, so typos fail silently.** Nothing validates
+  the inner keys. Assert behaviorally — four calls on a high-entropy prompt must
+  yield four distinct response ids.
+- Distinct output is not automatically *good* output. With a small `max_tokens`
+  on a deliberative model, the newly-diverse completions were truncated
+  scratchpad fragments (`'Drafting Ideas:**'`, `'*Angle 4: Unconventional
+  setting'`) rather than clean prose. Raising temperature toward `2.0` on gemini
+  produced the same degradation. Check content quality after enabling, not just
+  the distinct count.
+
+### Methodology rules this establishes
+
+- **Attribute determinism to a mechanism you have evidence for.** "Reasoning
+  models decode greedily" was a plausible story that survived in this document
+  because it explained the symptom. The response `id` was available the whole
+  time and falsifies it in one call.
+- **Verify a claimed injection point at the wire, not at the config.** Two of the
+  three candidates above pass every structural check — the field is accepted, not
+  blocked, and merged into the params dict — and still never reach the provider.
+- **Before building infrastructure to add a knob, prove the knob changes the
+  outcome.** On gemini, cache-off diversity was already 4/4 at `temperature=0.0`
+  through `2.0`; a proxy to control temperature would have solved nothing.

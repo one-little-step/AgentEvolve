@@ -234,6 +234,22 @@ _PROFILES: dict[str, dict] = {
     },
 }
 
+_GATE_ORDER = (
+    "use_causal_blame",
+    "use_edit_memory",
+    "use_focused_validation",
+    "use_entropy_selection",
+    "parallel_execution",
+)
+
+#: ``{profile_name: {gate_name: bool}}``, derived from :data:`_PROFILES` so the
+#: two cannot drift. Public because a per-gate ablation has to start from the
+#: profile's own bundle and move exactly one gate.
+PROFILE_GATES: dict[str, dict[str, bool]] = {
+    name: dict(zip(_GATE_ORDER, spec["gates"], strict=True))
+    for name, spec in _PROFILES.items()
+}
+
 _VALID_OVERRIDES = {
     "dpp_max_items",
     "dpp_theta",
@@ -255,6 +271,12 @@ _VALID_OVERRIDES = {
     "champion_gamma",
     "champion_delta",
     "champion_min_coverage_fraction",
+    # Composite members. ``budgets`` in particular must be overridable or a
+    # caller has no way to cap spend: every BudgetLimits field defaults to None
+    # (unlimited), so a run without an override is an uncapped run.
+    "budgets",
+    "embedding",
+    "features",
     "log_capture",
 }
 

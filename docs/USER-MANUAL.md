@@ -3,10 +3,16 @@
 How to run inference (benchmark) and evolution, every configuration flag, and
 exactly where each artifact lands on disk.
 
-Verified against branch `dev4`, `cuga==0.3.1`, model `azure/gpt-5.6-luna` via a
-LiteLLM OpenAI-compatible endpoint, on 2026-08-16. Flag lists are transcribed
-from `--help` output, not from memory. Re-check with `--help` after any CLI
-change.
+Verified against branch `dev5`, `cuga==0.2.20`, models `azure/gpt-5.6-luna`
+(CUGA / Interface B) and `gcp/gemini-3.6-flash` (Interface A) via a LiteLLM
+OpenAI-compatible endpoint, on 2026-08-17. Flag lists are transcribed from
+`--help` output, not from memory: all 76 flags are documented and verified
+present. Re-check with `--help` after any CLI change.
+
+> **Read `docs/OPEN-ISSUES.md` before trusting any measurement.** Seven of the
+> eleven budget caps currently do nothing, `--max-rollouts` crashes instead of
+> stopping cleanly, and candidate rollouts are stamped `harness_version: base`.
+> Each entry there states how it was observed.
 
 > **Read `docs/superpowers/plans/RESUME-HERE-2026-08-16.md` first** if you are
 > picking this project up cold. This manual is operational; that file carries the
@@ -146,6 +152,8 @@ Runs rollout → analyze → select → edit → validate → record.
 
 - `--dry-run` — fake stack, offline. No CUGA, no endpoint, no network, no dataset.
 - Live requires `--dataset`, `--grader`, **and `--harness`**.
+- `--mode {genetic,rho,rho-genetic}` — which phases run. Default `genetic` is the
+  existing loop, unchanged. See §4a for `rho` and `rho-genetic`.
 
 ### Scale
 
@@ -158,11 +166,131 @@ Runs rollout → analyze → select → edit → validate → record.
 - `--isolation {thread,process}` — default `thread`
 - `--task-timeout SECONDS` — default `1200.0`
 
+### What ends the loop
+
+**Only the iteration count you pass.** `run_iterations` is a bounded `for` with a
+single exit; there is no convergence, plateau, or patience check anywhere in the
+codebase. `--iterations 10` on a run that stopped improving at iteration 2 still
+executes all 10 and still bills for them.
+
+The complete list of things that end a genetic run:
+
+| Ends the run | How |
+| --- | --- |
+| `--iterations N` (or `--genetic-iterations-per-round N` in `rho-genetic`) | loop bound |
+| `--max-attempts` / `--max-accepted-edits` | iterations still run but issue no attempt; line reads `BUDGET EXHAUSTED (no attempt issued)` |
+| `--max-rollouts` | raises `BudgetExceededError` — crashes, see OPEN-ISSUES S3-1 |
+| an unhandled exception | crash |
+
+Not on that list, deliberately or otherwise: zero accepted edits, an empty issue
+set, or a plateaued score. `no_issue=1` iterations keep looping.
+
+`RetryBudget` (3 attempts per `issue × artifact_group × lineage`) does **not** end
+the loop — it skips that scope and moves on. Its `reset()` is never called, so an
+exhausted scope stays exhausted for the whole run; see OPEN-ISSUES S1-2.
+
 ### Research config
 
 - `--profile NAME` — default `research_sequential`. Also `minimal`,
   `research_parallel`, `full_ablation`.
 - `--seed N` — RNG seed for parent sampling and DPP
+
+### Budgets (spend caps)
+
+**Every cap is UNLIMITED by default.** Before these existed a run had no
+reachable ceiling: the loop issued rollouts and editor calls until the dataset
+ran out. Set at least one on any run you are not watching.
+
+A cap is a **run total, not per iteration** — `--max-attempts 1 --iterations 3`
+issues one attempt, not three. Caps are checked *before* the work is issued, so a
+cap refuses rather than abandoning a half-finished attempt, and the iteration
+line says `BUDGET EXHAUSTED (no attempt issued)` rather than pretending nothing
+was wrong.
+
+| Flag | Caps | Status |
+| --- | --- | --- |
+| `--max-attempts N` | total edit attempts | **works** (clean stop) |
+| `--max-accepted-edits N` | stop accepting after N edits | **works** (clean stop) |
+| `--max-rollouts N` | total rollouts for the run | enforced but **crashes** — see OPEN-ISSUES S3-1 |
+| `--max-editor-calls N` | editor-agent invocations | **no effect yet** (S2-1) |
+| `--max-judge-verdicts N` | analyzer/judge calls | **no effect yet** (S2-1) |
+| `--max-model-tokens N` | model tokens | **no effect yet** (S2-1) |
+| `--max-wall-seconds S` | wall-clock seconds | **no effect yet** (S2-2) |
+| `--max-pool-candidates N` | persistent pool size | **no effect yet** (S2-1) |
+| `--max-history-records N` | edit-memory records shown to the editor | **no effect yet** (S2-1) |
+| `--max-rag-context-tokens N` | retrieved-context tokens for the editor | **no effect yet** (S2-1) |
+| `--edit-max-retries N` | retries per attempt | **works**; default **3**, the one non-unlimited default |
+
+> **Only `--max-attempts` and `--max-accepted-edits` currently bound a run.** The
+> others parse, validate, and appear in the manifest while bounding nothing —
+> measured, see `docs/OPEN-ISSUES.md` S2-1. Do not leave a long run unattended
+> relying on `--max-wall-seconds` or `--max-model-tokens`.
+
+> `--max-pool-candidates` conflicts with RHO's all-N retention. RHO keeps every
+> surviving candidate by design; capping the pool can refuse a retention the
+> design requires. Leave it unset for RHO runs.
+
+```bash
+# a bounded exploratory run (using the two caps that actually work)
+uv run python scripts/run_evolution.py --dry-run --tasks 5 --iterations 3 \
+  --max-attempts 4 --max-accepted-edits 2
+```
+
+### Algorithm tuning
+
+Each flag overrides one `ResolvedConfig` field. **Unset means the `--profile`
+default stands**, so an existing command line resolves to exactly the config it
+did before.
+
+Coreset / issue selection (DPP):
+`--dpp-max-items` (100), `--dpp-theta` (0.7, quality-vs-diversity in [0,1]),
+`--dpp-score-floor` (0.1), `--dpp-min-gain` (1e-12).
+
+Entropy-guided selection:
+`--entropy-refresh-mode {outer_iteration,accepted_edits,pool_growth}`,
+`--entropy-score-floor`, `--entropy-recombination-score-threshold`,
+`--entropy-frontier-weight`, `--entropy-min-comparable-candidates` (3),
+`--entropy-min-rollouts-per-candidate` (2).
+
+> These two entropy floors are why `--rho-candidate-rollouts` defaults to 2 and
+> `--rho-candidates` to 3. Set `--rho-candidates` below
+> `--entropy-min-comparable-candidates`, or `--rho-candidate-rollouts` below
+> `--entropy-min-rollouts-per-candidate`, and cross-candidate entropy stays
+> **inert** — cells never reach the comparability floor, and selection silently
+> falls back to score alone.
+
+Mechanism clustering: `--cluster-similarity-threshold`, `--max-clusters-per-task`.
+
+Validation probes: `--generalization-probe-mode {deferred,enabled}` (default
+`deferred` records probes without spending rollouts), `--probe-budget-fraction`
+(0.15).
+
+Champion selection weights: `--champion-alpha` (0.55, mean score),
+`--champion-beta` (0.20, coverage), `--champion-gamma` (0.15, worst case),
+`--champion-delta` (0.10, novelty), `--champion-min-coverage-fraction` (0.0).
+
+> Raise `--champion-min-coverage-fraction` to stop a candidate becoming champion
+> on one lucky task. At `0.0` a candidate measured on a single task can outrank
+> one measured on forty.
+
+### Ablations (one gate at a time)
+
+`--profile` sets five feature gates as a bundle. An ablation study needs to move
+exactly one, so each gate has a tri-state pair; unset leaves the profile's value.
+
+| Gate | Flags |
+| --- | --- |
+| causal blame graphs | `--enable-causal-blame` / `--disable-causal-blame` |
+| edit memory | `--enable-edit-memory` / `--disable-edit-memory` |
+| focused validation | `--enable-focused-validation` / `--disable-focused-validation` |
+| entropy selection | `--enable-entropy-selection` / `--disable-entropy-selection` |
+| parallel execution | `--enable-parallel-execution` / `--disable-parallel-execution` |
+
+```bash
+# research_sequential, but with causal blame OFF -- everything else unchanged
+uv run python scripts/run_evolution.py --dry-run --tasks 5 \
+  --profile research_sequential --disable-causal-blame
+```
 
 ### Storage
 
@@ -197,6 +325,159 @@ uv run python scripts/run_evolution.py \
   --profile research_sequential --seed 0 \
   2>&1 | tee terminal_output/evolution/run.log
 ```
+
+---
+
+## 4a. RHO — Retrospective Harness Optimization (`--mode rho`)
+
+RHO reads a corpus of **past traces**, picks a difficult-and-diverse coreset,
+diagnoses why the harness failed on those tasks, proposes N independent candidate
+harnesses through CUGA workspace agents, and ranks them by pairwise preference.
+All N survivors are retained in the pool as parents for the genetic loop.
+
+### Modes
+
+- `--mode rho` — RHO rounds only.
+- `--mode rho-genetic` — each RHO round is followed by genetic iterations. The
+  genetic phase runs on the **coreset tasks only**, not the full dataset (see
+  "Why coreset-only" below).
+
+### The knobs
+
+| Flag | Meaning | Default |
+| --- | --- | --- |
+| `--rho-rounds N` | RHO rounds | 1 |
+| `--rho-history PATH` | trace corpus to learn from | none → **cold start** |
+| `--rho-coreset-size k` | tasks to diagnose and re-solve | 10 |
+| `--rho-group-rollouts G` | baseline rollouts per coreset task | 3 |
+| `--rho-candidates N` | independent candidate proposals | 3 |
+| `--rho-candidate-rollouts R` | rollouts per candidate per task | 2 |
+| `--rho-selector {dpp,difficulty_rank,random}` | coreset selection | `dpp` |
+| `--rho-group-workers` | concurrent task groups | 4 |
+| `--rho-rollout-workers` | concurrent rollouts within a group | 3 |
+| `--genetic-iterations-per-round N` | genetic iterations per round (`rho-genetic`) | 1 |
+| `--rho-summary-cache PATH` | cache: trajectory comprehension | off |
+| `--rho-difficulty-cache PATH` | cache: difficulty/fingerprint verdicts | off |
+| `--rho-embedding-cache PATH` | cache: fingerprint embeddings | off |
+| `--rho-proposal-temperature T` | **ablation only**; `0.0` is refused | unset |
+
+### Cost model
+
+**Rollouts per round = `k × (G + N×R)`**
+
+- paper defaults (k=10, G=3, N=3, R=2) → `10 × (3 + 6)` = **90** per round
+- a cheap smoke config (k=3, G=2, N=3, R=2) → `3 × (2 + 6)` = **24**
+
+Preference-judge comparisons per round = `N × k`. Multiply everything by
+`--rho-rounds`. At `--rho-rounds 3` with paper defaults that is 270 rollouts
+before any genetic work, which dominates the run.
+
+If a candidate is discarded (see below), the round spends less than the formula
+predicts: with 2 of 3 candidates surviving, `3 × (2 + 2×2)` = 18, not 24.
+
+### Preflight invariant
+
+```
+--max-workers  <=  --rho-group-workers × --rho-rollout-workers
+```
+
+This is **refused, never clamped**, and is checked before any credential is
+needed. Rollout concurrency above 1 also requires `--isolation process`.
+
+### Cold start
+
+Omit `--rho-history` and the run **cold-starts**: no usable corpus, so difficulty
+judging is skipped, no coreset is selected, and no candidates are produced. The
+run reports `cold start: no usable historical traces, RHO phases skipped` and
+exits 0. That proves the plumbing, not the method. To get a corpus, run
+`--mode genetic` first and point `--rho-history` at its `--trace-root`.
+
+### Why coreset-only for the genetic phase
+
+Cross-candidate variance needs a `(task, mechanism)` cell populated for several
+candidates, and cells are created by rollouts. After a RHO round, cells exist only
+for the k coreset tasks — on every other task variance is **undefined, not low**.
+Running the genetic phase on all 42 tasks would cost `42 × 4 × 2` = 336 rollouts
+per round instead of 90, for cells that cannot inform selection. The full dataset
+is used exactly twice: as coreset-selection input, and for final champion
+measurement.
+
+### Reading the round line
+
+```
+round 1: 3 coreset tasks (dpp), candidates 3 of 3 distinct, pool 4
+  rollouts=24 failures=0 diagnoses_observed=2 preferences=9 available / 0 unavailable
+```
+
+- `(dpp)` means the diversity term was live. **`(dpp_quality_only)` means it was
+  not** — no embedder was available, so selection degraded to a plain difficulty
+  ranking. Half the selection design is inert when you see that.
+- `candidates 3 of 3 distinct` — all N retained. `pool 4` = base + 3.
+- `diagnoses_observed=2` out of 3 coreset tasks means one diagnosis failed; an
+  unobserved diagnosis never reaches the optimizer.
+- `preferences ... unavailable` are **excluded** from the mean, never counted as
+  ties.
+
+Discarded candidates are named individually with a status:
+
+| Status | Meaning |
+| --- | --- |
+| `NO_TOOL_CALL` | the agent narrated instead of executing a tool |
+| `NO_OP` | it finalized with nothing staged |
+| `NOT_FINALIZED` | it staged work but never called the submit tool |
+| `IDENTICAL` / `DUPLICATE` | same artifacts as the base or another candidate |
+| `UNAVAILABLE` | the invocation itself failed |
+
+`candidates COLLAPSED to 0 of 3` means every proposal was discarded — the round
+produced no candidate, and the pool is unchanged.
+
+### Working live example
+
+```bash
+# 1. build a corpus
+uv run python scripts/run_evolution.py \
+  --dataset datasets/gaia/gaia_l1_validation_tiny5__baseline__20260812_180239 \
+  --grader expected_regex --harness vanilla \
+  --mode genetic --tasks 5 --iterations 1 \
+  --max-workers 10 --isolation process \
+  --trace-root data/live_traces/genetic
+
+# 2. run RHO against it
+uv run python scripts/run_evolution.py \
+  --dataset datasets/gaia/gaia_l1_validation_tiny5__baseline__20260812_180239 \
+  --grader expected_regex --harness vanilla \
+  --mode rho --tasks 5 --rho-rounds 1 \
+  --rho-history data/live_traces/genetic \
+  --rho-coreset-size 3 --rho-group-rollouts 2 \
+  --rho-candidates 3 --rho-candidate-rollouts 2 \
+  --max-workers 10 --isolation process \
+  --rho-group-workers 3 --rho-rollout-workers 4 \
+  --trace-root data/live_traces/rho \
+  --rho-embedding-cache data/live_cache/rho/embedding \
+  --export-harness data/live_harnesses/rho \
+  2>&1 | tee terminal_output/rho_live/rho/run-rho.log
+```
+
+Measured wall-clock for that config on 12 cores, 10 process workers: **~32 min**
+for `rho`, **~34 min** for `rho-genetic`, **~9 min** for `genetic`. Most of it is
+model latency (20-47 s per reasoning-model call), not compute.
+
+### Known operational hazards
+
+- **Stale knowledge lock.** A crashed run can leave `.cuga/knowledge/.lock`
+  behind, after which every CUGA tool call fails with
+  `AttributeError: 'NoneType' object has no attribute '_config'` and rollouts fail
+  en masse. Fix: `rm -f .cuga/knowledge/.lock`.
+- **`.env` is not auto-loaded early enough.** `RuntimeSettings.from_env()` runs
+  before the dotenv load, so a live run needs the variables already exported:
+  `set -a && . ./.env && set +a` before the command.
+- **Two different models.** `LITELLM_MODEL` drives CUGA (Interface B); the
+  Interface A calls resolve their own model from `RuntimeSettings`. They can be
+  different models — check both before attributing behaviour to "the model".
+- **Interface B tool use is prompt-sensitive.** Whether a workspace agent calls
+  any tool is close to a deterministic function of prompt wording. If you edit
+  `WORKSPACE_AGENT_TOOL_CONTRACT` or an agent's instructions, re-measure on a live
+  round; a toy single-tool probe does **not** predict real-agent behaviour.
 
 ---
 
@@ -235,6 +516,75 @@ only — no payloads, regexes, or expected answers.
 An artifact with no CUGA harness slot is recorded under
 `provenance.unexported_artifacts` rather than silently dropped or mislabelled as a
 skill.
+
+### 4b.2b Reading an exported harness
+
+```bash
+# one file: surfaces + provenance, explained
+uv run python scripts/read_harness.py data/live_harnesses/rho/champion.json
+
+# what actually changed vs the base
+uv run python scripts/read_harness.py data/live_harnesses/rho/champion.json \
+  --base data/live_harnesses/rho/candidate-base.json
+
+# whole export dir: one row per candidate, base first
+uv run python scripts/read_harness.py data/live_harnesses/rho --lineage
+
+# every artifact body in full
+uv run python scripts/read_harness.py <file> --full
+```
+
+**The schema.** Surfaces are implicit in the key names — there is no `artifacts`
+wrapper:
+
+| JSON key | Artifact id(s) | Shape |
+| --- | --- | --- |
+| `instructions` | `instructions` | scalar string |
+| `skills` | `skills/<name>` | `{name: body}` |
+| `policies` | `policies/<name>` | `{name: body}` |
+| `memory` | `memory/<name>` | `{name: body}` |
+| `version` | — | what the harness *claims to be*; stamped on every trace |
+| `export_format` | — | `agent-evolve-harness-v1` |
+| `provenance` | — | lineage + score record (below) |
+
+An **absent key means that surface is empty**, not defaulted. `version` is
+authoritative, not the filename: `HarnessVersion.from_path` refuses to infer a
+version from a filename, so renaming a file cannot change what it claims to be.
+
+Artifacts created by evolution are named `skills/generated-<name>`, so
+`grep generated- ` on a harness tells you whether the run *created* anything or
+only edited what already existed.
+
+**`provenance` — what each field means.** Written by `harness_payload`
+(`pipeline.py:1533`); ignored by the loader, so it travels with the file without
+affecting `--harness`.
+
+| Field | Meaning |
+| --- | --- |
+| `candidate_id` | identity in the persistent pool |
+| `candidate_version` | the version rollouts actually ran under |
+| `source_base_version` | the base this was derived from |
+| `parent_ids` | immediate parent(s) edited from |
+| `ancestor_ids` | full lineage back to the base |
+| `origin_attempt_ids` | the attempt(s) that produced it |
+| `attempt_ids` | attempts recorded *against* it |
+| `is_base` / `is_champion` | whether it is the unmodified base / won champion selection |
+| `mean_score` | mean over scored cells — **read with `scored_cells`** |
+| `scored_cells` | how many `(task, mechanism)` cells were measured |
+| `grader_name` | which grader produced those scores |
+| `task_ids` | tasks in the run it was measured in |
+| `unexported_artifacts` | artifact ids with **no CUGA harness slot** — kept verbatim so they are recoverable, but the agent will **not** load them |
+
+> **`mean_score` without `scored_cells` is meaningless.** A candidate showing
+> `mean_score: 1.00` on `scored_cells: 1` beat one lucky task; the base showing
+> `0.75` on `4` cells is far better evidenced. The reader script prints a caveat
+> when `scored_cells <= 3`. See also `--champion-min-coverage-fraction`, which at
+> its default `0.0` permits exactly this.
+
+**Only pool survivors are exported.** Discarded candidates (`NO_TOOL_CALL`,
+`NO_OP`, `NOT_FINALIZED`, `IDENTICAL`, `DUPLICATE`) are named in the round output
+but their artifacts are not persisted, so a failed proposal cannot be inspected
+after the run.
 
 ### 4b.3 Re-run it as inference
 

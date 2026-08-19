@@ -66,6 +66,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -84,6 +85,7 @@ from agent_evolve.benchmarks.cuga_executor import (  # noqa: E402
     CugaExecutorError,
 )
 from agent_evolve.core.evaluation import ScoreTally  # noqa: E402
+from agent_evolve.cuga_wrapper import ALLOW_RESPONSE_CACHE_ENV  # noqa: E402
 from agent_evolve.core.run_logging import (  # noqa: E402
     ALL_LOG_CHANNELS,
     LogCaptureConfig,
@@ -284,8 +286,218 @@ def build_parser() -> argparse.ArgumentParser:
             "corrupt evidence."
         ),
     )
+    parser.add_argument(
+        "--allow-response-cache",
+        action="store_true",
+        help=(
+            "permit the upstream gateway's response cache. OFF by default "
+            "because a cached repeat returns ONE observation N times: verified "
+            "live, four identical requests shared a single response id and "
+            "identical text, so a G-group or R-repeat measures zero variance "
+            "while every counter still reports N rollouts. Enable only to "
+            "reproduce a pre-fix run or to cut spend on a run whose rollout "
+            "diversity does not matter."
+        ),
+    )
+    _add_budget_arguments(parser)
+    _add_tuning_arguments(parser)
     _add_rho_arguments(parser)
     return parser
+
+
+def _add_budget_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add spend caps.
+
+    Every :class:`BudgetLimits` field defaults to ``None`` (unlimited), and
+    nothing set them before, so any run was an uncapped run: a genetic loop
+    could issue rollouts and editor calls until the dataset ran out. These flags
+    are the only way to bound a run's cost. Omitted flags stay ``None``, so an
+    existing invocation behaves exactly as before.
+    """
+    group = parser.add_argument_group(
+        "budgets (spend caps; every default is UNLIMITED)",
+        "A cap is checked before the work is issued, so it refuses rather than "
+        "truncating a half-finished attempt. Unset means no limit.",
+    )
+    group.add_argument(
+        "--max-rollouts",
+        type=int,
+        default=None,
+        help="hard cap on total rollouts across the whole run (default: unlimited)",
+    )
+    group.add_argument(
+        "--max-attempts",
+        type=int,
+        default=None,
+        help="hard cap on edit attempts across the whole run (default: unlimited)",
+    )
+    group.add_argument(
+        "--max-accepted-edits",
+        type=int,
+        default=None,
+        help="stop accepting edits after this many (default: unlimited)",
+    )
+    group.add_argument(
+        "--max-editor-calls",
+        type=int,
+        default=None,
+        help="hard cap on editor-agent invocations (default: unlimited)",
+    )
+    group.add_argument(
+        "--max-judge-verdicts",
+        type=int,
+        default=None,
+        help="hard cap on analyzer/judge calls (default: unlimited)",
+    )
+    group.add_argument(
+        "--max-model-tokens",
+        type=int,
+        default=None,
+        help="hard cap on model tokens across the run (default: unlimited)",
+    )
+    group.add_argument(
+        "--max-wall-seconds",
+        type=float,
+        default=None,
+        help="hard cap on run wall-clock seconds (default: unlimited)",
+    )
+    group.add_argument(
+        "--max-pool-candidates",
+        type=int,
+        default=None,
+        help=(
+            "cap the persistent pool size. NOTE: RHO retains all N candidates by "
+            "design; setting this can refuse a retention the design requires "
+            "(default: unlimited)"
+        ),
+    )
+    group.add_argument(
+        "--max-history-records",
+        type=int,
+        default=None,
+        help="cap edit-memory history records supplied to the editor (default: unlimited)",
+    )
+    group.add_argument(
+        "--max-rag-context-tokens",
+        type=int,
+        default=None,
+        help="cap retrieved-context tokens handed to the editor (default: unlimited)",
+    )
+    group.add_argument(
+        "--edit-max-retries",
+        type=int,
+        default=3,
+        help="retries per edit attempt before it is abandoned (default: 3)",
+    )
+
+
+def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the algorithm knobs that ``ResolvedConfig`` already accepted.
+
+    These were reachable only from Python. Each one maps 1:1 onto a
+    ``resolve_profile`` override, and omitting a flag leaves the profile default
+    untouched, so nothing changes for an existing invocation.
+    """
+    group = parser.add_argument_group(
+        "algorithm tuning (selection, entropy, clustering, champion weights)",
+        "Every flag here overrides one ResolvedConfig field. Unset means the "
+        "--profile default stands.",
+    )
+    # --- DPP coreset / issue selection ---
+    group.add_argument("--dpp-max-items", type=int, default=None,
+                       help="max items considered by the DPP (default: 100)")
+    group.add_argument("--dpp-theta", type=float, default=None,
+                       help="DPP quality/diversity tradeoff in [0,1] (default: 0.7)")
+    group.add_argument("--dpp-score-floor", type=float, default=None,
+                       help="minimum normalized quality in [0,1] (default: 0.1)")
+    group.add_argument("--dpp-min-gain", type=float, default=None,
+                       help="stop greedy MAP below this marginal gain (default: 1e-12)")
+    # --- entropy-guided selection ---
+    group.add_argument("--entropy-refresh-mode",
+                       choices=("outer_iteration", "accepted_edits", "pool_growth"),
+                       default=None,
+                       help="when entropy is recomputed (default: outer_iteration)")
+    group.add_argument("--entropy-score-floor", type=float, default=None,
+                       help="minimum score for an entropy cell in [0,1]")
+    group.add_argument("--entropy-recombination-score-threshold", type=float,
+                       default=None, help="score above which recombination is allowed")
+    group.add_argument("--entropy-frontier-weight", type=float, default=None,
+                       help="weight on frontier novelty in [0,1]")
+    group.add_argument("--entropy-min-comparable-candidates", type=int, default=None,
+                       help=(
+                           "candidates a cell needs before entropy may drive "
+                           "selection (default: 3). With --rho-candidates below "
+                           "this, cross-candidate entropy stays inert"
+                       ))
+    group.add_argument("--entropy-min-rollouts-per-candidate", type=int, default=None,
+                       help=(
+                           "rollouts per candidate before its cell counts as "
+                           "comparable (default: 2; this is the R that "
+                           "--rho-candidate-rollouts must meet)"
+                       ))
+    # --- mechanism clustering ---
+    group.add_argument("--cluster-similarity-threshold", type=float, default=None,
+                       help="cosine threshold for one mechanism cluster in [0,1]")
+    group.add_argument("--max-clusters-per-task", type=int, default=None,
+                       help="cap mechanism clusters retained per task")
+    # --- validation probes ---
+    group.add_argument("--generalization-probe-mode",
+                       choices=("deferred", "enabled"), default=None,
+                       help=(
+                           "cluster-level generalization probes. 'deferred' "
+                           "(default) records them without spending rollouts"
+                       ))
+    group.add_argument("--probe-budget-fraction", type=float, default=None,
+                       help="fraction of rollouts reserved for probes (default: 0.15)")
+    # --- champion selection weights ---
+    group.add_argument("--champion-alpha", type=float, default=None,
+                       help="champion weight: mean score (default: 0.55)")
+    group.add_argument("--champion-beta", type=float, default=None,
+                       help="champion weight: coverage (default: 0.20)")
+    group.add_argument("--champion-gamma", type=float, default=None,
+                       help="champion weight: worst-case (default: 0.15)")
+    group.add_argument("--champion-delta", type=float, default=None,
+                       help="champion weight: novelty (default: 0.10)")
+    group.add_argument("--champion-min-coverage-fraction", type=float, default=None,
+                       help=(
+                           "minimum task coverage before a candidate may be "
+                           "champion (default: 0.0). Raise this to stop a "
+                           "candidate winning on one lucky task"
+                       ))
+    _add_ablation_arguments(parser)
+
+
+def _add_ablation_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add per-feature ablation switches.
+
+    ``--profile`` sets these five gates as a bundle; an ablation study needs to
+    move exactly one. Each flag is a tri-state: unset leaves the profile's value
+    alone, so these compose with ``--profile`` instead of replacing it.
+    """
+    group = parser.add_argument_group(
+        "ablations (override individual feature gates set by --profile)",
+        "Unset leaves the profile default. Use these to isolate one mechanism.",
+    )
+    for flag, dest, what in (
+        ("causal-blame", "use_causal_blame",
+         "causal blame graphs for choosing the artifact to edit"),
+        ("edit-memory", "use_edit_memory",
+         "edit memory (past attempts shown to the editor)"),
+        ("focused-validation", "use_focused_validation",
+         "focused validation (origin cases, worked sets, regression probes)"),
+        ("entropy-selection", "use_entropy_selection",
+         "entropy-guided parent selection"),
+        ("parallel-execution", "parallel_execution",
+         "parallel batch execution (snapshots, write leases, coordinator)"),
+    ):
+        group.add_argument(
+            f"--enable-{flag}", dest=dest, action="store_true", default=None,
+            help=f"force ON: {what}",
+        )
+        group.add_argument(
+            f"--disable-{flag}", dest=dest, action="store_false", default=None,
+            help=f"force OFF: {what}",
+        )
 
 
 def _add_rho_arguments(parser: argparse.ArgumentParser) -> None:
@@ -508,11 +720,93 @@ def _print_header(stack: EvolutionStack) -> None:
     print("=" * 72)
     for line in stack.header_lines:
         print(line)
+    # Sampling provenance: a cached rollout is one observation reported N times,
+    # so a reader comparing two runs must be able to see which regime produced
+    # the numbers without reconstructing the command line.
+    cached = os.getenv(ALLOW_RESPONSE_CACHE_ENV)
+    if cached and cached.strip().lower() in {"1", "true", "yes", "on"}:
+        print(
+            "response cache : ALLOWED -- repeated identical prompts may return "
+            "one cached observation N times; rollout variance is not measured"
+        )
+    else:
+        print("response cache : disabled (each rollout is an independent sample)")
     print("=" * 72)
 
 
 def _print_tally(label: str, tally: ScoreTally) -> None:
     print(f"{label:<16}: {tally.summary}")
+
+
+def resolve_config_overrides(args: argparse.Namespace) -> dict:
+    """Turn the budget / tuning / ablation flags into ``resolve_profile`` kwargs.
+
+    Only flags the user actually passed appear in the result. An unset flag is
+    ``None`` and is omitted, so the ``--profile`` default stands and an existing
+    invocation resolves to exactly the config it did before.
+
+    ``--edit-max-retries`` is the one budget field with a real default (3), so it
+    is always sent; sending ``None`` there would violate its type.
+    """
+    from agent_evolve.core.config import BudgetLimits, FeatureGates
+
+    overrides: dict = {}
+
+    scalar_fields = (
+        "dpp_max_items", "dpp_theta", "dpp_score_floor", "dpp_min_gain",
+        "entropy_refresh_mode", "entropy_score_floor",
+        "entropy_recombination_score_threshold", "entropy_frontier_weight",
+        "entropy_min_comparable_candidates", "entropy_min_rollouts_per_candidate",
+        "cluster_similarity_threshold", "max_clusters_per_task",
+        "generalization_probe_mode", "probe_budget_fraction",
+        "champion_alpha", "champion_beta", "champion_gamma", "champion_delta",
+        "champion_min_coverage_fraction",
+    )
+    for name in scalar_fields:
+        value = getattr(args, name, None)
+        if value is not None:
+            overrides[name] = value
+
+    budget_fields = (
+        "max_attempts", "max_accepted_edits", "max_model_tokens", "max_rollouts",
+        "max_judge_verdicts", "max_editor_calls", "max_wall_seconds",
+        "max_pool_candidates", "max_history_records", "max_rag_context_tokens",
+    )
+    budget_kwargs = {
+        name: getattr(args, name)
+        for name in budget_fields
+        if getattr(args, name, None) is not None
+    }
+    retries = getattr(args, "edit_max_retries", None)
+    # Only send retries when the user actually moved it. Sending the default
+    # would emit a ``budgets`` override on a run that passed no budget flag,
+    # which makes "no flags" indistinguishable from "explicitly default" in the
+    # manifest.
+    if retries is not None and retries != 3:
+        budget_kwargs["edit_max_retries"] = retries
+    if budget_kwargs:
+        overrides["budgets"] = BudgetLimits(**budget_kwargs)
+
+    # Ablations are tri-state: only a gate the user moved is overridden, so these
+    # compose with --profile rather than replacing the whole bundle.
+    gate_fields = (
+        "use_causal_blame", "use_edit_memory", "use_focused_validation",
+        "use_entropy_selection", "parallel_execution",
+    )
+    moved = {
+        name: getattr(args, name)
+        for name in gate_fields
+        if getattr(args, name, None) is not None
+    }
+    if moved:
+        from agent_evolve.core.config import PROFILE_GATES
+
+        base = PROFILE_GATES.get(args.profile)
+        if base is None:
+            raise SystemExit(f"error: unknown profile {args.profile!r}")
+        overrides["features"] = FeatureGates(**{**base, **moved})
+
+    return overrides
 
 
 def _build_live(
@@ -571,6 +865,7 @@ def _build_live(
             profile=args.profile,
             allow_unsafe_concurrency=args.allow_unsafe_concurrency,
             log_capture=log_capture,
+            config_overrides=resolve_config_overrides(args),
         )
     except CugaExecutorError as exc:
         # Every refusal here is a measured one: an unsafe worker count, an
@@ -725,6 +1020,14 @@ def _run_rho_rounds(
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
+    # Set before any CUGA import and before the process pool forks: rollout
+    # workers are separate processes that build their own wrapper, so the
+    # environment is the only channel that reaches them.
+    if args.allow_response_cache:
+        os.environ[ALLOW_RESPONSE_CACHE_ENV] = "1"
+    else:
+        os.environ.pop(ALLOW_RESPONSE_CACHE_ENV, None)
+
     if args.tasks < 1:
         print("--tasks must be >= 1")
         return 2
@@ -761,6 +1064,7 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             profile=args.profile,
             log_capture=log_capture,
+            config_overrides=resolve_config_overrides(args),
         )
     else:
         built = _build_live(args, log_capture)

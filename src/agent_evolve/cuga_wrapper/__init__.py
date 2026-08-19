@@ -98,6 +98,119 @@ def _require_autonomous_mode() -> None:
         )
 
 
+#: Body parameters that disable the upstream gateway's response cache.
+#:
+#: MUST travel inside ``extra_body``. Verified live on 2026-08-18 against both
+#: ``azure/gpt-5.6-luna`` and ``gcp/gemini-3.6-flash``: four identical requests
+#: returned ONE shared response ``id`` and identical text by default, and four
+#: distinct ids with four distinct completions once these keys were sent.
+#:
+#: Two alternatives fail silently and must not be substituted:
+#:
+#: * ``extra_params={"caching": False}`` in model settings -- CUGA merges it into
+#:   ``litellm_params`` but the langchain client is a pydantic model with no
+#:   ``caching`` field and no extras, so it is discarded before the wire.
+#: * a bare ``model_kwargs={"caching": False}`` -- reaches litellm (confirmed by
+#:   wire capture) but is consumed as litellm's own client-side cache setting and
+#:   never forwarded upstream; output stays byte-identical.
+#:
+#: Both forms are sent because the gateway honors either, and a gateway upgrade
+#: that drops one should not silently re-enable caching.
+CACHE_BYPASS_EXTRA_BODY: dict[str, object] = {
+    "caching": False,
+    "cache": {"no-cache": True},
+}
+
+
+def apply_response_cache_policy(model: object, *, disable_cache: bool) -> None:
+    """Disable the upstream response cache on a constructed chat client.
+
+    Rollout diversity is the evidence that RHO's ``G`` group and the genetic
+    path's ``R`` repeats exist to gather. A cached repeat returns one observation
+    N times, so variance collapses to zero while every counter still reports N
+    rollouts -- evidence that looks abundant and is not.
+
+    Never raises. ``model_kwargs`` is a langchain implementation detail; if a
+    future client drops it, a less-diverse rollout is strictly better than a
+    crashed run. Merges into any existing ``extra_body`` rather than replacing
+    it, since that channel is shared with other provider parameters.
+    """
+    if not disable_cache:
+        return
+    existing = getattr(model, "model_kwargs", None)
+    if existing is None and not hasattr(model, "model_kwargs"):
+        return
+    model_kwargs = dict(existing) if isinstance(existing, dict) else {}
+    extra_body_raw = model_kwargs.get("extra_body")
+    extra_body = dict(extra_body_raw) if isinstance(extra_body_raw, dict) else {}
+    extra_body.update(CACHE_BYPASS_EXTRA_BODY)
+    model_kwargs["extra_body"] = extra_body
+    try:
+        model.model_kwargs = model_kwargs  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - defensive, never fail a rollout
+        return
+
+
+#: Marker attribute so repeated installs do not stack wrappers.
+_CACHE_POLICY_MARKER = "_agent_evolve_cache_policy_installed"
+
+#: Opt back INTO the upstream response cache. Set by ``--allow-response-cache``.
+#:
+#: An environment variable rather than a plain argument because ``--isolation
+#: process`` executes every rollout in a child process that builds its own
+#: wrapper: a constructor value in the parent never reaches it. This is the only
+#: channel the serial and parallel paths share.
+ALLOW_RESPONSE_CACHE_ENV = "AGENT_EVOLVE_ALLOW_RESPONSE_CACHE"
+
+
+def response_cache_disabled(default: bool = True) -> bool:
+    """Whether to disable the upstream response cache for this process.
+
+    Only an explicit truthy opt-in re-enables caching. ``0``/``false``/empty are
+    ignored, so a leftover blank export cannot silently restore cached rollouts
+    and collapse the variance the run is trying to measure.
+    """
+    raw = os.getenv(ALLOW_RESPONSE_CACHE_ENV)
+    if raw is not None and raw.strip().lower() in {"1", "true", "yes", "on"}:
+        return False
+    return default
+
+
+def install_response_cache_policy(manager: object, *, disable_cache: bool) -> None:
+    """Apply the cache policy to every LLM CUGA builds for this process.
+
+    ``LLMManager`` is a process-wide singleton holding its own model cache, and
+    ``get_model`` hands back clients through three paths: a pre-instantiated
+    model, a cache hit, and a fresh construction. All three call
+    ``_update_model_parameters`` on the way out, which makes it the only choke
+    point that covers an entire multi-role run.
+
+    Wrapping ``_create_llm_instance`` instead would miss every cache hit, so the
+    first agent role would sample correctly and every later one would silently
+    fall back to cached completions -- the worst outcome, because the run still
+    looks instrumented.
+    """
+    if not disable_cache:
+        return
+    if getattr(manager, _CACHE_POLICY_MARKER, False):
+        return
+    original = getattr(manager, "_update_model_parameters", None)
+    if not callable(original):
+        return
+
+    def _patched(model, *args, **kwargs):
+        updated = original(model, *args, **kwargs)
+        target = updated if updated is not None else model
+        apply_response_cache_policy(target, disable_cache=True)
+        return updated
+
+    try:
+        manager._update_model_parameters = _patched  # type: ignore[attr-defined]
+        setattr(manager, _CACHE_POLICY_MARKER, True)
+    except Exception:  # pragma: no cover - defensive, never fail a rollout
+        return
+
+
 def _construct_agent(
     harness_config: Mapping[str, object],
     default_tools: list,
@@ -1673,9 +1786,18 @@ class CugaWrapper:
 
     @classmethod
     def from_cuga(
-        cls, settings: RuntimeSettings, trace_config: TraceConfig | None = None
+        cls,
+        settings: RuntimeSettings,
+        trace_config: TraceConfig | None = None,
+        disable_response_cache: bool = True,
     ) -> "CugaWrapper":
-        return cls(CugaSdkRuntime.from_settings(settings, trace_config), settings, trace_config)
+        return cls(
+            CugaSdkRuntime.from_settings(
+                settings, trace_config, disable_response_cache=disable_response_cache
+            ),
+            settings,
+            trace_config,
+        )
 
     def run_task(self, task_id: str, harness_config: Mapping[str, object]) -> dict[str, object]:
         trace = self._runtime.run_task(task_id, harness_config)
@@ -1860,11 +1982,25 @@ class CugaSdkRuntime:
 
     @classmethod
     def from_settings(
-        cls, settings: RuntimeSettings, trace_config: TraceConfig | None = None
+        cls,
+        settings: RuntimeSettings,
+        trace_config: TraceConfig | None = None,
+        disable_response_cache: bool = True,
     ) -> "CugaSdkRuntime":
         settings.configure_cuga_environment()
         os.environ["SKILLS_ROOT"] = resolve_skills_root()
         _require_autonomous_mode()
+
+        # Rollout diversity is the evidence RHO's ``G`` group and the genetic
+        # path's ``R`` repeats exist to gather, so the upstream response cache is
+        # disabled by default. Installed on the LLMManager singleton because that
+        # is where CUGA builds a client for every agent role.
+        from cuga.backend.llm.models import LLMManager
+
+        install_response_cache_policy(
+            LLMManager(),
+            disable_cache=response_cache_disabled(disable_response_cache),
+        )
 
         from agent_evolve.cuga_wrapper.tools import build_tools
 
