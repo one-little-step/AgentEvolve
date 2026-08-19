@@ -11,11 +11,16 @@ Central register of known defects, unenforced surfaces, and unverified claims.
 
 **Not tracked here**
 - **SEVERE, measurement-instrument defects** live in `docs/SEVERE-OPEN-ISSUES.md`
-  (SV-1..SV-9). Those are **deferred until the LiteLLM logging proxy exists**,
+  (SV-1..SV-12). Those are **deferred until the LiteLLM logging proxy exists**,
   because each one runs without error and produces a plausible number or a silent
   empty result that cannot currently be distinguished from success. That file
   supersedes the former **S5-1** (champion acceptance gate → **SV-4**) and
   **S5-2** (crashed rollouts → **SV-9**), which were moved there.
+  **SV-11 is the most structural**: the analyzer observes only `pool.base`, so no
+  candidate is ever mechanism-analyzed — which makes `--mode genetic` repeated
+  mutation of a fixed base rather than population evolution, starves
+  cross-candidate entropy (**SV-12**), and blocks parent-targeted editing
+  (**SV-10**).
 - RHO **paper-fidelity prompt gaps** live in
   `docs/research/rho-paper-prompt-fidelity.md`, not in this register. They are not
   defects in the implementation; they are divergences between our reward rubrics
@@ -170,6 +175,12 @@ for a pass rate depends on which it was. Cost one diagnostic round this session.
 
 Fix direction: propagate the first `*_error` payload into the manifest. The value
 already exists in `causal-trace.json` as `trace.error`.
+
+**Status update 2026-08-19.** This is no longer a blocker for *excluding* crashed
+rollouts from evidence — SV-9 closed that on both the GEPA and RHO paths using
+`trace.status` against the `ANSWERED_TRACE_STATUSES` whitelist, which does not
+need the manifest. S1-6 remains open for *attribution*: a reader still cannot tell
+a transport failure from a harness failure, and the two need opposite responses.
 
 ### S1-7 UNCONFIRMED — preference judge may receive identical trajectories
 
@@ -350,9 +361,16 @@ comprehender, difficulty judge, diagnoser, optimizer and preference judge write 
 none of them, so diagnosing an RHO phase means grepping ~20k lines of interleaved
 stdout. Observed while diagnosing S2-1 and the `NO_TOOL_CALL` failures.
 
-### S4-7 Evolution attempt records are not persisted
+### S4-7 Evolution attempt records are not persisted — FIXED 2026-08-19
 
 Already noted in `USER-MANUAL.md §7.6`. Carried here so it is tracked in one place.
+
+**Resolved as part of SV-6.** The root cause was not a persistence bug: nothing
+ever called `EditMemory.record()` in production, because `SequentialGepaRunner`
+(the class the pipeline actually builds) had no edit memory at all. Attempts are
+now recorded on every terminal path, and the pipeline hands the runner an
+`EditMemory(storage=storage)` shared with the editor. See
+`docs/SEVERE-OPEN-ISSUES.md` § SV-6 and `tests/test_runner_edit_memory.py`.
 
 ### S4-8 An interrupted run destroys every candidate it already produced
 

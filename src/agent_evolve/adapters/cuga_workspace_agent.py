@@ -24,6 +24,7 @@ cosmetic gain.
 from __future__ import annotations
 
 import functools
+import gc
 import inspect
 import os
 from dataclasses import dataclass
@@ -281,14 +282,35 @@ def _run_real_agent(
     )
 
     async def run() -> tuple[str, tuple]:
-        await agent.initialize()
-        # One execution only. track_tool_calls surfaces the SDK's own aggregated
-        # list, which is independent evidence from our ledger -- not a
-        # replacement for it.
-        result = await agent.invoke(prompt, track_tool_calls=True)
-        return str(result), tuple(getattr(result, "tool_calls", ()) or ())
+        # `aclose`, NOT `close`: verified against the installed SDK, CugaAgent
+        # exposes `aclose` and has no `close`. A teardown written as
+        # `agent.close()` raises AttributeError, and if that were swallowed the
+        # leak would persist while looking fixed.
+        #
+        # `finally` is load-bearing. A failing agent is the case most likely to
+        # be retried, so leaking on the error path leaks fastest exactly when
+        # things are already going wrong. The RHO round drives N*k of these per
+        # round in the parent process (2026-08-19: ~90 GB, machine killed).
+        try:
+            await agent.initialize()
+            # One execution only. track_tool_calls surfaces the SDK's own
+            # aggregated list, which is independent evidence from our ledger --
+            # not a replacement for it.
+            result = await agent.invoke(prompt, track_tool_calls=True)
+            return str(result), tuple(getattr(result, "tool_calls", ()) or ())
+        finally:
+            aclose = getattr(agent, "aclose", None)
+            if aclose is not None:
+                await aclose()
 
-    return asyncio.run(run())
+    try:
+        return asyncio.run(run())
+    finally:
+        # Drop the last strong reference before collecting: the agent holds the
+        # graph, tool closures and message history, so a surviving reference
+        # would keep all of it alive across the next invocation.
+        del agent
+        gc.collect()
 
 
 def run_workspace_agent(

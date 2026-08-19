@@ -144,6 +144,47 @@ class ScoreCell:
         objectives use ``score * severity * confidence`` rather than the raw
         mean. A cell with no rollouts yields 0.0 and is never treated as
         evidence.
+
+        .. warning::
+
+           **Both weights are inert in every production path today, so this
+           returns ``self.mean`` unchanged.** Verified, not assumed: no caller
+           anywhere in ``src/`` passes ``severity=`` or ``confidence=`` to
+           :class:`ScoreProvenance`. All four construction sites --
+           ``core/orchestrator.py:342``, ``:1498``, ``:1872`` and
+           ``pipeline.py:1469`` -- omit them, the class is frozen, and there is
+           no ``dataclasses.replace``/``**kwargs`` path, so both hold their
+           ``1.0`` defaults for the lifetime of every cell.
+
+           There are **two unrelated fields named ``severity``** and conflating
+           them is the trap here:
+
+           * **(A)** ``CausalAnalysis.severity`` / ``CausalFinding.severity``
+             -- the diagnoser's per-candidate LLM judgment. Genuinely written
+             (``core/orchestrator.py:462``, ``:611``, ``:1405``) and consumed by
+             issue synthesis, issue selection, and DPP targeting.
+           * **(B)** ``ScoreProvenance.severity`` -> :attr:`ScoreCell.severity`
+             -> this method -- the ``(task, mechanism)`` difficulty weight the
+             spec asks for. **Never written.**
+
+           (A) never flows into (B). A reading that assumes it does concludes
+           this method creates a perverse selection gradient -- that a candidate
+           the diagnoser is more alarmed about wins. It cannot: (B) is constant
+           at ``1.0`` for every candidate, so it cancels in every comparison.
+
+           A second trap sits alongside: :class:`ScoreProvenance` carries both
+           ``blame_confidence`` (always passed) and ``confidence`` (never
+           passed). Every production site sets the former, which reads as though
+           the weight is wired. This method uses the latter.
+
+           Consequences while this stands: Pareto dominance weights an easy task
+           and a hard one identically, and :meth:`PersistentPool.parent_frequencies`
+           degenerates to a count of cells won. Tracked as SV-1 (reclassified
+           from "perverse gradient" to "inert multiplier", joining SV-5) in
+           ``docs/SEVERE-OPEN-ISSUES.md``. Note that any test which passes
+           ``severity=``/``confidence=`` by hand exercises a path production
+           cannot take, so it demonstrates the arithmetic rather than the
+           behaviour.
         """
         return self.mean * self.severity * self.confidence
 
@@ -161,6 +202,16 @@ class PoolEntry:
     score_tensor: dict[tuple[str, str], ScoreCell] = field(default_factory=dict)
     # Origin attempt IDs (RHO proposals or edits).
     origin_attempt_ids: tuple[str, ...] = ()
+    #: Symmetric pairwise preference ``S_j`` against the incumbent, in [-1, 1].
+    #:
+    #: ``None`` means *no verdict was obtained*, which is deliberately distinct
+    #: from ``0.0`` (a measured tie). Collapsing the two would make the ``S_j >
+    #: 0`` gate reject an unjudged candidate for the wrong stated reason, and
+    #: would make "the judge failed" indistinguishable from "the judge saw no
+    #: difference" in an exported manifest.
+    preference: float | None = None
+    preference_available: int = 0
+    preference_unavailable: int = 0
 
     @property
     def candidate_id(self) -> str:
@@ -228,6 +279,13 @@ class ChampionReport:
     aggregate: float
     tie_breaker: str = "ascending_candidate_id"
     disqualifications: tuple[str, ...] = ()
+    #: The winner's ``S_j``, or ``None`` when it had no verdict (the base
+    #: normally has none: it is the comparison subject, not a candidate).
+    preference: float | None = None
+    #: Whether the RHO ``S_j > 0`` gate was enforced for this selection. An
+    #: exported manifest must state this, or a paper run and an ablation run
+    #: cannot be told apart after the fact.
+    preference_gate_applied: bool = True
 
     @property
     def candidate_id(self) -> str:
@@ -287,6 +345,35 @@ class PersistentPool:
         self._entries[candidate.candidate_id] = entry
         self._insertion_order.append(candidate.candidate_id)
         return entry
+
+    def record_preference(
+        self,
+        candidate_id: str,
+        preference: float,
+        *,
+        available: int,
+        unavailable: int = 0,
+    ) -> None:
+        """Attach the symmetric pairwise preference ``S_j`` to a candidate.
+
+        ``available`` is the number of judge verdicts that actually returned a
+        comparison. It is required rather than optional because ``preference``
+        alone cannot express "unjudged": with ``available == 0`` the stored
+        preference is forced to ``None`` no matter what value was passed, so an
+        undecided candidate can never present itself as a measured tie.
+        """
+        if candidate_id not in self._entries:
+            raise KeyError(f"unknown candidate: {candidate_id!r}")
+        if not (-1.0 <= float(preference) <= 1.0):
+            raise ValueError(
+                f"preference must be in [-1, 1], got {preference}"
+            )
+        if available < 0 or unavailable < 0:
+            raise ValueError("verdict counts must be >= 0")
+        entry = self._entries[candidate_id]
+        entry.preference = float(preference) if available > 0 else None
+        entry.preference_available = int(available)
+        entry.preference_unavailable = int(unavailable)
 
     def record_score(self, candidate_id: str, score: float, prov: ScoreProvenance) -> None:
         if candidate_id not in self._entries:
@@ -424,6 +511,14 @@ class PersistentPool:
         A candidate wins ``(t, m)`` when it holds the strict maximum comparable
         weighted score for that cell; ties award all tied winners. Returns a
         mapping over every candidate in insertion order (zero for non-winners).
+
+        .. warning::
+
+           ``severity`` and ``confidence`` are never written in production (see
+           :meth:`ScoreCell.weighted_score`), so the increment below is
+           effectively ``+= 1.0`` and this returns a **count of cells won**, not
+           the importance-weighted strength the formula above describes.
+           Tracked as SV-1.
         """
         # Group the weighted scores of every comparable cell across candidates.
         winners: dict[tuple[str, str], list[str]] = {}
@@ -502,6 +597,32 @@ class PersistentPool:
         are likewise disqualified before ranking. Ties break deterministically
         by ascending ``candidate_id``; the tie-breaker and the full
         disqualification list are recorded on the report.
+
+        **The RHO pairwise gate (SV-4).** Per RHO Algorithm 1 a candidate is
+        accepted only when its symmetric pairwise preference ``S_j > 0``. That
+        gate runs here, before the aggregate ranks anything, and is *eligibility*
+        rather than score: among survivors the aggregate still decides. Three
+        consequences worth being explicit about, because each is a decision and
+        not an accident:
+
+        * **Strict** ``> 0``. A measured tie is not evidence of improvement.
+        * **No verdict disqualifies.** ``preference is None`` means the judge
+          never returned a comparison, so there is no evidence the candidate
+          improved anything. The conservative reading is required: the permissive
+          alternative would let a candidate whose judging silently failed inherit
+          a promotion it never earned.
+        * **The base is exempt.** The incumbent is the comparison subject, not a
+          proposal competing for promotion. Gating it would empty the eligible
+          set whenever nothing improved and turn that ordinary outcome into a
+          ``ValueError``.
+
+        The gate governs *promotion only*. Pool membership is untouched --
+        AGENTS.md requires base plus every proposal to be retained, and the
+        negative evidence of a rejected candidate is exactly what a later
+        analysis needs.
+
+        Set ``config.experimental_candidate_promotion=True`` to disable the gate
+        for an ablation arm; the report records which mode was used.
         """
         alpha = config.champion_alpha if config is not None else 0.55
         beta = config.champion_beta if config is not None else 0.20
@@ -514,10 +635,20 @@ class PersistentPool:
 
         total_cells = self._observed_cells()
         disqualified = set(protected_floor_violations)
+        # Paper behaviour unless an ablation explicitly opts out.
+        gate_applied = not (
+            config.experimental_candidate_promotion if config is not None else False
+        )
         scored: list[tuple[float, str, PoolEntry, float, float, float, float]] = []
         for entry in self.all_entries():
             if entry.candidate_id in protected_floor_violations:
                 continue
+            # RHO Algorithm 1 acceptance gate. The base is exempt: it is the
+            # incumbent being compared against, never a promotion candidate.
+            if gate_applied and not entry.is_base:
+                if entry.preference is None or entry.preference <= 0.0:
+                    disqualified.add(entry.candidate_id)
+                    continue
             outcome = self._champion_outcome(entry)
             coverage = self._champion_coverage(entry, total_cells)
             if coverage < min_coverage_fraction:
@@ -550,6 +681,8 @@ class PersistentPool:
             aggregate=scored[0][0],
             tie_breaker="ascending_candidate_id",
             disqualifications=tuple(sorted(disqualified)),
+            preference=entry.preference,
+            preference_gate_applied=gate_applied,
         )
 
     # ------------------------------------------------------------------ #

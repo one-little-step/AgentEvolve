@@ -171,6 +171,29 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--max-rollouts-per-worker",
+        type=int,
+        default=None,
+        help=(
+            "replace a CUGA worker process after this many rollouts (default: "
+            "25). Bounds the dominant memory-growth term: a worker reuses one "
+            "CugaWrapper and the SDK's per-invocation state is never released "
+            "between calls, so an unbounded worker grows monotonically for the "
+            "whole run. Lower it if RAM is tight; raise it to amortise worker "
+            "startup over more rollouts."
+        ),
+    )
+    parser.add_argument(
+        "--cleanup-on-exit",
+        action="store_true",
+        help=(
+            "at end of run, kill orphaned Playwright browsers and prune "
+            "cuga_workspace/ directories older than one hour. Off by default "
+            "because it terminates processes and deletes directories; the run "
+            "always REPORTS what it would reclaim either way."
+        ),
+    )
+    parser.add_argument(
         "--analyzer-workers",
         type=int,
         default=1,
@@ -463,6 +486,20 @@ def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
                            "minimum task coverage before a candidate may be "
                            "champion (default: 0.0). Raise this to stop a "
                            "candidate winning on one lucky task"
+                       ))
+    # Ablation switch, not a feature toggle. Absent (the default) the RHO paper's
+    # S_j > 0 acceptance gate is ACTIVE; passing this disables it so a run can
+    # measure what the pairwise judge contributes. `store_true` with
+    # default=None keeps it out of `overrides` unless explicitly passed.
+    group.add_argument("--experimental-candidate-promotion",
+                       action="store_true", default=None,
+                       help=(
+                           "ABLATION: disable the RHO pairwise acceptance gate "
+                           "(S_j > 0) and rank candidates by the grader "
+                           "aggregate alone. Default (absent) is paper "
+                           "behaviour: a candidate may only become champion if "
+                           "the symmetric preference judge prefers it to the "
+                           "incumbent"
                        ))
     _add_ablation_arguments(parser)
 
@@ -761,6 +798,7 @@ def resolve_config_overrides(args: argparse.Namespace) -> dict:
         "generalization_probe_mode", "probe_budget_fraction",
         "champion_alpha", "champion_beta", "champion_gamma", "champion_delta",
         "champion_min_coverage_fraction",
+        "experimental_candidate_promotion",
     )
     for name in scalar_fields:
         value = getattr(args, name, None)
@@ -851,6 +889,7 @@ def _build_live(
             harness=harness,
             task_limit=args.tasks,
             max_workers=args.max_workers,
+            max_rollouts_per_worker=args.max_rollouts_per_worker,
             analyzer_workers=args.analyzer_workers,
             isolation=args.isolation,
             worker_root=(
@@ -991,6 +1030,21 @@ def _run_rho_rounds(
         )
         if summary.preferences_available:
             print(f"    mean preference={summary.preference_mean:+.3f}")
+            # Per-candidate S_j and its gate consequence. The aggregate mean
+            # cannot show this: a positive mean can hide individually gated
+            # candidates, which is exactly what a reader needs to see.
+            for item in summary.evidence:
+                if not item.decided:
+                    print(
+                        f"      cand[{item.candidate_index}] S_j=n/a "
+                        f"(no verdict) -> INELIGIBLE"
+                    )
+                    continue
+                verdict = "eligible" if item.mean_preference > 0.0 else "GATED"
+                print(
+                    f"      cand[{item.candidate_index}] "
+                    f"S_j={item.mean_preference:+.3f} -> {verdict}"
+                )
         if summary.collapsed:
             # Never silent: a collapse to one candidate means the pairwise judge
             # compared a harness against itself.
@@ -1144,6 +1198,32 @@ def main(argv: list[str] | None = None) -> int:
         )
     finally:
         stack.close()
+        # Out-of-heap leaks: orphaned Playwright browsers and per-invocation
+        # workspace scratch. Neither is a Python object, so closing agents and
+        # recycling workers cannot reclaim them.
+        #
+        # Always REPORTS, only acts under --cleanup-on-exit: this kills processes
+        # and deletes directories, which must be an explicit choice. Best-effort
+        # throughout -- a cleanup failure must never turn a completed multi-hour
+        # measurement into a non-zero exit.
+        try:
+            from agent_evolve.benchmarks.cleanup import run_cleanup
+
+            report = run_cleanup(dry_run=not args.cleanup_on_exit)
+            if report.found_browsers or report.removed_dirs:
+                verb = "reclaimed" if args.cleanup_on_exit else "reclaimable"
+                print(
+                    f"  cleanup ({verb}): "
+                    f"{len(report.found_browsers)} browser process(es), "
+                    f"{report.removed_dirs} workspace dir(s), "
+                    f"{report.reclaimed_bytes / 1e9:.2f} GB"
+                )
+                if not args.cleanup_on_exit:
+                    print("    re-run with --cleanup-on-exit to reclaim")
+            for problem in report.errors:
+                print(f"    cleanup warning: {problem}")
+        except Exception as exc:  # noqa: BLE001 - cleanup must not fail a run
+            print(f"  cleanup skipped: {type(exc).__name__}: {exc}")
     return 0
 
 

@@ -944,6 +944,15 @@ class SequentialGepaRunner:
     seed: int = 0
     protected_floors: tuple[ProtectedFloor, ...] = ()
     net_gain_threshold: float = 0.0
+    #: Attempt history + retry budget. Every attempt this runner completes is
+    #: recorded here, which is what makes the editor's history tools return
+    #: anything: ``search_edit_history`` reads :meth:`EditMemory.retrieve` and
+    #: ``get_attempt_outcome`` reads :meth:`EditMemory.get`. Recording is also
+    #: the only path that charges :class:`RetryBudget`, so retry exhaustion
+    #: depends on it. This runner previously had no memory at all, so both tools
+    #: reported "no prior attempts" on every call and the retry budget never
+    #: counted an attempt (SV-6).
+    edit_memory: EditMemory = field(default_factory=EditMemory)
     # Donor parents offered to the editor alongside the primary (spec §7).
     donor_count: int = 2
     #: Measures every rollout and names the grader that did it. Defaults to the
@@ -1735,6 +1744,11 @@ class SequentialGepaRunner:
             parents=parents,
             creatable_prefix=getattr(self.adapter, "creatable_prefix", ""),
             pool_created_count=self._pool_created_count(),
+            # Prior attempts on this issue, so the editor is told what has
+            # already been tried instead of rediscovering it.
+            history_refs=tuple(
+                a.attempt_id for a in self.edit_memory.for_issue(issue.issue_id)
+            ),
         )
         repair = repair_once_then_classify(self.editor, request)
         observed = tuple(getattr(self.editor, "last_parents_read", ()))
@@ -2054,8 +2068,50 @@ class SequentialGepaRunner:
             artifact_ids=tuple(e.artifact_id for e in response.edits),
             fallback_reason=report.fallback_reason,  # type: ignore[attr-defined]
         )
+        self._record_in_edit_memory(
+            outcome, workspace, response, validation, decision
+        )
         self._persist_attempt(outcome, corrections)
         return outcome
+
+    def _record_in_edit_memory(
+        self,
+        outcome: GepaAttemptOutcome,
+        workspace: CandidateWorkspace,
+        response: EditorResponse,
+        report: FocusedValidationReport,
+        decision: AcceptanceDecision,
+    ) -> None:
+        """Record a completed attempt so the next editor call can see it.
+
+        Recorded for **rejected and regressed attempts too, not only accepted
+        ones**: the whole point of history is "do not repeat a strategy that
+        already failed", so the failures are the load-bearing entries.
+
+        Also the only path that charges :class:`RetryBudget`, whose counter lives
+        inside :meth:`EditMemory.record`.
+
+        A duplicate ``attempt_id`` would raise, which must not turn a completed
+        attempt into a crash; ids come from :meth:`_next_attempt_id` and are
+        unique per run, so a collision means two runners share one memory. That
+        is a wiring defect worth surfacing, but not at the cost of the attempt's
+        own result, so it is swallowed here and left to tests to catch.
+        """
+        attempt = build_attempt(
+            attempt_id=outcome.attempt_id,
+            candidate_id=workspace.version,
+            issue_id=outcome.issue_id,
+            response=response,
+            evidence_refs=(),
+            history_refs=(),
+            report=report,
+            decision=decision,
+        )
+        try:
+            record_attempt(self.edit_memory, attempt, workspace)
+        except ValueError:
+            # Duplicate attempt_id: already recorded. Nothing to add.
+            pass
 
     def _task_for(
         self, issue: TargetIssue, tasks: Sequence[EvolutionTask]

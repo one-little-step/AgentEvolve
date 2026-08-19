@@ -12,6 +12,7 @@ risk is accepted and guarded by test.
 from __future__ import annotations
 
 import functools
+import gc
 import os
 import tempfile
 from pathlib import Path
@@ -381,13 +382,26 @@ class CugaEditorAgent:
         )
 
         async def run() -> str:
-            await agent.initialize()
-            # track_tool_calls surfaces the SDK's own aggregated tool-call list,
-            # which is independent evidence from our wrapper's ledger.
-            result = await agent.invoke(prompt, track_tool_calls=True)
-            self.last_sdk_tool_calls = tuple(
-                getattr(result, "tool_calls", ()) or ()
-            )
-            return str(result)
+            # `aclose`, NOT `close`: the installed SDK exposes only `aclose`.
+            # `finally` so a failed edit -- the case a retry loop repeats -- does
+            # not leak the agent's graph and message history. See the 2026-08-19
+            # memory-exhaustion report: one agent per propose_edit, never closed.
+            try:
+                await agent.initialize()
+                # track_tool_calls surfaces the SDK's own aggregated tool-call
+                # list, which is independent evidence from our wrapper's ledger.
+                result = await agent.invoke(prompt, track_tool_calls=True)
+                self.last_sdk_tool_calls = tuple(
+                    getattr(result, "tool_calls", ()) or ()
+                )
+                return str(result)
+            finally:
+                aclose = getattr(agent, "aclose", None)
+                if aclose is not None:
+                    await aclose()
 
-        return asyncio.run(run())
+        try:
+            return asyncio.run(run())
+        finally:
+            del agent
+            gc.collect()

@@ -1,0 +1,45 @@
+{
+  "rules": [
+    {
+      "id": "example-pin-judge-verdict",
+      "enabled": false,
+      "when": {
+        "path_contains": "/chat/completions",
+        "body_contains": "preference"
+      },
+      "respond": {
+        "content": "{\"winner\": \"candidate\", \"score\": 0.8}"
+      }
+    },
+    {
+      "id": "example-inject-rate-limit",
+      "enabled": false,
+      "when": {
+        "path_contains": "/chat/completions"
+      },
+      "respond": {
+        "status": 429,
+        "raw_json": {
+          "error": {
+            "message": "injected rate limit",
+            "type": "rate_limit_error"
+          }
+        }
+      }
+    },
+    {
+      "id": "example-multi-sample",
+      "enabled": false,
+      "when": {
+        "body_contains": "PROPOSE_EDIT"
+      },
+      "respond": {
+        "content": [
+          "variant A",
+          "variant B",
+          "variant C"
+        ]
+      }
+    }
+  ]
+}

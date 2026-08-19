@@ -117,6 +117,7 @@ from typing import Any, Mapping
 from agent_evolve.core.run_logging import LogCaptureConfig, RunLogSink
 
 __all__ = [
+    "DEFAULT_MAX_ROLLOUTS_PER_WORKER",
     "DEFAULT_WORKER_START_TIMEOUT",
     "default_knowledge_seed",
     "CugaProcessPool",
@@ -130,6 +131,26 @@ __all__ = [
 #: How long a worker gets to report readiness. A cold CUGA import graph is ~10s
 #: on the observed machine; the margin covers a first-run embedding-model load.
 DEFAULT_WORKER_START_TIMEOUT = 600.0
+
+#: How many rollouts one worker serves before it is replaced.
+#:
+#: This is the fix for the dominant term in the 2026-08-19 memory exhaustion (a
+#: 3-round RHO run reached ~90 GB and killed the machine). Each worker builds one
+#: ``CugaWrapper`` and then serves every task with it. ``run_task`` drives the
+#: full CUGA agent graph per call, and nothing between calls releases the SDK's
+#: per-invocation state -- message histories, the in-memory instructions cache,
+#: context-summariser buffers, LangGraph run trees. With 12 workers and hundreds
+#: of rollouts that accumulation is unbounded and monotonic.
+#:
+#: Replacing the process is the only reliable reset: ``gc.collect()`` cannot free
+#: state the SDK still references, and we do not control its internals. Process
+#: death frees everything by construction, including leaked Playwright children.
+#:
+#: 25 balances two real costs. Worker startup is expensive (a cold CUGA import
+#: graph is ~10s), so recycling every rollout would add that to every task. Too
+#: high and the leak has room to grow. At 25 the restart cost is amortised to
+#: well under a second per rollout while capping steady-state RSS per worker.
+DEFAULT_MAX_ROLLOUTS_PER_WORKER = 25
 
 #: Sentinel the child prints once it can accept work.
 _READY = "AGENT_EVOLVE_WORKER_READY"
@@ -199,6 +220,11 @@ class _Worker:
     knowledge_dir: Path
     dbs_dir: Path
     lock: threading.Lock = field(default_factory=threading.Lock)
+    #: Rollouts this child has served since it started.
+    #:
+    #: Per-worker, not global: a global counter would trip every worker at the
+    #: same moment and stall the whole pool while all N children restarted.
+    rollouts_served: int = 0
 
 
 class CugaProcessPool:
@@ -221,6 +247,7 @@ class CugaProcessPool:
         task_timeout: float | None = None,
         knowledge_seed: Path | str | None = _UNSET,
         log_capture: LogCaptureConfig | None = None,
+        max_rollouts_per_worker: int = DEFAULT_MAX_ROLLOUTS_PER_WORKER,
     ) -> None:
         """
         :param root: directory under which each worker's private knowledge and
@@ -248,6 +275,12 @@ class CugaProcessPool:
         self.python_executable = python_executable or sys.executable
         self.start_timeout = start_timeout
         self.task_timeout = task_timeout
+        if max_rollouts_per_worker < 1:
+            raise ValueError(
+                "max_rollouts_per_worker must be >= 1; 0 or negative would "
+                "recycle a worker before it could serve any task"
+            )
+        self.max_rollouts_per_worker = max_rollouts_per_worker
         self.log_capture = log_capture or LogCaptureConfig()
         self._log_sink = RunLogSink(config=self.log_capture, channel="workers")
         self.knowledge_seed = (
@@ -448,12 +481,20 @@ class CugaProcessPool:
         Serialized per worker: one child runs one rollout at a time, which is
         what makes a worker's knowledge store single-writer and therefore
         lock-safe. Concurrency comes from having several workers.
+
+        The worker is replaced once it has served ``max_rollouts_per_worker``
+        rollouts. Recycling happens *before* the task is dispatched, never after,
+        so a task is only ever sent to a child that is going to survive long
+        enough to answer it -- recycling afterwards would risk killing a worker
+        whose reply was still in flight.
         """
         request = json.dumps(
             {"task_id": task_id, "harness_config": dict(harness_config)},
             default=str,
         )
         with lease.lock:
+            if lease.rollouts_served >= self.max_rollouts_per_worker:
+                self._recycle(lease)
             process = lease.process
             if process.poll() is not None:
                 raise WorkerCrashedError(
@@ -474,7 +515,47 @@ class CugaProcessPool:
                     f"{task_id!r} could be sent: {exc}"
                 ) from exc
             line = self._read_reply(lease, task_id)
+            # Counted inside the lock, and only for a dispatched task. A task
+            # that could not be sent did not consume the worker's budget.
+            lease.rollouts_served += 1
         return self._decode(line, task_id)
+
+    def _recycle(self, worker: _Worker) -> None:
+        """Replace a worker's child process in place, preserving its stores.
+
+        Called with ``worker.lock`` held. The ``_Worker`` object itself survives
+        because callers hold a lease on it; only the process is swapped, and the
+        private knowledge/dbs directories are deliberately reused so the
+        replacement has the same isolation identity as the child it replaces.
+
+        Killing the process is what actually reclaims the memory. It also reaps
+        anything the child leaked -- notably Playwright browsers, 12 of which
+        outlived the 90 GB run.
+
+        A failure to start the replacement is left to surface on the next
+        ``poll()`` check as ``WorkerCrashedError``, which is already the pool's
+        contract for a dead worker: one ``ok=False`` task rather than a crashed
+        run.
+        """
+        self._kill(worker)
+        stderr = self._log_sink.open_stream(worker.worker_id) or subprocess.DEVNULL
+        worker.process = subprocess.Popen(
+            [
+                self.python_executable,
+                "-u",
+                "-m",
+                "agent_evolve.benchmarks.cuga_process_pool",
+            ],
+            cwd=str(self.worker_cwd),
+            env=self.worker_environment(worker.worker_id, worker.harness_version),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+            text=True,
+            bufsize=1,
+        )
+        worker.rollouts_served = 0
+        self._await_ready(worker)
 
     def _decode(self, line: str, task_id: str) -> Mapping[str, object]:
         """Turn a worker's reply into a ``run_task`` result, or refuse.

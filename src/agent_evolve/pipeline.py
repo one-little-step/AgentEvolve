@@ -816,11 +816,22 @@ def build_offline_stack(
     # Every channel, active or not, so a fake analyzer or editor that grows a
     # sink later needs no change here and ``close()`` has one thing to close.
     sinks = build_sinks(capture)
+    resolved_editor = editor if editor is not None else FakeEditor()
+    # The runner writes attempt history; the editor's history tools read it.
+    # They must share one object or the editor reads an empty store (SV-6).
+    # An injected editor may already own a memory, so adopt that one rather than
+    # creating a second; otherwise build one bound to this run's storage.
+    editor_memory = getattr(resolved_editor, "memory", None)
+    edit_memory = (
+        editor_memory
+        if isinstance(editor_memory, EditMemory)
+        else EditMemory(storage=storage)
+    )
     runner = SequentialGepaRunner(
         adapter=resolved_adapter,  # type: ignore[arg-type]
         pool=pool,
         analyzer_judge=resolved_analyzer,  # type: ignore[arg-type]
-        editor=editor if editor is not None else FakeEditor(),  # type: ignore[arg-type]
+        editor=resolved_editor,  # type: ignore[arg-type]
         embedder=LexicalEmbedder(dim=32),
         storage=storage,
         config=config,
@@ -828,6 +839,7 @@ def build_offline_stack(
         seed=seed,
         scorer=scorer,
         analyzer_factory=analyzer_factory,  # type: ignore[arg-type]
+        edit_memory=edit_memory,
     )
     return EvolutionStack(
         runner=runner,
@@ -886,6 +898,7 @@ def build_live_stack(
     profile: str = "research_sequential",
     allow_unsafe_concurrency: bool = False,
     log_capture: LogCaptureConfig | None = None,
+    max_rollouts_per_worker: int | None = None,
     config_overrides: Mapping[str, object] | None = None,
 ) -> EvolutionStack:
     """Assemble the live stack: real CUGA rollouts, real analyzer, real editor.
@@ -958,6 +971,15 @@ def build_live_stack(
             task_timeout=task_timeout_seconds,
             knowledge_seed=knowledge_seed,
             log_capture=capture,
+            # Bounds the dominant memory-growth term: a worker is replaced after
+            # this many rollouts instead of accumulating SDK state for the whole
+            # run (2026-08-19: ~90 GB, machine killed). None keeps the module
+            # default rather than hardcoding a second one here.
+            **(
+                {"max_rollouts_per_worker": max_rollouts_per_worker}
+                if max_rollouts_per_worker is not None
+                else {}
+            ),
         )
 
     rollout_batch = CugaRolloutRunner(
@@ -985,6 +1007,10 @@ def build_live_stack(
     # rebuilds one analyzer per worker thread, and an instance-only sink would
     # capture nothing from a fanned-out analysis.
     analyzer_factory = CugaTrajectoryAnalyzer.factory(log_sink=sinks["analyzer"])
+    # One EditMemory, shared by the runner (which writes every attempt into it)
+    # and the editor (whose history tools read it). Two instances would give the
+    # editor an empty store to read from, which is the SV-6 failure mode.
+    edit_memory = EditMemory(storage=storage)
     runner = SequentialGepaRunner(
         adapter=adapter,
         pool=pool,
@@ -992,7 +1018,7 @@ def build_live_stack(
         # static mismatch here is the whole reason the shim exists.
         analyzer_judge=analyzer_factory(),  # type: ignore[arg-type]
         editor=CugaEditorAgent(
-            adapter=adapter, memory=EditMemory(), log_sink=sinks["editor"]
+            adapter=adapter, memory=edit_memory, log_sink=sinks["editor"]
         ),
         embedder=LexicalEmbedder(dim=32),
         storage=storage,
@@ -1002,6 +1028,7 @@ def build_live_stack(
         scorer=scorer,
         rollout_batch=rollout_batch,
         analyzer_factory=analyzer_factory,
+        edit_memory=edit_memory,
     )
     return EvolutionStack(
         runner=runner,
@@ -1326,6 +1353,17 @@ def build_rho_hooks(
             origin_attempt_ids=(version,),
         )
         state.committed_versions = state.committed_versions + (version,)
+        # Carry the pairwise verdict across the commit boundary (SV-4). Before
+        # this, `mean_preference` was computed, printed, and dropped here: the
+        # pool had no field for it and `select_champion` could not receive it, so
+        # the paper's acceptance signal was bought on every round and discarded.
+        available = int(getattr(evidence, "preferences_available", 0) or 0)
+        pool.record_preference(
+            version,
+            float(getattr(evidence, "mean_preference", 0.0) or 0.0),
+            available=available,
+            unavailable=int(getattr(evidence, "preferences_unavailable", 0) or 0),
+        )
         for cell_key, values in state.pending_scores.pop(version, {}).items():
             for value in values:
                 _record_pool_score(pool, version, cell_key, value)

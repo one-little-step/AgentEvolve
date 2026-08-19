@@ -46,3 +46,13 @@ data/workers/
 # was added to fix -- an improved harness that dies with the process. Do not add
 # a blanket data/ rule.
 
+# --- observability proxy (STEP 0) ---------------------------------------- #
+# Captures hold verbatim prompts and completions; certs/ holds the mitmproxy CA
+# *private key*. A committed CA key lets anyone MITM any host that trusts it,
+# and committed captures would persist evaluator internals and task content that
+# AGENTS.md forbids writing to shared artifacts. Never track either.
+docker/observability/certs/
+docker/observability/captures/
+# Local mock rules are per-experiment scratch state, not shared config. The
+# committed example lives in mocks/rules.example.json.
+docker/observability/mocks/rules.json

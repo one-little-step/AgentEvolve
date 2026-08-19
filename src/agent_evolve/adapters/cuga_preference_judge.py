@@ -373,23 +373,87 @@ def _expected_answer(task: EvolutionTask) -> tuple[str, str]:
 
 
 # ------------------------------------------------------------------ workspace
+#: Per-payload cap when rendering a trajectory for the judge.
+#:
+#: Rollout observations are capped at ``max_observation_bytes=4_194_304`` (4 MB),
+#: and phase 9 renders *two* trajectories per comparison across N*k comparisons
+#: per round. Unbounded, that pushed hundreds of MB per round through the judge's
+#: context and is where the 2026-08-19 run died (~90 GB, machine killed).
+#:
+#: 2048 bytes is chosen to preserve what the rubric actually uses. The judge
+#: compares *trajectories* -- how many steps, which tools, in what order -- so a
+#: payload prefix is enough to identify what a step did. The full body is never
+#: what distinguishes two candidates; the shape of the trajectory is.
+_MAX_PAYLOAD_CHARS = 2048
+
+#: Cap on rendered events. Successful rollouts in the observed corpus ran 25--127
+#: events, so a trace with thousands is pathological rather than informative.
+#: When exceeded, the head and tail are kept: the head shows how the trajectory
+#: started, the tail shows how it ended, and both matter to the verdict. The true
+#: ``event_count`` is always reported unmodified, so a sampled render can never be
+#: mistaken for a short trajectory.
+_MAX_RENDERED_EVENTS = 120
+
+
+def _bounded_payload(payload: Mapping[str, object]) -> dict[str, object]:
+    """Truncate oversized payload values, labelling every truncation.
+
+    Silent shrinking would be worse than the leak it fixes: the judge would
+    conclude a step did little work when its real output was megabytes. Every
+    dropped body is replaced by an explicit marker carrying the original size.
+    """
+    out: dict[str, object] = {}
+    for key, value in payload.items():
+        if isinstance(value, str) and len(value) > _MAX_PAYLOAD_CHARS:
+            out[key] = (
+                f"{value[:_MAX_PAYLOAD_CHARS]}"
+                f"... [truncated: {len(value)} chars total]"
+            )
+            continue
+        if not isinstance(value, (str, int, float, bool, type(None))):
+            rendered = json.dumps(value, default=str)
+            if len(rendered) > _MAX_PAYLOAD_CHARS:
+                out[key] = (
+                    f"{rendered[:_MAX_PAYLOAD_CHARS]}"
+                    f"... [truncated: {len(rendered)} chars total]"
+                )
+                continue
+        out[key] = value
+    return out
+
+
 def _render_trace(trace: ExecutionTrace) -> str:
-    return json.dumps(
+    events = list(trace.events)
+    total = len(events)
+    if total > _MAX_RENDERED_EVENTS:
+        half = _MAX_RENDERED_EVENTS // 2
+        events = events[:half] + events[-half:]
+        elided = total - len(events)
+    else:
+        elided = 0
+    rendered = [
         {
-            "final_output": trace.final_output,
-            "status": trace.status,
-            "event_count": len(trace.events),
-            "events": [
-                {
-                    "kind": event.kind,
-                    "actor_id": event.actor_id,
-                    "payload": dict(event.payload),
-                }
-                for event in trace.events
-            ],
-        },
-        default=str,
-    )
+            "kind": event.kind,
+            "actor_id": event.actor_id,
+            "payload": _bounded_payload(event.payload),
+        }
+        for event in events
+    ]
+    body: dict[str, object] = {
+        "final_output": trace.final_output,
+        "status": trace.status,
+        # Always the TRUE count, never the rendered count: a sampled render must
+        # not be able to masquerade as a short trajectory.
+        "event_count": total,
+        "events": rendered,
+    }
+    if elided:
+        body["events_elided"] = elided
+        body["events_note"] = (
+            f"{elided} middle events omitted; first and last "
+            f"{_MAX_RENDERED_EVENTS // 2} shown"
+        )
+    return json.dumps(body, default=str)
 
 
 def _build_callables(

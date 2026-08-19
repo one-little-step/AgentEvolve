@@ -1,0 +1,33 @@
+# LiteLLM structured-logging layer (opt-in: `--profile structured`).
+#
+# Purpose: mitmproxy captures HTTP faithfully but knows nothing about model
+# routing, token cost, or cache keys. This layer adds the LLM-aware view. It is
+# NOT required for interactive debugging -- mitmproxy alone covers that.
+#
+# `api_base` deliberately points at the real upstream, not at mitmproxy. When
+# both layers are used the chain is:
+#     caller -> HTTPS_PROXY=mitmproxy -> litellm:4000 -> upstream
+# so mitmproxy already sees this container's egress. Pointing api_base back at
+# mitmproxy would create a loop.
+
+model_list:
+  - model_name: "*"
+    litellm_params:
+      model: "openai/*"
+      api_base: os.environ/UPSTREAM_BASE_URL
+      api_key: os.environ/UPSTREAM_API_KEY
+
+litellm_settings:
+  # Off by default and stated explicitly: an identical repeated request served
+  # from cache is a re-read of one observation, not a second independent sample.
+  # Silent caching would corrupt any ablation that repeats a call to estimate
+  # variance (see cuga_proxy_validator.py's cache caveat).
+  cache: false
+  set_verbose: true
+  json_logs: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # Credentials must not reach disk; only prompt/response payloads are useful
+  # for the SV-7/SV-8 payload-identity questions.
+  store_model_in_db: false

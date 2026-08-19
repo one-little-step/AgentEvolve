@@ -131,6 +131,19 @@ class ResolvedConfig:
     champion_gamma: float = 0.15
     champion_delta: float = 0.10
     champion_min_coverage_fraction: float = 0.0
+    #: Ablation switch for the RHO pairwise acceptance gate (SV-4).
+    #:
+    #: ``False`` (default) is *paper* behaviour: a candidate is eligible to be
+    #: champion only when its symmetric pairwise preference ``S_j > 0``, per RHO
+    #: Algorithm 1. ``True`` disables the gate and restores ranking by the
+    #: grader aggregate alone.
+    #:
+    #: The default is deliberately ``False``. The gate reflects the published
+    #: algorithm and the judge is already paid for on every round; defaulting to
+    #: ``True`` would mean an ordinary run silently discards the preference
+    #: evidence it just bought, which is the SV-4 defect. The flag exists so an
+    #: ablation can *measure* the gate's contribution, not so the gate is opt-in.
+    experimental_candidate_promotion: bool = False
     seed: int = 0
     deferred_features: tuple[str, ...] = ()
     # Off by default: capture is opt-in so a measurement run writes nothing
@@ -206,6 +219,10 @@ class ResolvedConfig:
             "champion_gamma": self.champion_gamma,
             "champion_delta": self.champion_delta,
             "champion_min_coverage_fraction": self.champion_min_coverage_fraction,
+            # Recorded so a run manifest states whether the paper gate was
+            # active. Without it a champion.json from an ablation arm is
+            # indistinguishable from one produced under the paper algorithm.
+            "experimental_candidate_promotion": self.experimental_candidate_promotion,
             "seed": self.seed,
             "deferred_features": list(self.deferred_features),
             "log_capture": self.log_capture.manifest_payload(),
@@ -271,6 +288,7 @@ _VALID_OVERRIDES = {
     "champion_gamma",
     "champion_delta",
     "champion_min_coverage_fraction",
+    "experimental_candidate_promotion",
     # Composite members. ``budgets`` in particular must be overridable or a
     # caller has no way to cap spend: every BudgetLimits field defaults to None
     # (unlimited), so a run without an override is an uncapped run.

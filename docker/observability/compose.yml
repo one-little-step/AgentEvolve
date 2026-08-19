@@ -1,0 +1,92 @@
+# Realtime interactive LLM interception for AgentEvolve.
+#
+# Why mitmproxy and not a bespoke FastAPI shim: interactive pause/edit/resume of
+# an in-flight response is exactly mitmproxy's `intercept` feature, and
+# deterministic `--server-replay` solves the upstream-cache problem documented in
+# `src/agent_evolve/adapters/cuga_proxy_validator.py` (an identical repeated
+# request re-reads one observation instead of sampling a second).
+#
+# Why REGULAR proxy mode and not reverse mode: reverse mode only captures callers
+# that honour `LITELLM_BASE_URL`. CUGA ships its own per-agent model config
+# (`cuga/configurations/models/settings.*.toml`, each with its own `url=`), and
+# `cuga_wrapper/__init__.py:457` exports `OPENAI_BASE_URL` only when `base_url`
+# is truthy. Reverse mode would therefore capture *our* calls while silently
+# missing CUGA-internal ones -- which is the precise blind spot SV-7/SV-8/SV-11
+# need closed, so partial capture would defeat the purpose.
+#
+# Ports: 8080 is already held by searxng (see
+# reference/cuga_example_wrapper/searxng/docker-compose.yml), so the host side is
+# shifted to 8082/8083. Bound to 127.0.0.1 only -- this proxy terminates TLS and
+# holds a CA key, so it must never be reachable off-host.
+
+name: agentevolve-observability
+
+services:
+  # ------------------------------------------------------------------ #
+  # Interactive interceptor. This is the one you actually debug with.
+  # ------------------------------------------------------------------ #
+  mitmproxy:
+    image: mitmproxy/mitmproxy:11.0.0
+    container_name: ae-mitmproxy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:8080"   # proxy listener (HTTPS_PROXY target)
+      - "127.0.0.1:8083:8081"   # mitmweb UI
+    volumes:
+      # CA material persists here so the host can trust it once, rather than
+      # re-trusting a freshly generated CA on every container recreate.
+      - ./certs:/home/mitmproxy/.mitmproxy
+      - ./addons:/addons:ro
+      - ./captures:/captures
+      - ./mocks:/mocks
+    environment:
+      # Consumed by addons/correlate.py.
+      AE_CAPTURE_DIR: /captures
+      AE_MOCK_RULES: /mocks/rules.json
+      AE_REDACT_HEADERS: "authorization,api-key,x-api-key,openai-api-key"
+    command: >
+      mitmweb
+      --mode regular
+      --listen-host 0.0.0.0
+      --listen-port 8080
+      --web-host 0.0.0.0
+      --web-port 8081
+      --set web_open_browser=false
+      --set web_password=agentevolve
+      --set stream_large_bodies=10m
+      --set save_stream_file=+/captures/flows.mitm
+      -s /addons/correlate.py
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket,sys; s=socket.socket(); sys.exit(0 if s.connect_ex(('127.0.0.1',8080))==0 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # ------------------------------------------------------------------ #
+  # Optional: LLM-aware structured logging. `profiles` keeps it opt-in,
+  # because mitmproxy alone is enough for interactive debugging and this
+  # layer needs a real upstream key to be useful.
+  #
+  # mitmproxy sees HTTP, not evolution semantics, so it cannot by itself
+  # produce the (candidate, task, rollout, phase) correlation that
+  # docs/SEVERE-OPEN-ISSUES.md:960 requires. That is what this adds.
+  # ------------------------------------------------------------------ #
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: ae-litellm
+    profiles: ["structured"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4000:4000"
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-agentevolve-local}
+      # Soft defaults, not `:?` guards. Compose interpolates every service even
+      # when a profile excludes it, so a hard requirement here would break
+      # `docker compose up mitmproxy` for anyone without these vars exported.
+      # The litellm container fails fast on its own if they are absent.
+      UPSTREAM_API_KEY: ${LITELLM_API_KEY:-}
+      UPSTREAM_BASE_URL: ${LITELLM_BASE_URL:-}
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--detailed_debug"]

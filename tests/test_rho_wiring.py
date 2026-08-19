@@ -491,6 +491,121 @@ def test_commit_adds_the_candidate_to_the_persistent_pool() -> None:
     assert entry.candidate.parent_ids == (stack.pool.base_id,)
 
 
+def test_commit_propagates_the_pairwise_preference_into_the_pool() -> None:
+    """The judge's verdict must survive the commit boundary (SV-4).
+
+    This is the assertion that the old code could not satisfy. ``mean_preference``
+    was computed in phase 9, printed by the CLI, and dropped at ``commit``: the
+    pool had no field for it, so the paper's acceptance signal was purchased on
+    every round and then discarded. Asserting on the *pool entry* rather than on
+    the evidence object is the point -- evidence carrying the number proves
+    nothing about whether selection can ever see it.
+    """
+    from agent_evolve.core.rho.rounds import CandidateEvidence
+
+    stack = _offline_stack(task_count=1)
+    try:
+        hooks = build_rho_hooks(stack, **_components())  # type: ignore[arg-type]
+        base = dict(hooks.base_artifacts())  # type: ignore[misc]
+        version = hooks.register_candidate(  # type: ignore[misc]
+            _Proposed(candidate_index=0, artifacts=base)
+        )
+        hooks.commit(  # type: ignore[misc]
+            CandidateEvidence(
+                candidate_index=0,
+                version=version,
+                artifacts=base,
+                rollouts=2,
+                mean_preference=0.4,
+                preferences_available=3,
+                preferences_unavailable=1,
+                task_scores={stack.tasks[0].task_id: 0.5},
+            )
+        )
+        entry = stack.pool.get(version)
+    finally:
+        stack.close()
+    assert entry.preference == pytest.approx(0.4)
+    assert entry.preference_available == 3
+    assert entry.preference_unavailable == 1
+
+
+def test_commit_without_verdicts_leaves_the_preference_absent() -> None:
+    """Zero available verdicts must store ``None``, not ``0.0``.
+
+    An undecided candidate and a candidate the judge scored as a dead tie are
+    different facts, and the ``S_j > 0`` gate rejects both -- but for different
+    stated reasons. Storing 0.0 here would make a judging failure permanently
+    indistinguishable from a measured tie in the exported manifest.
+    """
+    from agent_evolve.core.rho.rounds import CandidateEvidence
+
+    stack = _offline_stack(task_count=1)
+    try:
+        hooks = build_rho_hooks(stack, **_components())  # type: ignore[arg-type]
+        base = dict(hooks.base_artifacts())  # type: ignore[misc]
+        version = hooks.register_candidate(  # type: ignore[misc]
+            _Proposed(candidate_index=0, artifacts=base)
+        )
+        hooks.commit(  # type: ignore[misc]
+            CandidateEvidence(
+                candidate_index=0,
+                version=version,
+                artifacts=base,
+                rollouts=2,
+                mean_preference=0.0,
+                preferences_available=0,
+                preferences_unavailable=2,
+                task_scores={stack.tasks[0].task_id: 0.9},
+            )
+        )
+        entry = stack.pool.get(version)
+    finally:
+        stack.close()
+    assert entry.preference is None
+    assert entry.preference_unavailable == 2
+
+
+def test_gated_candidate_does_not_become_the_exported_champion() -> None:
+    """End-to-end: a dispreferred candidate must not reach ``champion_version``.
+
+    The full path -- commit, preference, pool, ``select_champion``,
+    ``champion_version`` -- with the candidate scoring *higher* than the base, so
+    only the gate can produce the correct answer. Without the gate the aggregate
+    would promote it on score alone, which is the exported-harness defect that
+    seeds the next run.
+    """
+    from agent_evolve.core.rho.rounds import CandidateEvidence
+
+    stack = _offline_stack(task_count=1)
+    try:
+        hooks = build_rho_hooks(stack, **_components())  # type: ignore[arg-type]
+        task_id = stack.tasks[0].task_id
+        base = dict(hooks.base_artifacts())  # type: ignore[misc]
+
+        # Give the incumbent comparable evidence so it is a valid fallback.
+        hooks.score(stack.tasks[0], _trace(task_id, stack.base_version))  # type: ignore[misc]
+
+        version = hooks.register_candidate(  # type: ignore[misc]
+            _Proposed(candidate_index=0, artifacts=base)
+        )
+        hooks.commit(  # type: ignore[misc]
+            CandidateEvidence(
+                candidate_index=0,
+                version=version,
+                artifacts=base,
+                rollouts=2,
+                mean_preference=-0.5,  # judge dispreferred it
+                preferences_available=2,
+                task_scores={task_id: 1.0},  # but it scores better
+            )
+        )
+        champion = stack.champion_version()
+    finally:
+        stack.close()
+    assert champion == stack.base_version
+
+
 def test_commit_records_score_provenance_into_the_candidates_cell() -> None:
     """A pool entry with an empty tensor cannot be selected or compared.
 

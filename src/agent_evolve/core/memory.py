@@ -30,8 +30,12 @@ from typing import Iterable, Mapping, Sequence
 
 from pydantic import ValidationError
 
-from agent_evolve.core.contracts import MemoryRecord, RedactionReport
-from agent_evolve.core.storage import JSONFileStorage
+from agent_evolve.core.contracts import (
+    MemoryRecord,
+    RedactionReport,
+    TerminalAttemptStatus,
+)
+from agent_evolve.core.storage import StorageBackend
 
 
 # ---------------------------------------------------------------------- #
@@ -245,7 +249,9 @@ class EditMemory:
     :class:`PersistenceSafetyError`.
     """
 
-    storage: JSONFileStorage | None = None
+    #: Typed as the protocol, not the concrete JSON backend: this class only
+    #: ever calls ``write_record``, and the pipeline holds a ``StorageBackend``.
+    storage: StorageBackend | None = None
     retry_budget: RetryBudget = field(default_factory=RetryBudget)
     max_history_records: int | None = None
     max_records: int | None = field(default=None, repr=False)
@@ -276,12 +282,26 @@ class EditMemory:
     # Write
     # ------------------------------------------------------------------ #
     def record(self, attempt: EditAttempt, artifact_group: str, lineage: str) -> None:
+        """Index an attempt for retrieval, persisting it when storage is set.
+
+        The in-memory history index is populated **unconditionally**. It used to
+        be a side effect of :meth:`append`, which requires a storage backend, so
+        :meth:`retrieve` -- and therefore the editor's ``search_edit_history``
+        tool -- returned nothing at all whenever ``storage is None``. That made
+        "history works" silently depend on a persistence flag, and a tool that
+        reports "no prior attempts" on every call is worse than a missing tool:
+        the model cannot tell it apart from a genuinely new issue.
+        """
         if attempt.attempt_id in self._by_id:
             raise ValueError(f"duplicate attempt_id: {attempt.attempt_id!r}")
         # Persist first so a fail-closed PersistenceSafetyError leaves no
         # half-committed in-memory state behind.
         if self.storage is not None:
             self.append(_attempt_to_memory_record(attempt))
+        else:
+            # No backend: index the same record in RAM so retrieval behaves
+            # identically with and without persistence.
+            self._index_memory_record(_attempt_to_memory_record(attempt))
         self._attempts.append(attempt)
         self._by_id[attempt.attempt_id] = attempt
         for aid in attempt.artifact_ids:
@@ -289,7 +309,7 @@ class EditMemory:
         self._by_issue.setdefault(attempt.issue_id, []).append(attempt.attempt_id)
         self.retry_budget.record_attempt(attempt.issue_id, artifact_group, lineage)
 
-    def _require_storage(self) -> JSONFileStorage:
+    def _require_storage(self) -> StorageBackend:
         if self.storage is None:
             raise ValueError(
                 "EditMemory has no storage backend; cannot persist memory records"
@@ -416,7 +436,7 @@ class EditMemory:
 # ---------------------------------------------------------------------- #
 # Helpers
 # ---------------------------------------------------------------------- #
-_ATTEMPT_STATUS_TO_OUTCOME = {
+_ATTEMPT_STATUS_TO_OUTCOME: Mapping[AttemptStatus, TerminalAttemptStatus] = {
     AttemptStatus.ACCEPTED: "accepted",
     AttemptStatus.REJECTED: "rejected",
     AttemptStatus.REGRESSION: "rejected",

@@ -28,7 +28,7 @@ from typing import Callable, Literal, Mapping, Sequence
 from agent_evolve.core.contamination import scan_artifacts
 from agent_evolve.core.contracts import EvolutionTask, ExecutionTrace
 from agent_evolve.core.entropy import EntropyTracker
-from agent_evolve.core.evaluation import RolloutOutcome
+from agent_evolve.core.evaluation import ANSWERED_TRACE_STATUSES, RolloutOutcome
 from agent_evolve.core.clustering import MechanismEmbedder
 from agent_evolve.core.rho.coreset import candidates_from_verdicts, select_coreset
 from agent_evolve.core.rho.history import HistoricalRecord, HistoryLoadReport
@@ -607,6 +607,18 @@ def run_round(
 # ---------------------------------------------------------------------- #
 # Internals
 # ---------------------------------------------------------------------- #
+def _answered(trace: ExecutionTrace) -> bool:
+    """True when this rollout produced an answer, per the shared whitelist.
+
+    Reuses :data:`ANSWERED_TRACE_STATUSES` rather than blacklisting failure
+    words: an unrecognised status means "unknown", and unknown must not be
+    treated as answered.
+    """
+    return str(getattr(trace, "status", "") or "").strip().lower() in (
+        ANSWERED_TRACE_STATUSES
+    )
+
+
 def _rollout_grid(
     hooks: RhoHooks,
     version: str,
@@ -619,6 +631,20 @@ def _rollout_grid(
     Returns per-task usable traces plus the failure count. A failed rollout is
     dropped from its group and counted; its siblings survive, because one broken
     rollout must not discard a group's remaining evidence.
+
+    "Usable" means **the rollout produced an answer**, which is a stricter test
+    than "an object came back". A crashed CUGA rollout returns a real
+    :class:`ExecutionTrace` carrying ``status="error"``, so a ``trace is None``
+    check alone admits it -- and it then flows into scoring, the entropy cell,
+    group diagnosis, and preference judging as though it were an observation.
+    That is doubly wrong for efficiency signals, because a crash is also the
+    *shortest* trajectory in any group: in the 2026-08-18 corpus all six
+    13-event rollouts were ``status=error`` with no answer, while every
+    successful rollout ran 25--127 events. Any "fewer steps is better" rubric
+    ranks those crashes first (SV-9).
+
+    Status is checked against :data:`ANSWERED_TRACE_STATUSES`, the same
+    whitelist the scorers use, so the two paths cannot drift apart.
     """
     rollout = hooks.require("rollout")
     by_id = {task.task_id: task for task in tasks}
@@ -638,6 +664,11 @@ def _rollout_grid(
         for outcome in result.outcomes:
             trace = getattr(outcome, "trace", None)
             if trace is None:
+                failures += 1
+                continue
+            if not _answered(trace):
+                # A trace exists but the rollout answered nothing. Counted as an
+                # infrastructure failure, never as evidence.
                 failures += 1
                 continue
             usable.append(trace)
@@ -660,6 +691,13 @@ def _record_scores(
     ``None`` no matter how many rollouts were spent. Promotion happens once the
     candidate actually has ``min_rollouts_per_candidate`` scores in the cell --
     promoting a thinner candidate would defeat the floor it exists to enforce.
+
+    Unanswered traces are filtered again here even though :func:`_rollout_grid`
+    already excludes them. Deliberate defence in depth: this function is what
+    writes the entropy cell, and a crashed rollout counted toward
+    ``min_rollouts_per_candidate`` would promote a candidate to *comparable* on
+    evidence that does not exist -- silently converting the DPP diversity term
+    into a quality ranking (SV-9, SV-12).
     """
     if hooks.score is None:
         return {}
@@ -667,9 +705,10 @@ def _record_scores(
     means: dict[str, float] = {}
     for task_id, traces in groups.items():
         task = by_id.get(task_id)
-        if task is None or not traces:
+        answered = tuple(t for t in traces if _answered(t))
+        if task is None or not answered:
             continue
-        values = [float(hooks.score(task, trace)) for trace in traces]
+        values = [float(hooks.score(task, trace)) for trace in answered]
         means[task_id] = sum(values) / len(values)
         if tracker is None:
             continue

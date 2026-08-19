@@ -453,6 +453,25 @@ def test_parent_frequencies_sum_severity_times_confidence():
 # ---------------------------------------------------------------------- #
 # Champion selection
 # ---------------------------------------------------------------------- #
+# ---------------------------------------------------------------------- #
+# Champion-selection helpers
+# ---------------------------------------------------------------------- #
+def _make_eligible(pool, *candidate_ids: str) -> None:
+    """Give candidates a positive ``S_j`` so the RHO gate admits them.
+
+    These tests exercise the *aggregate* -- weights, coverage, tie-breaking,
+    protected floors. Since SV-4 the aggregate ranks only candidates that already
+    cleared the pairwise gate, so without a recorded preference every candidate
+    is correctly ineligible and the tests would assert on a fallback-to-base
+    instead of on the mechanics they were written for.
+
+    Deliberately NOT a fixture-wide default: a helper that silently made every
+    candidate eligible everywhere would hide the gate from tests that must see
+    it. Each call site opts in explicitly.
+    """
+    for cid in candidate_ids:
+        pool.record_preference(cid, 0.5, available=2)
+
 def test_select_champion_highest_aggregate():
     p = PersistentPool(min_comparable_rollouts=2)
     p.add_base(_candidate("base"))
@@ -462,6 +481,7 @@ def test_select_champion_highest_aggregate():
         p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.9))
         p.record_score("candidate-b", *_prov("t", "c0", rollout=r, score=0.3))
         p.record_score("base", *_prov("t", "c0", rollout=r, score=0.5))
+    _make_eligible(p, "candidate-a", "candidate-b")
     champ = p.select_champion()
     assert champ.candidate_id == "candidate-a"
 
@@ -475,6 +495,7 @@ def test_protected_floor_disqualifies_champion_despite_high_aggregate():
         p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.9))
         p.record_score("candidate-b", *_prov("t", "c0", rollout=r, score=0.3))
         p.record_score("base", *_prov("t", "c0", rollout=r, score=0.1))
+    _make_eligible(p, "candidate-a", "candidate-b")
     champ = p.select_champion(protected_floor_violations={"candidate-a"})
     assert champ.candidate_id == "candidate-b"
 
@@ -488,6 +509,7 @@ def test_select_champion_deterministic_tiebreak_by_id():
         p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.6))
         p.record_score("candidate-b", *_prov("t", "c0", rollout=r, score=0.6))
         p.record_score("base", *_prov("t", "c0", rollout=r, score=0.1))
+    _make_eligible(p, "candidate-a", "candidate-b")
     champ = p.select_champion()
     assert champ.candidate_id == "candidate-a"
 
@@ -504,6 +526,7 @@ def test_select_champion_uses_config_weights():
         p.record_score("candidate-b", *_prov("t", "c1", rollout=r, score=0.5))
         p.record_score("base", *_prov("t", "c0", rollout=r, score=0.1))
     # Default weights favor outcome -> candidate-a.
+    _make_eligible(p, "candidate-a", "candidate-b")
     assert p.select_champion().candidate_id == "candidate-a"
     # Coverage-heavy weights flip the result to candidate-b.
     config = resolve_profile(
@@ -526,6 +549,7 @@ def test_select_champion_returns_champion_report():
     for r in range(2):
         p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.9))
         p.record_score("base", *_prov("t", "c0", rollout=r, score=0.5))
+    _make_eligible(p, "candidate-a")
     report = p.select_champion()
     assert isinstance(report, ChampionReport)
     assert report.candidate_id == "candidate-a"
@@ -538,6 +562,7 @@ def test_champion_report_exposes_every_component():
     for r in range(2):
         p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.9))
         p.record_score("base", *_prov("t", "c0", rollout=r, score=0.5))
+    _make_eligible(p, "candidate-a")
     report = p.select_champion()
     assert report.outcome == pytest.approx(0.9)
     assert report.coverage == pytest.approx(1.0)
@@ -557,6 +582,7 @@ def test_champion_report_tie_breaker_is_recorded():
         p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.6))
         p.record_score("candidate-b", *_prov("t", "c0", rollout=r, score=0.6))
         p.record_score("base", *_prov("t", "c0", rollout=r, score=0.1))
+    _make_eligible(p, "candidate-a", "candidate-b")
     report = p.select_champion()
     assert report.candidate_id == "candidate-a"
     assert report.tie_breaker == "ascending_candidate_id"
@@ -579,6 +605,7 @@ def test_select_champion_min_coverage_fraction_disqualifies():
         p.record_score("base", *_prov("t", "c1", rollout=r, score=0.1))
         p.record_score("base", *_prov("t", "c2", rollout=r, score=0.1))
     # Without a coverage gate, candidate-a (high outcome) wins.
+    _make_eligible(p, "candidate-a", "candidate-b")
     assert p.select_champion().candidate_id == "candidate-a"
     # With the gate, candidate-a's 1/3 coverage disqualifies it -> candidate-b.
     config = resolve_profile("minimal", champion_min_coverage_fraction=0.5)
