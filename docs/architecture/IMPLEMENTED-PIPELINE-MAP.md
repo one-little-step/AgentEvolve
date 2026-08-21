@@ -1,9 +1,12 @@
 # Implemented Pipeline Map
 
-**Verified against the codebase on 2026-08-19** (branch `dev7`, `HEAD` `0f72d98`,
-suite `1825 passed, 1 skipped`). Derived by reading and executing the code, not
-from the design docs. Where code and design doc disagree, the **code** is
-reported here and the divergence is flagged.
+**Verified against the codebase on 2026-08-20** (branch `dev7`, last commit
+`8d48a8f` with the SV-2/SV-3/SV-5/SV-8/SV-10/SV-11/SV-13 work uncommitted in the
+working tree, suite `1961 collected, 0 failed`). Verification covers the control
+flow, the file:line anchors and the issue statuses in this document; it was derived
+by reading and executing the code, not from the design docs, and it does not cover
+any live CUGA run. Where code and design doc disagree, the **code** is reported here
+and the divergence is flagged.
 
 Every box carries its `file:line` so you can cross-reference directly. Line
 numbers drift as code moves — the accompanying grep anchor in each table is the
@@ -156,15 +159,15 @@ flowchart TB
     end
 
     G3 -.-> FG3["<b>coreset.py:11-13 WARNING</b><br/>RHO quality = judge difficulty<br/>GENETIC quality = score variance<br/><b>'Those two must not be unified'</b>"]
-    G3 -.-> SV12["<b>SV-12 OPEN</b><br/>entropy starved: needs >=3 comparable<br/>candidates per cell; SV-11 prevents it"]
+    G3 -.-> SV12["<b>SV-12 OPEN</b><br/>entropy starved: needs >=3 comparable<br/>candidates per cell; blocked by the placeholder<br/>mechanism cluster id, not by SV-11"]
     G4 -.-> FG4["<b>pool.py:504</b> frequency(c) = SUM over won (t,m)<br/>of severity x confidence<br/>both inert 1.0 => counts cells won<br/>needs rollout_count >= min_comparable_rollouts"]
-    G5 -.-> SV10["<b>SV-10 OPEN</b><br/>parent vulnerabilities never reach editor<br/>ParentContext.score_summary is lossy"]
+    G5 -.-> SV10["<b>SV-10 CLOSED 2026-08-20</b><br/>parent faults now routed to the editor<br/>ParentContext.issues from build_issues,<br/>NOT from the lossy score_summary"]
     G6 -.-> FG6["<b>orchestrator.py:2043</b><br/>accept iff weighted_net_gain > net_gain_threshold (0.0)<br/>+ protected floors + retry budget<br/><b>SV-6 CLOSED:</b> retry budget now actually fires"]
 
     style FG3 fill:#f0f0f0
     style FG4 fill:#f0f0f0
     style FG6 fill:#f0f0f0
-    style SV10 fill:#ffe6e6
+    style SV10 fill:#d4f4d4
     style SV12 fill:#ffe6e6
 ```
 
@@ -190,7 +193,7 @@ flowchart TB
 
     C3 --> INERT["<b>SV-1 RECLASSIFIED</b><br/>NO caller in src/ ever passes severity= or confidence=<br/>all 4 sites omit them: orchestrator.py:342, :1507, :1886, pipeline.py:1507<br/>frozen dataclass, no replace() path<br/><b>=> weighted_score() == mean, always</b>"]
 
-    C3 --> OUT["<b>_champion_outcome</b> pool.py:563<br/>mean of per-task mean weighted scores<br/>rollout_count==0 cells SKIPPED (not zero)"]
+    C3 --> OUT["<b>_champion_outcome</b> pool.py<br/>mean of per-task mean weighted scores<br/>REPORTED ONLY since SV-2 — does not rank"]
     C3 --> PF["<b>parent_frequencies</b> pool.py:504"]
     C3 --> PAR["<b>pareto_frontier</b> :485 / <b>dominates</b> :462"]
 
@@ -199,9 +202,9 @@ flowchart TB
     STAB["<b>stability = 1.0</b> pool.py:657<br/>HARDCODED"] --> AGG
     RISK["<b>regression_risk = 0.0</b> pool.py:658<br/>HARDCODED"] --> AGG
 
-    AGG["<b>select_champion</b> pool.py:577<br/>aggregate = 0.55*outcome + 0.20*coverage<br/>+ 0.15*stability - 0.10*regression_risk<br/>argmax, tie-break ascending candidate_id"]
+    AGG["<b>select_champion</b> pool.py<br/>RANKS PAIRWISE over comparable_cells (SV-2)<br/>king-of-the-hill, insertion order<br/>aggregate computed but REPORTED ONLY"]
 
-    AGG --> EFF["<b>EFFECTIVE formula (SV-5)</b><br/>gamma*1.0 and delta*0.0 are CONSTANT for every entry<br/>=> they cancel in any comparison<br/><b>rank = 0.55*outcome + 0.20*coverage</b>"]
+    AGG --> EFF["<b>EFFECTIVE rule since 2026-08-20</b><br/>rank = pairwise comparison on SHARED cells<br/>all four weights are non-selecting<br/>coverage acts only as the eligibility floor"]
 
     style INERT fill:#ffe6e6
     style STAB fill:#ffdddd
@@ -225,6 +228,13 @@ if gate_applied and not entry.is_base:
 if coverage < min_coverage_fraction:                  continue
 
 if not scored: raise ValueError("no eligible candidates for champion selection")
+
+# 4. SV-2 ranking — PAIRWISE, not a sort on `aggregate`
+champion_id = order[0]                      # insertion order, base first
+for challenger_id in order[1:]:
+    verdict = self._pairwise_outcome_preference(challenger_id, champion_id)
+    if verdict > 0: champion_id = challenger_id   # better on SHARED cells only
+    # tie / loss / no overlap -> incumbent holds
 ```
 
 **SV-4 gate semantics** (`config.py:146` `experimental_candidate_promotion=False`):
@@ -290,7 +300,8 @@ flowchart LR
 
 `AGENTS.md` states crossover is *"provenance-preserving deterministic merge by
 default."* `core/merge.py` implements exactly that. **Nothing in `src/` imports
-it.** Verified:
+it.** Established by an import sweep across `src/`, `tests/` and `scripts/`,
+covering every reference to the module — its only importer is its own test:
 
 ```bash
 grep -rn 'core\.merge' src/ tests/ scripts/ | grep -v 'core/merge.py'
@@ -317,39 +328,44 @@ flowchart TB
       S1["<b>SV-1</b> RECLASSIFIED — not a perverse<br/>gradient; severity is inert<br/>pool.py:140 docs only, no behaviour change"]
     end
 
+    subgraph CLOSED2["🟩 CLOSED 2026-08-20"]
+      S2["<b>SV-2</b> ranking is pairwise over shared cells<br/>pool.py"]
+      S3["<b>SV-3</b> subsumed by SV-2<br/>coverage is now only the eligibility floor<br/>pool.py"]
+      S5["<b>SV-5</b> documentation<br/>terms stay inert, now labelled as such<br/>pool.py"]
+      S8["<b>SV-8</b> multi-surface base seeding shipped<br/>empty skills/memory/policies slots seeded<br/>pipeline.py, cuga_editor_state.py"]
+      S11["<b>SV-11</b> build_issues observes the SELECTED parent<br/>cost-neutral; production path is run_attempt<br/>tests/test_parent_observation.py"]
+      S10["<b>SV-10</b> parent faults routed via ParentContext.issues<br/>zero new rollouts; 3 parent draws -> 1<br/>editor.py, orchestrator.py"]
+    end
+
     subgraph OFFLINE["🟦 OPEN — offline-fixable"]
-      S2["<b>SV-2</b> outcome averages over<br/>DIFFERENT task sets<br/>pool.py:563"]
-      S3["<b>SV-3</b> coverage is not quality<br/>carries 27% of the decision<br/>pool.py:570"]
-      S5["<b>SV-5</b> 2 of 4 objectives inert<br/>pool.py:657-658"]
-      S10["<b>SV-10</b> parent vulnerabilities<br/>never reach editor<br/>orchestrator.py:1683"]
-      S12["<b>SV-12</b> entropy structurally starved<br/>consequence of SV-11"]
+      S12["<b>SV-12</b> entropy structurally starved<br/>placeholder mechanism id, NOT an SV-10 consequence<br/>needs live-shaped tasks to demonstrate"]
     end
 
     subgraph GATED["🟨 OPEN — needs live proxy capture"]
       S7["<b>SV-7</b> NARROWED to MEDIUM<br/>judge + grid EXONERATED<br/>tests/test_judge_slot_distinctness.py (5)<br/>only upstream materialization remains"]
-      S8["<b>SV-8</b> root cause FOUND<br/>list_artifacts() shows only existing surfaces<br/>bare HarnessVersion -> ['instructions'] only<br/>fix = multi-surface base seeding"]
-      S11["<b>SV-11</b> SCOPED<br/>orchestrator.py:541 and :1441<br/>needs observation-budget decision"]
     end
 
-    S11 --> S12
+    S11 --> S10
+    S11 -.->|"placeholder cluster id<br/>still unresolved"| S12
     S8 --> S7
 
     style CLOSED fill:#e8ffe8
+    style CLOSED2 fill:#e8ffe8
     style OFFLINE fill:#d6eaff
     style GATED fill:#fff4cc
 ```
 
-### The two live ranking defects, with reproduced numbers
+### The two ranking defects — both CLOSED 2026-08-20
 
-| # | Issue | Locus | Evidence |
-| --- | --- | --- | --- |
-| **SV-2** | `outcome` averages over **different task sets** — no shared-cell restriction, so dropping a hard task raises your own mean | `pool.py:563` | base ran easy(0.9)+hard(0.1) → `0.500`; candA ran only easy(0.9) → `0.900`, **wins by skipping the hard task** |
-| **SV-3** | `coverage` measures how much you *measured*, not how well. Exchange rate `cov 0.5→1.0` = `+0.100` aggregate = `0.100/0.55 = 0.18` of outcome | `pool.py:570` | `base-v0: cells=4 outcome=0.5500 coverage=1.0000 aggregate=0.6525`<br/>`cand-A:  cells=2 outcome=0.8500 coverage=0.5000 aggregate=0.7175` |
+| # | Was | Now |
+| --- | --- | --- |
+| **SV-2** | `outcome` averaged over **different task sets** — no shared-cell restriction, so dropping a hard task raised your own mean. base ran easy(0.9)+hard(0.1) → `0.500`; candA ran only easy(0.9) → `0.900`, **won by skipping the hard task** | Ranking compares candidates pairwise over `comparable_cells`. On the shared `{easy}` cell the two now **tie**, so base holds. `ChampionReport.comparable_cells` reports the shared-evidence count |
+| **SV-3** | `coverage` measured how much you *measured*, not how well; `cov 0.5→1.0` bought `+0.100` aggregate = `0.18` of outcome, 27% of the live weight | **Subsumed by SV-2.** No weight can flip a winner, so coverage-as-quality is not expressible. Coverage survives only as the enforced `champion_min_coverage_fraction` eligibility floor |
 
-**SV-9 makes these more visible, correctly.** A crashed rollout now creates *no
-cell* instead of bad evidence — so a candidate that crashes on hard tasks shrinks
-its own outcome denominator. The fix is to repair outcome/coverage, **not** to
-revert crash filtering.
+**SV-9 interacts with these correctly.** A crashed rollout creates *no cell* instead
+of bad evidence. Under the old scalar mean that shrank a candidate's own denominator;
+under pairwise comparison a missing cell simply leaves the pair non-comparable for
+that cell, which is the honest reading.
 
 **SV-1 correction to earlier drafts of this document.** Previous revisions listed
 "severity is per-candidate" and "perverse gradient" as live defects A and B. Both
@@ -373,7 +389,7 @@ flowchart TB
     G4["🟩 GAP 4 — 'with fewer wasted steps'<br/>cuga_rho_optimizer.py"]
     G5["🟨 GAP 5 OPEN — 1-call vs 2-call judge<br/>cost decision only"]
     G6["🟩 GAP 6 CLOSED — was S5-1/SV-4<br/>S_j > 0 gate now active"]
-    G7["🟨 GAP 7 OPEN = SV-8<br/>only 'instructions' ever edited"]
+    G7["🟩 GAP 7 CLOSED = SV-8<br/>multi-surface seeding: skills/memory/policies"]
 
     G2 -.-> NOTE["<b>Coupling now BENIGN</b><br/>earlier revisions warned that raising<br/>severity would raise a candidate's outcome<br/>SV-1 shows ScoreProvenance.severity is inert<br/>=> diagnoser severity cannot reach the aggregate"]
 
@@ -383,7 +399,7 @@ flowchart TB
     style G4 fill:#e8ffe8
     style G6 fill:#e8ffe8
     style G5 fill:#fff4cc
-    style G7 fill:#fff4cc
+    style G7 fill:#e8ffe8
     style NOTE fill:#f0f0f0
 ```
 
@@ -477,7 +493,7 @@ flowchart TB
     POOL --> G1{"protected floors?"}
     G1 -->|pass| G2{"SV-4 gate<br/>preference > 0?<br/>base exempt"}
     G2 -->|pass| G3{"coverage floor?"}
-    G3 -->|pass| CH["pool.py:577 aggregate rank<br/>0.55*outcome + 0.20*coverage<br/>(+0.15 and -0.0 inert = SV-5)<br/><b>SV-2 / SV-3 live here</b>"]
+    G3 -->|pass| CH["pool.py pairwise rank over shared cells<br/>king-of-the-hill, insertion order<br/>aggregate reported but not used<br/><b>SV-2 / SV-3 fixed here</b>"]
     G2 -->|"None or <= 0"| DQ[["disqualified"]]
 
     CH --> EXP["pipeline.py:614 export_pool<br/>champion.json + candidate-*.json"]
@@ -505,11 +521,12 @@ SV-4 pairwise acceptance gate. Crash-filtered RHO evidence (SV-9). Runner-owned
 edit memory with a live retry budget (SV-6). Worker recycling, agent teardown,
 and bounded judge context.
 
-**🟦 Wired but semantics disputed.** `select_champion` ranking. Two reproduced
-defects remain — SV-2 (`outcome` averaged over different task sets) and SV-3
-(`coverage` scored as quality). Both are *ranking* defects; acceptance is now
-gated separately by SV-4. It decides which harness gets **exported and carried
-into the next run**.
+**🟩 Wired and settled.** `select_champion` ranking. Both former defects are
+closed: SV-2 (`outcome` averaged over different task sets) and SV-3 (`coverage`
+scored as quality) are gone because ranking is now a pairwise comparison over shared
+cells, with acceptance gated separately by SV-4. The weighted aggregate is still
+computed and reported, but it decides nothing. This is what selects the harness
+**exported and carried into the next run**.
 
 **🟨 Partially implemented.** Multi-surface harness editing (SV-8 — capability
 present, roster starves it). Mechanism analysis of candidates (SV-11 — needs an
@@ -529,13 +546,14 @@ headers at call sites.
 2. **SV-11** observation budget — parent-only is cost-neutral. *Needs a decision.*
 3. **Emit `X-AE-*` headers**, then one bounded live proxy-captured RHO smoke to
    settle SV-7 upstream materialization and the live roster claims.
-4. **SV-2** then **SV-3** — shared comparable-cell denominator; coverage becomes
-   evidence *eligibility*, not a quality reward.
-5. **SV-5** — delete or implement `stability` / `regression_risk`.
-6. **SV-10**, then **SV-12** (largely a consequence of SV-11).
+4. **SV-12** — the last offline item, and the one that needs live-shaped tasks: the
+   placeholder mechanism cluster id keeps candidate cells from overlapping, so the
+   entropy floor of 3 comparable candidates is never cleared. Not a consequence of
+   SV-10, which closed by routing faults from `build_issues` instead of the tensor.
 
-All of 4–5 change selection semantics and none should be made without an explicit
-decision.
+Closed since this list was written: SV-2, SV-3, SV-5, SV-8, SV-10 and SV-11.
+Selection semantics did change, and each change was made against an explicit
+recorded decision.
 
 ---
 

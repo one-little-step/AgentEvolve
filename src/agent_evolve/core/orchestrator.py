@@ -99,6 +99,7 @@ from agent_evolve.core.evaluation import (
     tally_scores,
 )
 from agent_evolve.core.evidence import rollout_group_report
+from agent_evolve.core.retirement import decide_retirement
 from agent_evolve.core.fake_editor import FakeEditor
 from agent_evolve.core.issues import (
     DEFAULT_SCORE_FLOOR as TARGET_SCORE_FLOOR,
@@ -890,6 +891,97 @@ class GepaAttemptOutcome:
     reason: str
     artifact_ids: tuple[str, ...] = ()
     fallback_reason: str | None = None
+    #: SV-13: the parent retired because this attempt's offspring superseded it,
+    #: or ``None``. A pool that shrank must say so in its own attempt record;
+    #: inferring it later from two pool snapshots is not auditable.
+    retired_parent_id: str | None = None
+    #: Why retirement did or did not happen, verbatim from the decision. Retained
+    #: even when nothing was retired, because "the judge was unavailable" and "the
+    #: child was not preferred" are different facts about the run.
+    retirement_reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class _EntropyUnavailableCategories:
+    """Stable keys for *why* entropy was unavailable.
+
+    Recorded at the point of failure rather than parsed back out of the prose
+    reason string. A tally keyed by free text fragments the moment a message is
+    reworded, turning one recognisable cause into several unrecognisable ones --
+    the same fragmentation that mechanism clustering exists to prevent.
+
+    Each category implies a different operator action, which is why they are not
+    collapsed into a single rate.
+    """
+
+    #: The rollout was scored but never diagnosed, so no mechanism exists.
+    NO_ANALYSIS: str = "no_analysis"
+    #: The runner has no cluster registry, so mechanisms cannot be identified.
+    NO_REGISTRY: str = "no_registry"
+    #: The clusterer refused to assign, e.g. the cluster cap with no near match.
+    UNASSIGNED: str = "unassigned"
+    #: A cell exists but has too few comparable candidates or rollouts. Needs
+    #: more evidence, not a code fix.
+    FLOOR_UNMET: str = "floor_unmet"
+
+
+ENTROPY_UNAVAILABLE_CATEGORIES = _EntropyUnavailableCategories()
+
+
+@dataclass(frozen=True, slots=True)
+class EntropyAvailabilityReport:
+    """How often cross-candidate entropy could actually be measured.
+
+    Without this, a run in which **no** mechanism cell ever cleared the evidence
+    floors is indistinguishable in the summary from one where entropy genuinely
+    drove diversity: both report ``H = 0.0`` per task, because a measured zero
+    variance and an unmeasurable cell both damp to zero. The difference matters
+    because the first ran on issue *quality* alone, so any conclusion about
+    entropy-guided selection drawn from it would be unsupported.
+
+    ``reasons`` tallies *why* cells were unavailable. "floors unmet" calls for
+    more rollouts per candidate; "adjudication unavailable" calls for fixing the
+    dedup endpoint. Collapsing them into a single rate would hide the actionable
+    part.
+    """
+
+    cells_available: int = 0
+    cells_unavailable: int = 0
+    reasons: Mapping[str, int] = field(default_factory=dict)
+
+    @property
+    def cells_total(self) -> int:
+        return self.cells_available + self.cells_unavailable
+
+    @property
+    def fallback_rate(self) -> float | None:
+        """Share of cells with no usable entropy, or ``None`` when none existed.
+
+        ``0/0`` is undefined and must not render as ``0.0``: that would claim
+        perfect availability for a run that measured nothing at all.
+        """
+        total = self.cells_total
+        if total == 0:
+            return None
+        return self.cells_unavailable / total
+
+    @property
+    def entropy_never_available(self) -> bool:
+        """True only when cells existed and every one of them was unavailable."""
+        return self.cells_total > 0 and self.cells_available == 0
+
+    def line(self) -> str:
+        rate = self.fallback_rate
+        if rate is None:
+            return "entropy: no cells observed"
+        detail = ", ".join(
+            f"{reason}={count}" for reason, count in sorted(self.reasons.items())
+        )
+        suffix = f" ({detail})" if detail else ""
+        return (
+            f"entropy: {self.cells_unavailable}/{self.cells_total} cells "
+            f"unavailable = {rate * 100:.0f}% fallback{suffix}"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -900,6 +992,10 @@ class GepaRunResult:
     champion: ChampionReport | None
     pool_size: int
     pareto_frontier: tuple[str, ...]
+    #: SV-12: how often entropy was measurable. ``None`` means the run did not
+    #: aggregate it -- deliberately not a zeroed report, which would read as
+    #: "entropy was fully available".
+    entropy_availability: EntropyAvailabilityReport | None = None
 
     @property
     def attempts_run(self) -> int:
@@ -941,6 +1037,50 @@ class SequentialGepaRunner:
     storage: StorageBackend | None = None
     config: ResolvedConfig | None = None
     mechanism_cluster_id: str = "c0"
+    #: SV-12 step 3. Per-task mechanism clustering for the **entropy tracker's**
+    #: cell keys. Deliberately separate from ``mechanism_cluster_id`` above,
+    #: which stays constant because the two structures answer different
+    #: questions and need opposite key policies:
+    #:
+    #: * the pool's score tensor asks *"is c1 better than base?"* and needs
+    #:   **shared** keys -- champion selection intersects on the exact full key,
+    #:   so mechanism-keyed pool cells yield an empty intersection and SV-2
+    #:   regresses **silently** (``dominates()`` correctly returns ``False`` on
+    #:   no overlap, and a frontier containing everything looks like healthy
+    #:   diversity while meaning nothing could be compared to anything);
+    #: * the entropy tracker asks *"how much do candidates disagree on this
+    #:   mechanism?"* and needs **separated** keys, or unrelated faults pool
+    #:   into one cell and their score spread reads as within-mechanism
+    #:   variance -- "a fix is reachable here" for a mechanism that does not
+    #:   exist.
+    cluster_registry: ClusterRegistry | None = None
+    #: SV-12 step 3. Mechanism-keyed cross-candidate entropy with the spec's
+    #: evidence floors (>=3 comparable candidates, >=2 rollouts each). This is
+    #: the single implementation of ``H(t, m) = Var * max(max_score,
+    #: score_floor)``; the genetic path previously recomputed variance inline
+    #: over the constant ``mechanism_cluster_id`` bucket, which measured
+    #: cross-candidate spread inside one synthetic cell rather than
+    #: per-mechanism variance, and applied no floors at all.
+    entropy: EntropyTracker = field(default_factory=EntropyTracker)
+    #: Rollouts recorded per ``(task, mechanism, candidate)``, used only to decide
+    #: when a candidate clears the tracker's per-candidate rollout floor and may
+    #: be promoted to comparable.
+    _entropy_rollout_counts: dict[tuple[str, str, str], int] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+    #: Why a task's entropy evidence could not be filed, keyed by task. This is
+    #: what makes the coarse fallback *reportable*: an unavailable entropy term
+    #: with no reason is indistinguishable from a measured zero.
+    _last_entropy_unavailable_reasons: dict[str, str] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+    #: SV-12: the same facts keyed by a stable category for run-level
+    #: aggregation. Kept alongside the prose reasons rather than replacing them:
+    #: a category cannot explain one task to a reader, and prose cannot be
+    #: tallied across a run without fragmenting on wording.
+    _entropy_unavailable_categories: dict[str, str] = field(
+        default_factory=dict, repr=False, compare=False
+    )
     seed: int = 0
     protected_floors: tuple[ProtectedFloor, ...] = ()
     net_gain_threshold: float = 0.0
@@ -955,6 +1095,36 @@ class SequentialGepaRunner:
     edit_memory: EditMemory = field(default_factory=EditMemory)
     # Donor parents offered to the editor alongside the primary (spec §7).
     donor_count: int = 2
+    #: SV-13 generational retirement. Injected symmetric preference judge:
+    #: ``compare(task, baseline_trace, candidate_trace) -> verdict`` with
+    #: ``.score`` and ``.available``. Same seam ``core/rho/rounds.py`` uses, so
+    #: ``core/`` never imports an adapter.
+    #:
+    #: ``None`` disables retirement entirely, which is the default: every offline
+    #: path and every existing caller keeps its current behaviour, and a run only
+    #: opts into pool shaping by supplying a judge.
+    compare_preference: Callable[..., object] | None = None
+    #: Per-task traces captured during the last ``validate`` (the child) and the
+    #: last ``build_issues`` (the parent). Both rollout sets already happen; these
+    #: exist so retirement reuses them instead of paying for them twice.
+    _last_validation_traces: dict[str, ExecutionTrace] = field(
+        default_factory=dict, repr=False
+    )
+    _last_observation_traces: dict[str, ExecutionTrace] = field(
+        default_factory=dict, repr=False
+    )
+    #: SV-10: the parent ``build_issues`` observed, and every fault it diagnosed
+    #: for that parent. ``run_attempt`` reuses both instead of drawing a second,
+    #: independent parent and discarding all but the one worked issue.
+    #:
+    #: ``select_parent`` consumes ``rng.random()``, so two draws in one attempt
+    #: are *independent*: measured on a four-candidate pool they disagreed on the
+    #: first run (``['cand-2', 'cand-2', 'cand-1']``), which diagnoses one
+    #: parent's faults and then materializes a different parent's workspace.
+    _last_observed_parent_id: str = field(default="", repr=False)
+    _last_parent_issues: tuple[TargetIssue, ...] = field(
+        default=(), repr=False
+    )
     #: Measures every rollout and names the grader that did it. Defaults to the
     #: task-contract scorer, which is what the offline suite and the fake stack
     #: use. A real run supplies a benchmark-driven scorer so the headline number
@@ -1006,8 +1176,30 @@ class SequentialGepaRunner:
             raise ValueError("seed must be a non-negative integer")
         if self.embedder is None:
             self.embedder = LexicalEmbedder()
+        if self.cluster_registry is None:
+            # Reuse the runner's embedder so mechanism identity is decided by the
+            # embedder the run was configured with, not a second silent default.
+            # Bound to a local so the factory does not re-read a later mutation.
+            configured = self.embedder
+            self.cluster_registry = ClusterRegistry(
+                embedder_factory=lambda: configured,
+            )
         self._rng = random.Random(self.seed)
         config = self.config
+        # Honour the configured entropy floors and thresholds on the tracker, so
+        # the one instrument computing H(t, m) is governed by the run's config
+        # rather than its own dataclass defaults.
+        if config is not None:
+            for attr, cfg_attr in (
+                ("score_floor", "entropy_score_floor"),
+                ("recombination_score_threshold", "entropy_recombination_score_threshold"),
+                ("frontier_weight", "entropy_frontier_weight"),
+                ("min_comparable_candidates", "entropy_min_comparable_candidates"),
+                ("min_rollouts_per_candidate", "entropy_min_rollouts_per_candidate"),
+            ):
+                value = getattr(config, cfg_attr, None)
+                if value is not None:
+                    setattr(self.entropy, attr, value)
         if self.analyzer_workers > 1 and self.analyzer_factory is None:
             raise ValueError(
                 f"max_analyzer_workers={self.analyzer_workers} requires an "
@@ -1427,28 +1619,57 @@ class SequentialGepaRunner:
     def build_issues(
         self, tasks: Sequence[EvolutionTask]
     ) -> tuple[TargetIssue, ...]:
-        """Build trace-backed issues for every task the base currently fails.
+        """Build trace-backed issues for every task the selected parent fails.
 
         Returns target :class:`agent_evolve.core.issues.Issue` values. A task the
-        base already satisfies produces no issue, and a finding with no writable
+        parent already satisfies produces no issue, and a finding with no writable
         attribution is dropped by :func:`build_issue` rather than ranked.
 
         A task whose rollout produced no measurement yields no issue **and no
         score**. It is neither an observed failure to diagnose nor a data point
         to record: a broken harness must not look like a candidate that answered
         wrongly.
+
+        **SV-11: the subject is the selected parent, not always the base.** This
+        method used to hardcode ``self.pool.base`` for the rollout, the write
+        set, the inventory *and* the score attribution. Because it runs once per
+        attempt, base absorbed every re-observation while each candidate kept only
+        the rollouts its own attempt produced -- measured over six attempts on a
+        two-task pool: base 12 rollouts, every candidate 2, and **every cell stuck
+        at one comparable candidate** against an entropy floor of 3
+        (``core/entropy.py:110``). That is SV-12, and it was a direct consequence:
+        cross-candidate diversity could never acquire the evidence it requires.
+
+        Observing the parent instead is **cost-neutral** -- one rollout per task
+        either way, the subject moves and the count does not. Two properties this
+        must preserve, because breaking either would be worse than the defect:
+
+        * **The base remains reachable.** ``select_parent`` returns base whenever
+          no candidate holds winning-cell evidence, so a fresh pool behaves
+          exactly as before. Base loses only its *guaranteed* per-iteration
+          refresh, which is the accepted trade of the cost-neutral option.
+        * **The write set follows the subject.** Diagnosing candidate X while
+          offering base's artifacts would attribute X's mechanism to surfaces it
+          does not own.
         """
-        base = self.pool.base
-        inventory = self.adapter.artifact_inventory(base.version)
-        write_set = self._writable_artifact_ids(base.version)
+        parent = self.select_parent()
+        inventory = self.adapter.artifact_inventory(parent.version)
+        write_set = self._writable_artifact_ids(parent.version)
         observed = self.rollout_group(
-            base.version, tasks, prefix=f"obs-{base.candidate_id}"
+            parent.version, tasks, prefix=f"obs-{parent.candidate_id}"
         )
         out: list[TargetIssue] = []
+        # SV-13: retain the parent's traces by task for the retirement judge.
+        # These rollouts are the observation this method already performs.
+        self._last_observation_traces = {}
+        # SV-10: name the parent this observation belongs to, so run_attempt
+        # edits the entry whose faults were actually diagnosed.
+        self._last_observed_parent_id = parent.candidate_id
         for rollout in observed:
             if rollout.trace is None or rollout.score is None or not rollout.scorable:
                 continue
-            self._record_rollout_score(base.candidate_id, rollout)
+            self._last_observation_traces[rollout.task.task_id] = rollout.trace
+            self._record_rollout_score(parent.candidate_id, rollout)
             if rollout.score.passed:
                 continue
             analysis = rollout.analysis
@@ -1460,7 +1681,7 @@ class SequentialGepaRunner:
             finding = self.finding_from_analysis(
                 analysis,
                 task=rollout.task,
-                candidate_id=base.candidate_id,
+                candidate_id=parent.candidate_id,
                 trace_id=rollout.trace.trace_id,
                 verdict_id=f"{rollout.task.task_id}:{self.mechanism_cluster_id}",
                 writable_artifact_ids=write_set,
@@ -1472,13 +1693,18 @@ class SequentialGepaRunner:
                 inventory,
                 entropy=self._cell_entropy(rollout.task.task_id),
                 coverage_need=self._coverage_need(rollout.task.task_id),
-                pareto_relevance=self._pareto_relevance(base.candidate_id),
+                pareto_relevance=self._pareto_relevance(parent.candidate_id),
                 embedding=self._embed_finding(finding, rollout.task),
-                lineage=base.version,
+                lineage=parent.version,
                 entropy_tier=self._entropy_tier(rollout.task.task_id),
             )
             if issue is not None:
                 out.append(issue)
+        # SV-10: retain the parent's FULL diagnosed fault set. run_attempt works
+        # one of these, and the editor is shown all of them: every one is already
+        # paid for with the rollouts and analyzer calls above, so discarding them
+        # spends evidence rather than saving cost.
+        self._last_parent_issues = tuple(out)
         return tuple(out)
 
     def _record_rollout_score(
@@ -1524,78 +1750,280 @@ class SequentialGepaRunner:
                 artifact_versions=dict(entry.candidate.artifact_hashes),
             ),
         )
+        # SV-12 step 3: file the same measurement into the mechanism-keyed
+        # entropy tracker. Keyed at write time because the genetic path already
+        # holds the diagnosis when it records a score (unlike RHO, whose phase-5
+        # base rollouts precede phase-6 diagnosis), so no retroactive re-filing
+        # is needed. The pool write above deliberately keeps the constant key.
+        self._record_entropy_evidence(candidate_id, rollout)
+
+    def _record_entropy_evidence(
+        self, candidate_id: str, rollout: ObservedRollout
+    ) -> None:
+        """Record one rollout into the mechanism-keyed entropy tracker.
+
+        Returns without recording when no mechanism can be established, rather
+        than substituting a placeholder. Three distinct cases, all of which mean
+        *this observation cannot support a per-mechanism variance claim*:
+
+        * no analysis (an analyzer outage): there is no mechanism to key by;
+        * an unassigned assignment (the cluster cap is full and the nearest
+          cluster is below the join threshold): the clusterer explicitly refused,
+          and inventing a cell here would file two unrelated faults together --
+          the exact defect the refusal exists to prevent;
+        * a blank mechanism id from any other source.
+
+        Recording under a stand-in key would be worse than not recording: a cell
+        that exists but means nothing is indistinguishable from a real one, and
+        the floors would eventually declare it comparable.
+        """
+        score = rollout.score
+        if score is None or not score.scorable:
+            return
+        cluster_id = self._entropy_cluster_id(rollout)
+        if not cluster_id:
+            return
+        self.entropy.record_score(
+            task_id=rollout.task.task_id,
+            mechanism_cluster_id=cluster_id,
+            candidate_id=candidate_id,
+            score=score.score,
+        )
+        # Promote to comparable only once this candidate clears the per-candidate
+        # rollout floor in this cell. ``entropy()`` ignores non-comparable
+        # candidates entirely, so promoting eagerly would let a single rollout
+        # contribute to a variance the spec says it cannot support.
+        #
+        # The count is kept here rather than read back from the tracker because
+        # ``EntropyTracker`` exposes no per-candidate rollout count publicly and
+        # is under a no-change constraint; reaching into ``_cells`` would couple
+        # this to its private layout.
+        seen_key = (rollout.task.task_id, cluster_id, candidate_id)
+        self._entropy_rollout_counts[seen_key] = (
+            self._entropy_rollout_counts.get(seen_key, 0) + 1
+        )
+        if (
+            self._entropy_rollout_counts[seen_key]
+            >= self.entropy.min_rollouts_per_candidate
+        ):
+            self.entropy.mark_comparable(
+                task_id=rollout.task.task_id,
+                mechanism_cluster_id=cluster_id,
+                candidate_id=candidate_id,
+            )
+
+    def _entropy_cluster_id(self, rollout: ObservedRollout) -> str:
+        """The tracker's mechanism key for this rollout, or ``""`` if none.
+
+        ``""`` is returned for every case where a mechanism cannot be
+        established, and the reason is retained in
+        ``_last_entropy_unavailable_reasons`` so the fallback is reportable
+        rather than silent.
+        """
+        task_id = rollout.task.task_id
+        analysis = rollout.analysis
+        if analysis is None:
+            self._note_entropy_unavailable(
+                task_id,
+                "no analysis: the rollout was scored but not diagnosed",
+                ENTROPY_UNAVAILABLE_CATEGORIES.NO_ANALYSIS,
+            )
+            return ""
+        registry = self.cluster_registry
+        if registry is None:
+            self._note_entropy_unavailable(
+                task_id,
+                "no cluster registry configured on this runner",
+                ENTROPY_UNAVAILABLE_CATEGORIES.NO_REGISTRY,
+            )
+            return ""
+        assignment = registry.clusterer_for(task_id).assign(analysis)
+        if not assignment.cluster_id:
+            self._note_entropy_unavailable(
+                task_id,
+                assignment.unassigned_reason
+                or "the clusterer did not assign a mechanism",
+                ENTROPY_UNAVAILABLE_CATEGORIES.UNASSIGNED,
+            )
+            return ""
+        # Namespaced by task so two tasks' ``c0`` are never confused. Cells stay
+        # indexed per task, which is what the (task, mechanism) key means.
+        return f"{task_id}:{assignment.cluster_id}"
+
+    def _note_entropy_unavailable(
+        self, task_id: str, reason: str, category: str | None = None
+    ) -> None:
+        """Retain why a task's entropy evidence could not be filed.
+
+        ``reason`` is prose for a human reading one task; ``category`` is a
+        stable key for aggregation across a run. Both are kept because a rate
+        without a cause is not actionable and a cause without a count does not
+        show how widespread it is.
+        """
+        self._last_entropy_unavailable_reasons[task_id] = reason
+        if category is not None:
+            self._entropy_unavailable_categories[task_id] = category
+
+    def entropy_availability(self) -> "EntropyAvailabilityReport":
+        """Aggregate how often cross-candidate entropy was measurable.
+
+        SV-12's last named remainder. Per-task reasons already existed; without
+        this aggregate, a run in which **no** cell ever cleared the floors reads
+        in the summary exactly like one where entropy drove diversity, because a
+        measured zero and an unmeasurable cell both surface as ``H = 0.0``.
+
+        Counted per **cell**, ``(task, mechanism)``, because that is the unit the
+        floors apply to. A task whose mechanism could never be established has no
+        cell at all, so it cannot be counted as one; it still contributes to
+        ``reasons`` so a clustering outage is visible rather than appearing as
+        "nothing to report".
+
+        An **existing** cell that returns ``None`` is always ``FLOOR_UNMET``:
+        ``EntropyTracker.entropy`` returns ``None`` only when the cell is absent
+        or fails ``_meets_evidence_floor``, so for a cell that is present there
+        is exactly one cause. The per-task category dict must *not* be consulted
+        here -- it is keyed by task and last-write-wins, so a later undiagnosed
+        rollout on a task whose cell was already filed would relabel that cell.
+        Measured: a 4-attempt offline run reported ``no_analysis=3`` for three
+        cells that existed, which is self-contradictory, because a cell only
+        exists once a mechanism *was* assigned.
+        """
+        available = 0
+        unavailable = 0
+        reasons: dict[str, int] = {}
+        cell_tasks: set[str] = set()
+
+        for key in self.entropy.all_cells():
+            cell_tasks.add(key.task_id)
+            if self.entropy.entropy(key.task_id, key.mechanism_cluster_id) is None:
+                unavailable += 1
+                category = ENTROPY_UNAVAILABLE_CATEGORIES.FLOOR_UNMET
+                reasons[category] = reasons.get(category, 0) + 1
+            else:
+                available += 1
+
+        # Tasks that never produced a cell at all: no mechanism could be
+        # established, so there is nothing to count as a cell, but the cause must
+        # still be reported or a clustering outage would be invisible.
+        for task_id, category in self._entropy_unavailable_categories.items():
+            if task_id in cell_tasks:
+                continue
+            reasons[category] = reasons.get(category, 0) + 1
+
+        return EntropyAvailabilityReport(
+            cells_available=available,
+            cells_unavailable=unavailable,
+            reasons=dict(reasons),
+        )
 
     def _embed_finding(
         self, finding: CausalFinding, task: EvolutionTask
     ) -> tuple[float, ...]:
-        """Embed mechanism + task + artifact context.
+        """Embed the mechanism and its attributed artifacts.
 
         The embedded text carries no expected contract: only the mechanism
-        description, the task ID, and the attributed artifact IDs.
+        description and the attributed artifact IDs.
+
+        ``task_id`` is deliberately **excluded**. A task name is not evidence
+        about a failure *mechanism*, and including it makes two findings that
+        describe the same fault on different tasks embed differently -- biasing
+        the clusterer toward same-task grouping, which is the opposite of the
+        cross-task evidence pooling the per-mechanism entropy floors need. The
+        ``task`` argument is retained because cells remain indexed per task; only
+        the embedded *text* drops it.
         """
-        parts = [finding.mechanism_description or "", task.task_id]
+        parts = [finding.mechanism_description or ""]
         parts.extend(finding.evidence_refs)
         text = " ".join(part for part in parts if part)
         embedder = self.embedder
         assert embedder is not None
         return tuple(embedder.embed(text))
 
-    def _cell_entropy(self, task_id: str) -> float:
-        """Population variance of comparable scores for this task's cells.
+    def _entropy_cell_for(self, task_id: str) -> tuple[str, float] | None:
+        """The single mechanism cell that represents this task, or ``None``.
 
-        Evidence floors are enforced by :meth:`_entropy_tier`; this is the raw
-        statistic only.
+        One resolution point for both the entropy value and its tier. They must
+        describe the *same* cell: ``raw_issue_quality`` treats the tier as an
+        instruction about that specific number (``frontier_exploration`` damps it
+        to ``frontier_weight``, ``skip`` zeroes it, otherwise full weight), so
+        sourcing the value from the strongest cell while sourcing the tier from
+        a different one applies the wrong weight -- measured promoting a
+        ``frontier_exploration`` value to ``recombination_target``, from 30% to
+        100%.
+
+        The strongest cell that clears the floors wins, because the question the
+        DPP asks is "how much disagreement is reachable on this task?". Cells
+        below the floors return ``None`` from the tracker and are skipped rather
+        than counted as zero: an unmeasured cell must not look like a
+        measured-and-uniform one.
         """
-        scores = [
-            cell.mean
-            for entry in self.pool.all_entries()
-            for (t_id, m_id), cell in entry.score_tensor.items()
-            if t_id == task_id
-            and m_id == self.mechanism_cluster_id
-            and cell.rollout_count >= 1
-        ]
-        if len(scores) < 2:
+        best: tuple[str, float] | None = None
+        for key in self.entropy.all_cells():
+            if key.task_id != task_id:
+                continue
+            value = self.entropy.entropy(task_id, key.mechanism_cluster_id)
+            if value is None:
+                continue
+            if best is None or value > best[1]:
+                best = (key.mechanism_cluster_id, value)
+        return best
+
+    def _cell_entropy(self, task_id: str) -> float:
+        """Cross-candidate entropy for this task, from the entropy tracker.
+
+        Reads :class:`EntropyTracker`, which is the single implementation of the
+        spec's ``H(t, m) = Var * max(max_score, score_floor)`` *with* the
+        evidence floors. Previously this recomputed variance inline over the pool
+        score tensor filtered on the constant ``mechanism_cluster_id``, which
+        measured the spread of one score per *candidate* inside a single
+        synthetic bucket -- pooling candidates that failed for unrelated reasons
+        -- and enforced no floors at all.
+        """
+        cell = self._entropy_cell_for(task_id)
+        if cell is None:
+            self._note_entropy_unavailable(
+                task_id,
+                self._last_entropy_unavailable_reasons.get(
+                    task_id,
+                    "no mechanism cell for this task meets the evidence floors "
+                    f"(>={self.entropy.min_comparable_candidates} comparable "
+                    f"candidates, >={self.entropy.min_rollouts_per_candidate} "
+                    "rollouts each)",
+                ),
+                ENTROPY_UNAVAILABLE_CATEGORIES.FLOOR_UNMET,
+            )
             return 0.0
-        mean = sum(scores) / len(scores)
-        variance = max(0.0, sum(s * s for s in scores) / len(scores) - mean * mean)
-        floor = (
-            getattr(self.config, "entropy_score_floor", 0.15)
-            if self.config is not None
-            else 0.15
-        )
-        return variance * max(max(scores), floor)
+        return cell[1]
+
+    def entropy_unavailable_reason(self, task_id: str) -> str | None:
+        """Why this task's entropy term is unavailable, or ``None`` if it is not.
+
+        Exposed so a caller can distinguish "entropy measured zero" from
+        "entropy could not be measured" -- the distinction the spec requires and
+        the reason ``EntropyTracker.entropy`` returns ``None`` rather than 0.0.
+        """
+        return self._last_entropy_unavailable_reasons.get(task_id)
 
     def _entropy_tier(self, task_id: str) -> str:
-        """Resolve the entropy tier from the evidence floors.
+        """The tier of the same cell :meth:`_cell_entropy` reports.
 
-        ``skip`` when the comparable-candidate floor is unmet (a single sample
-        must never contribute a high-variance signal), ``frontier_exploration``
-        when variance is meaningful but the best score is below the
-        recombination threshold, otherwise ``recombination_target``.
+        ``skip`` when no mechanism cell for this task clears the floors -- a
+        single sample must never contribute a high-variance signal, and
+        ``raw_issue_quality`` zeroes the entropy component for this tier.
+        Otherwise the tracker's own classification **for the cell that supplied
+        the number**, so one instrument decides both the value and how it is
+        weighted.
+
+        With mechanism-keyed cells this returns ``skip`` **more often** than the
+        previous constant-bucket version did, because the >=3 comparable
+        candidates floor is genuinely harder to clear per mechanism than it was
+        across one pooled cell. That is the correct direction: a
+        correct-but-unavailable entropy term beats a confidently wrong one.
         """
-        min_candidates = (
-            getattr(self.config, "entropy_min_comparable_candidates", 3)
-            if self.config is not None
-            else 3
-        )
-        threshold = (
-            getattr(self.config, "entropy_recombination_score_threshold", 0.30)
-            if self.config is not None
-            else 0.30
-        )
-        scores = [
-            cell.mean
-            for entry in self.pool.all_entries()
-            for (t_id, m_id), cell in entry.score_tensor.items()
-            if t_id == task_id
-            and m_id == self.mechanism_cluster_id
-            and cell.rollout_count >= 1
-        ]
-        if len(scores) < min_candidates:
+        cell = self._entropy_cell_for(task_id)
+        if cell is None:
             return "skip"
-        if max(scores) < threshold:
-            return "frontier_exploration"
-        return "recombination_target"
+        return self.entropy.classify(task_id, cell[0])
 
     def _coverage_need(self, task_id: str) -> float:
         """Fraction of pool candidates lacking evidence for this task's cell."""
@@ -1665,10 +2093,19 @@ class SequentialGepaRunner:
         owns the workspace being written. Donors come from the Pareto frontier
         and are exposed read-only, so an editor can transplant a capability
         without the prompt growing with the pool.
+
+        **SV-10: the primary is the already-observed parent when there is one.**
+        ``select_parent`` consumes ``rng.random()``, so drawing here as well would
+        make this a third independent draw within one attempt and could offer a
+        primary that is neither the diagnosed nor the edited candidate.
         """
         if isinstance(k, bool) or not isinstance(k, int) or k < 1:
             raise ValueError("k must be >= 1")
-        primary = self.select_parent()
+        primary = (
+            self.pool.get(self._last_observed_parent_id)
+            if self._last_observed_parent_id
+            else self.select_parent()
+        )
         if k == 1:
             return (primary,)
         donors: list[PoolEntry] = []
@@ -1715,6 +2152,7 @@ class SequentialGepaRunner:
                     t_id: cell.mean
                     for (t_id, _m), cell in entry.score_tensor.items()
                 },
+                issues=self._issues_for_parent(entry.candidate_id),
             )
             for entry in entries
         )
@@ -1730,6 +2168,7 @@ class SequentialGepaRunner:
                         t_id: cell.mean
                         for (t_id, _m), cell in parent_entry.score_tensor.items()
                     },
+                    issues=self._issues_for_parent(parent_entry.candidate_id),
                 ),
                 *(p for p in parents if not p.is_primary),
             )
@@ -1742,7 +2181,7 @@ class SequentialGepaRunner:
             write_set=write_set,
             current_artifacts=dict(current),
             parents=parents,
-            creatable_prefix=getattr(self.adapter, "creatable_prefix", ""),
+            creatable_prefixes=getattr(self.adapter, "creatable_prefixes", ()),
             pool_created_count=self._pool_created_count(),
             # Prior attempts on this issue, so the editor is told what has
             # already been tried instead of rediscovering it.
@@ -1753,6 +2192,19 @@ class SequentialGepaRunner:
         repair = repair_once_then_classify(self.editor, request)
         observed = tuple(getattr(self.editor, "last_parents_read", ()))
         return workspace, repair.response, repair.correction_requests, observed
+
+    def _issues_for_parent(self, candidate_id: str) -> tuple[TargetIssue, ...]:
+        """This candidate's diagnosed faults, or ``()`` when it has none.
+
+        Only the observed parent has a diagnosis: ``build_issues`` runs the
+        analyzer on one candidate per attempt, so a donor legitimately returns
+        empty. Empty means *no diagnosis yet* -- it is not an error, and it must
+        not be filled with the observed parent's faults, which would attribute
+        one candidate's weaknesses to another.
+        """
+        if not candidate_id or candidate_id != self._last_observed_parent_id:
+            return ()
+        return self._last_parent_issues
 
     def _pool_created_count(self) -> int:
         """Generated artifacts already present, for the creation cap."""
@@ -1796,10 +2248,19 @@ class SequentialGepaRunner:
         )
         origin: list[ValidationResult] = []
         regression: list[ValidationResult] = []
+        # SV-13: retain the child's traces by task. These rollouts already
+        # happened -- the probe set is origin + every regression task, i.e. the
+        # whole coreset -- and ``ValidationResult`` keeps only ``trace_id``, so
+        # without this the retirement judge would have to re-roll the child on
+        # every task it was just measured on. Retaining them makes generational
+        # retirement cost judge calls only, and a judge call is far cheaper than
+        # a rollout.
+        self._last_validation_traces = {}
         for probe, rollout in zip(probes, observed, strict=True):
             if rollout.trace is None or rollout.score is None or not rollout.scorable:
                 self._unscorable_probes += 1
                 continue
+            self._last_validation_traces[probe.task.task_id] = rollout.trace
             outcome = ValidationResult(
                 kind=probe.kind,
                 task_id=probe.task.task_id,
@@ -1968,7 +2429,16 @@ class SequentialGepaRunner:
 
         issue = selected[0]
         task = self._task_for(issue, tasks)
-        parent = self.select_parent()
+        # SV-10: reuse the parent build_issues already observed rather than
+        # drawing again. select_parent consumes rng.random(), so a second draw is
+        # independent and can name a different candidate -- which would diagnose
+        # one parent's faults and then materialize another parent's workspace.
+        # Falls back to a draw only if no observation was recorded.
+        parent = (
+            self.pool.get(self._last_observed_parent_id)
+            if self._last_observed_parent_id
+            else self.select_parent()
+        )
         attempt_id = self._next_attempt_id()
         parent_rollout = self.rollout_group(
             parent.version, (task,), prefix=f"obs-{parent.candidate_id}"
@@ -2044,6 +2514,8 @@ class SequentialGepaRunner:
         )
 
         result_candidate_id: str | None = None
+        retired_parent_id: str | None = None
+        retirement_reason = ""
         if decision.accepted:
             self._budget.accepted_edits += 1
             committed = self.commit_to_pool(
@@ -2055,6 +2527,9 @@ class SequentialGepaRunner:
                 extra_parent_ids=observed_parents,
             )
             result_candidate_id = committed.candidate_id
+            retired_parent_id, retirement_reason = self._maybe_retire_parent(
+                parent, committed, tasks
+            )
 
         outcome = GepaAttemptOutcome(
             attempt_id=attempt_id,
@@ -2067,12 +2542,86 @@ class SequentialGepaRunner:
             reason=decision.reason,
             artifact_ids=tuple(e.artifact_id for e in response.edits),
             fallback_reason=report.fallback_reason,  # type: ignore[attr-defined]
+            retired_parent_id=retired_parent_id,
+            retirement_reason=retirement_reason,
         )
         self._record_in_edit_memory(
             outcome, workspace, response, validation, decision
         )
         self._persist_attempt(outcome, corrections)
         return outcome
+
+    def _maybe_retire_parent(
+        self,
+        parent: PoolEntry,
+        child: PoolEntry,
+        tasks: Sequence[EvolutionTask],
+    ) -> tuple[str | None, str]:
+        """Retire ``parent`` when the judge prefers ``child`` on the coreset.
+
+        SV-13. An offspring is generated to fix its parent's diagnosed faults, so
+        a child the judge prefers has made the parent redundant *as a parent* --
+        continuing to breed from a version its own descendant improved on spends
+        rollouts to re-derive a fix that already exists.
+
+        **Costs judge calls only.** Both trace sets are reused: the parent's from
+        ``build_issues`` (which after SV-11 observes the selected parent) and the
+        child's from ``validate`` (whose probe set is origin + every regression
+        task, i.e. the coreset). ``2k`` model calls, zero extra rollouts.
+
+        **Never blocks the attempt.** No judge, an unavailable verdict, a missing
+        trace, or a raising judge all leave the parent alive and the committed
+        candidate intact. The edit is the expensive artifact; an optional
+        pool-shaping step must not be able to discard it. Structural refusals
+        (retiring the last live entry) are enforced by :meth:`PersistentPool.retire`
+        and reported here rather than raised.
+        """
+        if self.compare_preference is None:
+            return None, "no preference judge configured; retirement disabled"
+
+        judged_tasks = tuple(
+            t
+            for t in tasks
+            if t.task_id in self._last_observation_traces
+            and t.task_id in self._last_validation_traces
+        )
+        decision = decide_retirement(
+            parent_id=parent.candidate_id,
+            child_id=child.candidate_id,
+            tasks=judged_tasks if judged_tasks else tasks,
+            parent_traces=self._last_observation_traces,
+            child_traces=self._last_validation_traces,
+            compare=self.compare_preference,
+        )
+        if not decision.should_retire:
+            return None, decision.reason
+        # The verdict is a measurement of the child against the version it was
+        # derived from, which is exactly the evidence the SV-4 promotion gate asks
+        # for. Recording it here is what lets a *genetic* offspring be promotable
+        # at all: only the RHO path calls ``record_preference``, so without this a
+        # judged genetic candidate would be retired-parent-superseding and still
+        # ineligible for export -- an incoherent pair.
+        #
+        # The baseline differs by path and that is deliberate: RHO measures against
+        # the incumbent base, retirement against the immediate parent. Both express
+        # "preferred over the version it came from", which is the property the gate
+        # is testing.
+        if decision.mean_preference is not None:
+            self.pool.record_preference(
+                child.candidate_id,
+                decision.mean_preference,
+                available=decision.judged,
+                unavailable=decision.unavailable,
+            )
+        try:
+            self.pool.retire(
+                parent.candidate_id, superseded_by=child.candidate_id
+            )
+        except (ValueError, KeyError) as exc:
+            # Structural refusal (e.g. the parent is the only live entry). The
+            # committed candidate stands; only the pool shaping was declined.
+            return None, f"retirement declined: {exc}"
+        return parent.candidate_id, decision.reason
 
     def _record_in_edit_memory(
         self,
@@ -2178,4 +2727,5 @@ class SequentialGepaRunner:
             champion=champion,
             pool_size=len(self.pool),
             pareto_frontier=self.pool.pareto_frontier(),
+            entropy_availability=self.entropy_availability(),
         )

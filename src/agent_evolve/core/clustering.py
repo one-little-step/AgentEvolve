@@ -26,9 +26,50 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import dataclass, field
-from typing import Iterable, Protocol, Sequence
+from collections.abc import Callable
+from typing import Iterable, Protocol, Sequence, runtime_checkable
 
 from agent_evolve.core.blame import CausalAnalysis, CausalFinding
+
+#: Cosine at or above which two mechanism descriptions join without a model call.
+DEFAULT_JOIN_THRESHOLD = 0.75
+
+#: The ambiguous cosine band, inside which cosine is measurably unreliable and an
+#: injected adjudicator decides instead.
+#:
+#: Calibrated against live ``embeddinggemma`` over 4 fault families with 3
+#: analyzer rephrasings each -- 12 same-fault and 54 different-fault pairs
+#: (``terminal_output/sv12/17-band-decision.log``). The two distributions
+#: **overlap**: same-fault cosine ran 0.466 to 0.851 and different-fault ran
+#: 0.244 to 0.502, a separation of ``-0.036``. No single threshold can separate
+#: an analyzer paraphrase from a genuinely different fault, which is why the
+#: adjudicator is load-bearing rather than a cost optimisation.
+#:
+#: Scored by *silent splits* -- true paraphrase pairs decided against merging by
+#: cosine alone, with no model call:
+#:
+#: ===================  ===========  ============  ================
+#: band                 adjudicated  silent-split  false-merge-risk
+#: ===================  ===========  ============  ================
+#: ``[0.60, 0.85)``     9 / 66       2 / 12        0
+#: ``[0.45, 0.75)``     16 / 66      0 / 12        0
+#: ``[0.40, 0.75)``     35 / 66      0 / 12        0
+#: ===================  ===========  ============  ================
+#:
+#: ``[0.45, 0.75)`` is the smallest measured band that silently splits zero true
+#: pairs; ``[0.40, 0.75)`` buys nothing and doubles the calls. The previous
+#: ``[0.60, 0.85)`` split 2 of 12.
+#:
+#: These 12 strings are synthetic phrasings, not real CUGA analyzer output, so
+#: these values are evidence-based but not a tuned optimum.
+DEFAULT_BAND_LOW = 0.45
+
+#: Upper edge of the ambiguous band. **Must not be below the join threshold**:
+#: the span ``[band_high, join_threshold)`` would then be neither ambiguous nor
+#: joining, so cosine would decide it alone -- precisely the region the
+#: adjudicator exists to cover. Measured: band ``[0.45, 0.70)`` against
+#: threshold ``0.75`` stranded true pairs at cosine 0.718, 0.749 and 0.726.
+DEFAULT_BAND_HIGH = 0.75
 
 
 def _tokenize(text: str) -> tuple[str, ...]:
@@ -114,6 +155,27 @@ def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
     return dot / (na * nb)
 
 
+@runtime_checkable
+class MechanismAdjudicator(Protocol):
+    """Decides whether two mechanism descriptions name the same fault.
+
+    Injected, never imported: ``core/`` is agent-neutral, so the model-backed
+    implementation lives adapter-side and arrives through this protocol exactly as
+    :class:`MechanismEmbedder` does.
+
+    Consulted **only** where embedding cosine is measurably unreliable -- inside
+    the ambiguous similarity band, and on a forced merge at the cluster cap. Clear
+    cases never reach it, which is what keeps a model in this path affordable.
+
+    Returns ``True`` for the same mechanism, ``False`` for different ones, and
+    ``None`` to abstain. An abstention or a raised exception must leave the cosine
+    decision standing and be recorded: a dedup outage may never silently change a
+    clustering decision.
+    """
+
+    def same_mechanism(self, left: str, right: str) -> bool | None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ClusterAssignment:
     """Where one mechanism observation landed."""
@@ -124,6 +186,15 @@ class ClusterAssignment:
     task_id: str = ""
     freshness_iteration: int = 0
     embedding_fallback_reason: str | None = None
+    #: Set when no cluster could be assigned. ``cluster_id`` is then ``""`` and
+    #: the observation must not contribute to a mechanism cell: variance over two
+    #: unrelated faults reads as "a fix is reachable here" for a mechanism that
+    #: does not exist.
+    unassigned_reason: str | None = None
+    #: Set when the adjudicator was consulted but could not answer (abstained or
+    #: raised). The cosine decision stands; this records that it was not
+    #: adjudicated, so a coarse decision is never mistaken for a fine one.
+    adjudication_unavailable_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -146,12 +217,23 @@ class MechanismClusterer:
 
     task_id: str
     embedder: MechanismEmbedder
-    join_threshold: float = 0.75
+    join_threshold: float = DEFAULT_JOIN_THRESHOLD
     max_clusters_per_task: int = 12
+    #: Optional model-backed tie-breaker for the ambiguous band. ``None`` keeps
+    #: cosine-only behaviour and adds no model dependency.
+    adjudicator: MechanismAdjudicator | None = None
+    #: Below ``band_low`` a pair is confidently distinct; at or above
+    #: ``band_high`` it is confidently the same mechanism. Only the span between
+    #: is worth a model call. See :data:`DEFAULT_BAND_LOW` for the calibration.
+    band_low: float = DEFAULT_BAND_LOW
+    band_high: float = DEFAULT_BAND_HIGH
     _clusters: dict[str, _Cluster] = field(default_factory=dict)
     _next_id: int = 0
     _current_iter: int = 0
     _fallback_embedder: LexicalEmbedder | None = field(default=None, init=False)
+    #: One representative mechanism text per cluster, kept so the adjudicator can
+    #: be asked about *text* rather than about a centroid vector it cannot read.
+    _exemplars: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.join_threshold <= 1.0:
@@ -164,6 +246,30 @@ class MechanismClusterer:
             or self.max_clusters_per_task < 1
         ):
             raise ValueError("max_clusters_per_task must be a positive integer")
+        if not 0.0 <= self.band_low <= 1.0:
+            raise ValueError("band_low must be in [0, 1]")
+        if not 0.0 <= self.band_high <= 1.0:
+            raise ValueError("band_high must be in [0, 1]")
+        if self.band_low > self.band_high:
+            raise ValueError(
+                f"band_low ({self.band_low}) must be <= band_high "
+                f"({self.band_high}): an inverted band would make every pair "
+                "ambiguous and every assignment a model call"
+            )
+        if self.adjudicator is not None and self.band_high < self.join_threshold:
+            # Scoped to "an adjudicator exists" deliberately. The band is read
+            # only at the adjudicator gate in ``_add``, so with no adjudicator
+            # there is nothing to strand and a raise here would reject
+            # legitimate cosine-only configurations -- measured rejecting 7
+            # existing tests that raise the join threshold with no adjudicator.
+            raise ValueError(
+                f"band_high ({self.band_high}) must be >= join_threshold "
+                f"({self.join_threshold}) when an adjudicator is attached: the "
+                f"span [{self.band_high}, {self.join_threshold}) would be "
+                "neither ambiguous nor joining, so cosine alone would split "
+                "pairs there with no adjudicator call -- measured stranding "
+                "true paraphrase pairs at cosine 0.718, 0.749 and 0.726"
+            )
 
     # ------------------------------------------------------------------ #
     # Iteration barriers
@@ -247,12 +353,43 @@ class MechanismClusterer:
                 self._fallback_embedder = LexicalEmbedder()
             return list(self._fallback_embedder.embed(text)), "provider_unavailable"
 
+    def _consult(self, text: str, cluster_id: str) -> tuple[bool | None, str | None]:
+        """Ask the adjudicator whether ``text`` names the cluster's mechanism.
+
+        Returns ``(verdict, unavailable_reason)``. A raised exception or a missing
+        exemplar is an unavailability, never a verdict: a dedup outage must leave
+        the cosine decision standing rather than silently splitting or merging.
+        """
+        if self.adjudicator is None:
+            return None, None
+        exemplar = self._exemplars.get(cluster_id)
+        if not exemplar:
+            return None, "no_exemplar"
+        try:
+            return self.adjudicator.same_mechanism(exemplar, text), None
+        except Exception as exc:  # noqa: BLE001 - any provider failure degrades
+            return None, f"adjudicator_error: {type(exc).__name__}"
+
     def _add(self, text: str, force_new: bool) -> ClusterAssignment:
         vec, fallback_reason = self._embed(text)
+        unavailable: str | None = None
         if not force_new and self._clusters:
             best_id, best_sim = self._best_match(vec)
             at_cap = len(self._clusters) >= self.max_clusters_per_task
-            if best_sim >= self.join_threshold or at_cap:
+
+            # Cosine decides the clear cases for free. The adjudicator is
+            # consulted only where cosine is measurably unreliable: inside the
+            # ambiguous band, and on a forced merge at the cap.
+            join = best_sim >= self.join_threshold
+            ambiguous = self.band_low <= best_sim < self.band_high
+            if self.adjudicator is not None and (ambiguous or (at_cap and not join)):
+                verdict, unavailable = self._consult(text, best_id)
+                if verdict is True:
+                    join = True
+                elif verdict is False:
+                    join = False
+
+            if join:
                 self._update_cluster(best_id, vec)
                 return ClusterAssignment(
                     cluster_id=best_id,
@@ -261,6 +398,30 @@ class MechanismClusterer:
                     task_id=self.task_id,
                     freshness_iteration=self._current_iter,
                     embedding_fallback_reason=fallback_reason,
+                    adjudication_unavailable_reason=unavailable,
+                )
+
+            if at_cap:
+                # Previously ``best_sim >= join_threshold or at_cap`` absorbed
+                # this observation into the nearest cluster whatever its
+                # similarity -- measured joining an unrelated mechanism at cosine
+                # 0.822. Two unrelated faults in one cell yield a *high* variance
+                # reading, i.e. "a fix is reachable here" for a mechanism that
+                # does not exist, which is worse than no reading because nothing
+                # looks broken. Refuse instead and say why.
+                return ClusterAssignment(
+                    cluster_id="",
+                    similarity=best_sim,
+                    is_new_cluster=False,
+                    task_id=self.task_id,
+                    freshness_iteration=self._current_iter,
+                    embedding_fallback_reason=fallback_reason,
+                    unassigned_reason=(
+                        f"cluster cap reached ({self.max_clusters_per_task}) and "
+                        f"nearest cluster similarity {best_sim:.3f} is below the "
+                        f"join threshold {self.join_threshold:.3f}"
+                    ),
+                    adjudication_unavailable_reason=unavailable,
                 )
         # New cluster.
         cluster_id = f"c{self._next_id}"
@@ -271,6 +432,7 @@ class MechanismClusterer:
             member_count=1,
             last_touched_iter=self._current_iter,
         )
+        self._exemplars[cluster_id] = text
         return ClusterAssignment(
             cluster_id=cluster_id,
             similarity=1.0,
@@ -278,6 +440,7 @@ class MechanismClusterer:
             task_id=self.task_id,
             freshness_iteration=self._current_iter,
             embedding_fallback_reason=fallback_reason,
+            adjudication_unavailable_reason=unavailable,
         )
 
     def _best_match(self, vec: list[float]) -> tuple[str, float]:
@@ -329,8 +492,13 @@ class MechanismClusterer:
 class ClusterRegistry:
     """Holds one clusterer per task; the orchestrator-level container."""
 
-    embedder_factory: "callable"
-    join_threshold: float = 0.75
+    embedder_factory: Callable[[], MechanismEmbedder]
+    join_threshold: float = DEFAULT_JOIN_THRESHOLD
+    #: Optional shared adjudicator, handed to every per-task clusterer. ``None``
+    #: keeps cosine-only behaviour with no model dependency.
+    adjudicator: MechanismAdjudicator | None = None
+    band_low: float = DEFAULT_BAND_LOW
+    band_high: float = DEFAULT_BAND_HIGH
     _clusterers: dict[str, MechanismClusterer] = field(default_factory=dict)
 
     def clusterer_for(self, task_id: str) -> MechanismClusterer:
@@ -339,19 +507,38 @@ class ClusterRegistry:
                 task_id=task_id,
                 embedder=self.embedder_factory(),
                 join_threshold=self.join_threshold,
+                adjudicator=self.adjudicator,
+                band_low=self.band_low,
+                band_high=self.band_high,
             )
         return self._clusterers[task_id]
 
     def assign(self, task_id: str, finding: CausalFinding) -> ClusterAssignment:
-        """Assign a finding via the per-task clusterer, namespaced by task."""
+        """Assign a finding via the per-task clusterer, namespaced by task.
+
+        A **refusal is preserved as a refusal**. The per-task clusterer returns
+        ``cluster_id=""`` when the cluster cap is full and the nearest cluster
+        is below the join threshold; namespacing that unconditionally would
+        yield ``f"{task_id}:"`` -- a *non-empty* string. That is worse than
+        useless: ``CellKey`` rejects only a falsy mechanism id, so a laundered
+        refusal passes the guard and is filed as a legitimate mechanism, and
+        even a caller checking ``if assignment.cluster_id:`` is defeated by the
+        namespacing alone. Both reason fields are forwarded for the same reason:
+        a caller that must report *why* entropy is unavailable cannot invent it.
+        """
         assignment = self.clusterer_for(task_id).assign_finding(finding)
+        namespaced = (
+            f"{task_id}:{assignment.cluster_id}" if assignment.cluster_id else ""
+        )
         return ClusterAssignment(
-            cluster_id=f"{task_id}:{assignment.cluster_id}",
+            cluster_id=namespaced,
             similarity=assignment.similarity,
             is_new_cluster=assignment.is_new_cluster,
             task_id=task_id,
             freshness_iteration=assignment.freshness_iteration,
             embedding_fallback_reason=assignment.embedding_fallback_reason,
+            unassigned_reason=assignment.unassigned_reason,
+            adjudication_unavailable_reason=assignment.adjudication_unavailable_reason,
         )
 
     def begin_iteration(self, iteration: int) -> None:

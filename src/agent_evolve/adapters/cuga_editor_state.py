@@ -11,6 +11,7 @@ into a lost attempt.
 from __future__ import annotations
 
 import inspect
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from agent_evolve.core.contracts import ArtifactEdit
@@ -43,9 +44,49 @@ def normalize_authored_content(content: str) -> str:
 # cuga_adapter.py accepts only ``instructions`` or a
 # ``skills|policies|memory/<name>`` prefix, so a flat ``generated/<name>`` would
 # raise ValueError at registration and the creation path would be dead code.
-DEFAULT_CREATABLE_PREFIX = "skills/generated-"
+#
+# SV-8: one prefix per editable surface, not just ``skills/``. With the scalar
+# ``skills/generated-`` the optimizer could *create* only a skill, so ``memory/``
+# and ``policies/`` were reachable by replacement alone -- and before
+# multi-surface seeding there was nothing there to replace. Both halves had to
+# move together; widening this alone would have left the optimizer inventing
+# surfaces it had never been shown.
+#
+# The ``generated-`` marker is retained on every surface deliberately: artifact
+# provenance depends on a created artifact being identifiable from its id, and
+# the pool-wide creation cap counts exactly these.
+DEFAULT_CREATABLE_PREFIXES: tuple[str, ...] = (
+    "skills/generated-",
+    "memory/generated-",
+    "policies/generated-",
+)
+# Retained for callers that still read a single prefix (the value they used).
+DEFAULT_CREATABLE_PREFIX = DEFAULT_CREATABLE_PREFIXES[0]
 DEFAULT_PER_ATTEMPT_CREATE_CAP = 2
 DEFAULT_POOL_CREATE_CAP = 10
+
+
+def normalize_creatable_prefixes(value: object) -> tuple[str, ...]:
+    """Coerce a scalar-or-sequence prefix declaration to a tuple.
+
+    Creation is gated by *prefix membership*, and an empty tuple means creation
+    is disabled entirely -- the genetic editor's default. Accepting both shapes
+    keeps the older scalar ``creatable_prefix`` contract working while the
+    multi-surface tuple becomes the real one.
+
+    A bare string is deliberately *not* treated as an iterable of characters:
+    that would silently authorize every id.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,) if value else ()
+    if isinstance(value, Iterable):
+        return tuple(str(p) for p in value if str(p))
+    raise TypeError(
+        f"creatable prefixes must be a string or an iterable of strings; "
+        f"got {type(value).__name__}"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,13 +102,46 @@ class EditStagingArea:
     """Accumulates authorized edits for one editor attempt."""
 
     write_set: tuple[str, ...]
-    creatable_prefix: str = DEFAULT_CREATABLE_PREFIX
+    # Scalar form accepted for back-compatibility; normalized in __post_init__.
+    creatable_prefixes: object = DEFAULT_CREATABLE_PREFIXES
     per_attempt_create_cap: int = DEFAULT_PER_ATTEMPT_CREATE_CAP
     pool_created_count: int = 0
     pool_create_cap: int = DEFAULT_POOL_CREATE_CAP
     _replaced: dict[str, str] = field(default_factory=dict)
     _created: dict[str, str] = field(default_factory=dict)
     _parents_read: set[str] = field(default_factory=set)
+
+    def __post_init__(self) -> None:
+        self.creatable_prefixes = normalize_creatable_prefixes(
+            self.creatable_prefixes
+        )
+
+    @property
+    def creatable_prefix(self) -> str:
+        """First authorized prefix, or ``""`` when creation is disabled.
+
+        Kept so callers that reason about a single prefix keep working. Anything
+        deciding *whether* an id may be created must use
+        :meth:`_creation_prefix_for` instead -- this property cannot represent
+        more than one surface and silently under-reports the other two.
+        """
+        prefixes = self._prefixes()
+        return prefixes[0] if prefixes else ""
+
+    def _prefixes(self) -> tuple[str, ...]:
+        return normalize_creatable_prefixes(self.creatable_prefixes)
+
+    def _creation_prefix_for(self, artifact_id: str) -> str | None:
+        """The authorized prefix this id carries, or ``None``.
+
+        Longest match first: were a surface ever configured with both
+        ``memory/generated-`` and a longer ``memory/generated-sub-``, the name
+        check below must run against the more specific one.
+        """
+        for prefix in sorted(self._prefixes(), key=len, reverse=True):
+            if artifact_id.startswith(prefix):
+                return prefix
+        return None
 
     # -------------------------------------------------------------- #
     # Writes
@@ -90,13 +164,19 @@ class EditStagingArea:
                 False,
                 f"{artifact_id!r} already exists; use stage_replace instead",
             )
-        if not artifact_id.startswith(self.creatable_prefix):
+        prefix = self._creation_prefix_for(artifact_id)
+        if prefix is None:
+            allowed = self._prefixes()
+            if not allowed:
+                return StageOutcome(
+                    False, "artifact creation is disabled for this attempt"
+                )
             return StageOutcome(
                 False,
-                f"created artifacts must start with {self.creatable_prefix!r}; "
-                f"got {artifact_id!r}",
+                f"created artifacts must start with one of "
+                f"{sorted(allowed)}; got {artifact_id!r}",
             )
-        if len(artifact_id) <= len(self.creatable_prefix):
+        if len(artifact_id) <= len(prefix):
             return StageOutcome(False, "created artifact needs a name after the prefix")
         if not isinstance(content, str):
             return StageOutcome(False, "content must be a string")

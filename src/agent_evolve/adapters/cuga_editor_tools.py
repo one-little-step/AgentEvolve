@@ -116,10 +116,10 @@ def build_tool_callables(ctx: EditorToolContext) -> dict[str, Callable[..., str]
 
     # ---------------------------------------------------------- harness
     def list_artifacts() -> str:
-        """List the artifact ids you may modify, and the required prefix for new artifacts."""
+        """List the artifact ids you may modify, and the required prefixes for new artifacts."""
         return _ok(
             writable=list(ctx.request.write_set),
-            creatable_prefix=ctx.request.creatable_prefix,
+            creatable_prefixes=list(ctx.request.creatable_prefixes),
         )
 
     def read_artifact(artifact_id: str) -> str:
@@ -187,13 +187,28 @@ def build_tool_callables(ctx: EditorToolContext) -> dict[str, Callable[..., str]
 
     # ---------------------------------------------------------- parents
     def list_parents() -> str:
-        """List the candidate parents available, marking which is primary and each one's scores."""
+        """List the candidate parents available, marking which is primary, each one's scores, and each one's diagnosed faults."""
         return json.dumps(
             [
                 {
                     "candidate_id": p.candidate_id,
                     "is_primary": p.is_primary,
                     "score_summary": dict(p.score_summary),
+                    # SV-10: what this parent is weak at, so an edit can target a
+                    # mechanism instead of inferring one from a score. Cluster
+                    # ids, numbers and trace refs only -- never mechanism prose,
+                    # because this payload is a persistence surface.
+                    "issues": [
+                        {
+                            "task_id": i.task_id,
+                            "mechanism_cluster_id": i.mechanism_cluster_id,
+                            "severity": i.severity,
+                            "confidence": i.confidence,
+                            "artifact_ids": list(i.writable_artifact_ids),
+                            "evidence_refs": list(i.evidence_refs),
+                        }
+                        for i in p.issues
+                    ],
                 }
                 for p in ctx.request.parents
             ],

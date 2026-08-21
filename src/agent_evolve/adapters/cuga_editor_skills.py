@@ -54,6 +54,23 @@ capability the primary lacks, and copying a proven solution is stronger than
 inventing a new one. Refining without looking at an available donor is a choice
 you must be able to justify from what the donor actually contained.
 
+The evidence also lists each parent's diagnosed faults: for every one, the task,
+the mechanism cluster, a severity in [0,1], and the artifacts the failure was
+attributed to. Read them before choosing what to change. They are what this
+parent is known to be weak at, measured over its own rollouts, so:
+
+* A fault whose attributed artifact is in your write set is the strongest
+  available target -- the evidence already says which surface is implicated.
+* Severity orders your attention. The faults are listed worst first; prefer the
+  severe one unless the blame evidence for this run points elsewhere.
+* A repeated mechanism across several tasks is a systemic weakness, not a
+  one-off, and usually deserves a change to the surface it keeps implicating.
+* A donor's own known faults tell you where NOT to transplant from. A donor with
+  a high score and a severe fault on the mechanism you are fixing is the wrong
+  source, whatever its score says.
+
+Call list_parents when you want the full fault detail for any parent.
+
 You may also create a new artifact when no existing artifact covers the failure
 at all. Use each mechanism when the evidence calls for it; do not default to one
 because it is easier.

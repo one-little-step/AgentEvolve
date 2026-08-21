@@ -57,6 +57,11 @@ exported to your shell.
 | `LITELLM_API_KEY` / `CUGA_API_KEY` | credential | **yes** |
 | `OLLAMA_EMBEDDING_URL` | mechanism clustering embeddings | falls back to lexical |
 | `OLLAMA_EMBEDDING_MODEL` | e.g. `embeddinggemma` | falls back to lexical |
+| `AE_MECHANISM_DEDUP_MODEL` | small model that adjudicates ambiguous mechanism merges | no — off unless set (§1.1) |
+| `AE_MECHANISM_DEDUP_BASE_URL` | its endpoint, independent of the rollout model | no — off unless set |
+| `AE_MECHANISM_DEDUP_API_KEY` | its credential; may be empty for a local endpoint | no |
+| `AE_MECHANISM_DEDUP_BAND_LOW` | below this cosine similarity, pairs are distinct without a model call | no — default `0.45` |
+| `AE_MECHANISM_DEDUP_BAND_HIGH` | at or above this, pairs are the same mechanism without a model call | no — default `0.75`; must be >= the `0.75` join threshold |
 | `DYNACONF_ADVANCED_FEATURES__FORCE_AUTONOMOUS_MODE=true` | keeps completed substeps in the loop instead of finalizing early | yes |
 | `DYNACONF_SKILLS__ENABLED=true` | enables the skills surface | yes, if using skills |
 | `DYNACONF_ADVANCED_FEATURES__ENABLE_SHELL_TOOL=true` | **without this CUGA silently discards the entire skills prompt block** | yes, if using skills |
@@ -65,6 +70,92 @@ exported to your shell.
 Absent model config fails fast with `RuntimeError: CUGA_MODEL or LITELLM_MODEL is
 required for a live inference run`. Absent credentials surface as
 `openai.OpenAIError: Missing credentials`.
+
+### 1.1 The mechanism-dedup adjudicator (`AE_MECHANISM_DEDUP_*`)
+
+**What it is for.** Evolution groups failures into *mechanism clusters* so the
+issue selector can measure score variance **within one fault type**. High variance
+in a cluster means some candidates already do better on that fault, so a fix is
+reachable — that is the signal driving selection. The grouping must therefore put
+the *same* fault in the *same* cluster.
+
+Clustering is decided by embedding cosine similarity against a `0.75` join
+threshold (`--cluster-similarity-threshold`). That is cheap and free, and it is
+reliable at the extremes: near-identical wording clearly joins, unrelated wording
+clearly does not. It is **least** reliable in the middle. Measured on this
+codebase, four descriptions of one identical fault using different vocabulary
+produced **four separate clusters**, and cosine similarity for genuine paraphrases
+landed at `0.769` against a `0.75` threshold — a 0.019 margin deciding whether
+evidence pools or fragments.
+
+These variables configure a **small** model consulted *only* in that ambiguous
+middle band, and on a forced merge at `--max-clusters-per-task`. Clear cases never
+reach it, which is what keeps it affordable.
+
+**It is off by default.** With none of these set, clustering behaves exactly as it
+does today: cosine only, no model dependency, no spend. Measured:
+
+| Environment | Result |
+| --- | --- |
+| nothing set | disabled — cosine only |
+| `_MODEL` only | **disabled** — a partial config never half-enables |
+| `_BASE_URL` only | **disabled** |
+| `_MODEL` **and** `_BASE_URL` | enabled |
+
+**Why its own variables rather than reusing `LITELLM_*`.** Cost. The rollout,
+analyzer, judge and editor roles usually want a strong reasoning model; deduplicating
+two one-line fault descriptions does not. Addressing this role separately lets a
+small cheap model serve it whatever the others use.
+
+```bash
+# enable it against a local ollama (no credential needed)
+export AE_MECHANISM_DEDUP_MODEL=qwen2.5:3b
+export AE_MECHANISM_DEDUP_BASE_URL=http://localhost:11434
+```
+
+**The band.** `_BAND_LOW` and `_BAND_HIGH` bracket the region worth paying for:
+
+```
+  cosine < BAND_LOW (0.45)      -> distinct mechanisms, decided free
+  BAND_LOW .. BAND_HIGH         -> ambiguous, ask the small model
+  cosine >= BAND_HIGH (0.75)    -> same mechanism, decided free
+```
+
+Widen the band to buy accuracy with model calls; narrow it to spend less and lean
+on cosine. Both bounds must lie in `[0, 1]` and `LOW <= HIGH`.
+
+The defaults are calibrated, not chosen: against a live embedder over 4 fault
+families and 66 pairs, same-fault and different-fault cosine **overlap**
+(separation `-0.036`), so no single threshold separates an analyzer paraphrase
+from a genuinely different fault. `0.45–0.75` is the smallest measured band that
+splits **zero** true paraphrase pairs by cosine alone; the previous `0.60–0.85`
+split 2 of 12. These figures come from synthetic phrasings, not real analyzer
+output, so treat them as evidence-based rather than optimal.
+
+**Misconfiguration is refused, never absorbed.** A silent fallback here would run a
+whole session on a threshold you believe you set:
+
+| Input | Behaviour |
+| --- | --- |
+| `AE_MECHANISM_DEDUP_BAND_LOW=hgh` | `ValueError: AE_MECHANISM_DEDUP_BAND_LOW must be a number, got 'hgh'` |
+| `LOW=0.9`, `HIGH=0.5` | refused — an inverted band would make *every* pair ambiguous and every assignment a model call |
+| `HIGH` below the join threshold, with an adjudicator attached | refused — `[HIGH, join_threshold)` would be neither ambiguous nor joining, so cosine would decide it alone with no model call. Measured stranding true pairs at `0.718`, `0.749`, `0.726` |
+| `enabled` with no model or no endpoint | refused — will not enable an adjudicator that cannot be called |
+
+**The API key is never persisted.** `AE_MECHANISM_DEDUP_API_KEY` is excluded from
+`manifest_payload()` by construction, so it cannot reach a run manifest or log. The
+non-secret settings *are* recorded, because a run whose clustering thresholds are
+unknown is not reproducible.
+
+> **Status: configured, not yet consulted.** These variables resolve, validate and
+> are honoured by the config layer today, and the embedder they support is now
+> wired (`pipeline.embedder_for_config`). The adjudicator call itself is the next
+> step and is not implemented — setting these currently changes no clustering
+> decision. They are documented here because the configuration surface is real:
+> 15 tests in `tests/test_embedder_wiring.py` cover env-var resolution, the
+> opt-in default, partial-config rejection, band validation and the credential
+> exclusion. Those tests cover offline config resolution only; they do not cover
+> any live model call, and the adjudicator behaviour they gate is not live yet.
 
 ---
 
@@ -260,6 +351,16 @@ Entropy-guided selection:
 > falls back to score alone.
 
 Mechanism clustering: `--cluster-similarity-threshold`, `--max-clusters-per-task`.
+
+> **Both knobs have measured sharp edges.** `--cluster-similarity-threshold`
+> (default `0.80` in config, `0.75` in the clusterer) decides whether two
+> descriptions of a fault pool their evidence or fragment; genuine paraphrases were
+> measured at `0.769`, so small changes here move real cells. And at
+> `--max-clusters-per-task` the clusterer joins the **nearest** cluster
+> *regardless of similarity* — an unrelated mechanism was measured joining at
+> `0.822` once the cap was full, which mixes two faults in one cell and produces a
+> high variance reading for a fix that does not exist. Prefer raising the cap over
+> letting it saturate. See §1.1.
 
 Validation probes: `--generalization-probe-mode {deferred,enabled}` (default
 `deferred` records probes without spending rollouts), `--probe-budget-fraction`

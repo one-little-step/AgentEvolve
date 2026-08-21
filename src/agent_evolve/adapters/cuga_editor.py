@@ -35,7 +35,12 @@ from agent_evolve.adapters.cuga_editor_tools import (
     submitted_plan,
 )
 from agent_evolve.core.contracts import ExecutionTrace
-from agent_evolve.core.editor import EditorOutcome, EditorRequest, EditorResponse
+from agent_evolve.core.editor import (
+    EditorOutcome,
+    EditorRequest,
+    EditorResponse,
+    ParentContext,
+)
 from agent_evolve.core.memory import EditMemory
 from agent_evolve.core.run_logging import RunLogSink
 
@@ -137,24 +142,78 @@ def _evidence_summary(view: EvidenceView) -> str:
     )
 
 
-def _parent_summary(request: EditorRequest) -> str:
-    """State the donor inventory in the prompt.
+def _fault_lines(parent: ParentContext, limit: int = 4) -> str:
+    """This parent's diagnosed faults, worst first.
 
-    Without this the editor has no signal that crossover is even possible: two
-    live runs with a donor whose artifact already contained the missing
-    capability never called list_parents, because nothing in the prompt said a
-    donor existed.
+    Severity is an *attention* signal here, so the ordering matters: the editor
+    gets one attempt, and presenting a mild fault before a severe one spends that
+    attempt on the lesser problem. Capped at ``limit`` so a parent with a long
+    history cannot crowd the blame evidence out of the prompt.
+
+    Only cluster ids, numbers and artifact ids cross into the prompt --
+    :class:`Issue` carries no prose, so no mechanism description or task content
+    can leak through this text.
     """
+    if not parent.issues:
+        return "    no diagnosed faults on record"
+    ranked = sorted(
+        parent.issues, key=lambda i: (-i.severity, i.task_id, i.mechanism_cluster_id)
+    )
+    lines = [
+        f"    - task {i.task_id}, mechanism {i.mechanism_cluster_id}, "
+        f"severity {i.severity}, attributable to: "
+        f"{', '.join(i.writable_artifact_ids) or 'no writable surface'}"
+        for i in ranked[:limit]
+    ]
+    if len(ranked) > limit:
+        lines.append(f"    - ... and {len(ranked) - limit} further fault(s)")
+    return "\n".join(lines)
+
+
+def _parent_summary(request: EditorRequest) -> str:
+    """State each parent's diagnosed faults, and the donor inventory, in the prompt.
+
+    Two distinct failures this text prevents, and both were measured rather than
+    assumed:
+
+    * **Crossover was undiscoverable.** Two live runs with a donor whose artifact
+      already contained the missing capability never called ``list_parents``,
+      because nothing in the prompt said a donor existed.
+    * **Parent weaknesses were invisible (SV-10).** The faults reached
+      ``ParentContext.issues`` and the ``list_parents`` tool, but this text
+      rendered parents as scores alone -- ``c-donor (scores {'task-a': 0.9})``.
+      ``EDITOR_INSTRUCTIONS`` gates tool use on what the evidence reports, so
+      evidence the prompt never mentions is evidence the model never asks for.
+
+    A score says a donor is *better*; its faults say *where it is not*. Both are
+    needed before choosing to transplant rather than refine.
+    """
+    primary = next((p for p in request.parents if p.is_primary), None)
     donors = [p for p in request.parents if not p.is_primary]
+
+    blocks: list[str] = []
+    if primary is not None:
+        blocks.append(
+            f"THIS PARENT ({primary.candidate_id}) HAS THESE DIAGNOSED FAULTS "
+            "(worst first):\n" + _fault_lines(primary)
+        )
+
     if not donors:
-        return "PARENTS: primary only, no donors available."
-    described = "; ".join(
-        f"{d.candidate_id} (scores {dict(d.score_summary)})" for d in donors
-    )
-    return (
-        f"PARENTS: {len(donors)} donor parent(s) available: {described}. "
-        "Inspect a donor's artifact before deciding to refine."
-    )
+        blocks.append("PARENTS: primary only, no donors available.")
+    else:
+        described = "; ".join(
+            f"{d.candidate_id} (scores {dict(d.score_summary)})" for d in donors
+        )
+        donor_blocks = "\n".join(
+            f"  {d.candidate_id} known faults:\n{_fault_lines(d)}" for d in donors
+        )
+        blocks.append(
+            f"PARENTS: {len(donors)} donor parent(s) available: {described}. "
+            "Inspect a donor's artifact before deciding to refine.\n"
+            f"{donor_blocks}"
+        )
+
+    return "\n".join(blocks)
 
 
 @dataclass(slots=True)
@@ -310,7 +369,7 @@ class CugaEditorAgent:
         pool_created = request.pool_created_count
         staging = EditStagingArea(
             write_set=request.write_set,
-            creatable_prefix=request.creatable_prefix,
+            creatable_prefixes=request.creatable_prefixes,
             pool_created_count=pool_created,
         )
         trace = self.trace or ExecutionTrace(

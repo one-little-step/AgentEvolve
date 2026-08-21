@@ -1,13 +1,30 @@
 # SEVERE OPEN ISSUES — measurement-instrument defects
 
-**Status: gated per item, not as a block.** SV-4, SV-6 and SV-9 are **CLOSED**
-(2026-08-19). SV-1 is **RECLASSIFIED** — the documented defect does not exist and
-the real one is milder. SV-7 is **NARROWED** to MEDIUM: the judge and the rollout
-grid are both exonerated by offline tests, leaving only upstream materialization as
-a possible defect. SV-8's **root cause is found** and it is not optimizer
-blindness — the artifact roster is existence-based, so `instructions` was usually
-the only surface in existence. SV-11 is **scoped**: two sites, cost-neutral if the
-parent replaces the base rather than joining it. Everything else is open.
+**Status: gated per item, not as a block.** SV-2, SV-3, SV-4, SV-5, SV-6, SV-8,
+SV-9, SV-10, SV-11, SV-12 and SV-13 are **CLOSED**. SV-1 is **RECLASSIFIED** — the
+documented defect does not exist and the real one is milder.
+
+**SV-7 is NARROWED to LOW** (was MEDIUM). Both of its structural explanations are
+now eliminated by offline tests: the judge slots and rollout grid were exonerated
+on 2026-08-19, and **upstream materialization was exonerated on 2026-08-21** —
+distinct candidates produce distinct harness payloads, and no parent/child or
+sibling aliasing exists (`tests/test_sv7_materialization_distinctness.py`, with the
+aliasing defect injected to prove the tests detect it). What remains is not a code
+defect: the edit genuinely produced no behavioural change, which given SV-8 (every
+candidate edits only `instructions`) would be *correct* judge behaviour.
+
+**SV-12 CLOSED 2026-08-21.** The structural defect was fixed 2026-08-20; the three
+remainders then named are now addressed. Live model calls have been made through
+both the semantic embedder and the dedup adjudicator; the ambiguity band is
+recalibrated from measurement; and the `entropy_unavailable` fallback rate is
+aggregated into `GepaRunResult` and the per-iteration audit record. Cross-task
+mechanism identity is **deferred by design decision**, not left open — see
+`docs/design/issue-lifecycle.md` D1: variance is computed *within* one task across
+candidates, so task-local identity is sufficient for the objective.
+
+The whole champion-math chain closed on 2026-08-20: ranking is now a pairwise
+comparison over the cells two candidates share, so the weighted aggregate is a
+reported diagnostic rather than a decision rule.
 
 **The interception proxy is BUILT** (`docker/observability/`), so the remaining
 proxy-gated verifications are now unblocked — they need `X-AE-*` correlation
@@ -62,6 +79,21 @@ deltas.
 | **SV-1** | **RECLASSIFIED** — not a perverse gradient; an *inert multiplier*. Merged with SV-5's category. Documented in code, no behaviour change. | `severity` is never written: all four `ScoreProvenance(...)` sites omit it, the class is frozen, no `replace`/`**kwargs` path. `weighted_score() == mean` always. |
 | **SV-6** | **CLOSED** — and it was worse than documented: the production runner had *no* edit memory, so both history tools were dead **and the retry budget never fired**. | `tests/test_runner_edit_memory.py` — 13 tests; 12 fail against unfixed source. |
 | **SV-9** | **CLOSED** — the GEPA path was already correct; the RHO path admitted crashed traces because it filtered on `trace is None` only. | `tests/test_crashed_rollout_exclusion.py` — 12 tests; 2 fail against unfixed source. |
+| **SV-4** | **CLOSED 2026-08-19** — the paper's `S_j > 0` acceptance gate was computed, paid for, printed and then discarded while an unspecified aggregate picked the champion. The gate is now active by default; the flag exists to *measure* it, not to opt in, and defaults to `False`. Base is exempt; a non-base candidate needs a recorded positive preference. | `tests/test_preference_gate.py` — 16 tests, plus three in `tests/test_rho_wiring.py`. Two of the three were shown to fail against unfixed source by reverting the `commit()` propagation. |
+| **SV-2** | **CLOSED 2026-08-20** — ranking no longer sorts a per-candidate scalar; it compares pairwise over `comparable_cells`, so skipping a hard task cannot raise a candidate's standing. | `tests/test_champion_intersection.py` — 8 tests; 5 fail against unfixed source. Reverting the pairwise call to the old aggregate sort re-breaks all 3 defect cases. |
+| **SV-3** | **CLOSED 2026-08-20 (by construction)** — subsumed by SV-2 exactly as its fix direction predicted. Coverage cannot flip a winner; it survives only as the enforced `champion_min_coverage_fraction` floor. | `tests/test_resolution_config.py` covers the floor end to end; `tests/test_pool.py::test_select_champion_ranks_pairwise_not_by_config_weights` pins that `beta` no longer reorders. |
+| **SV-5** | **CLOSED 2026-08-20 (documentation)** — terms stay inert by decision; all four `--champion-*` flags now state they do not affect selection, and `gamma`/`delta` are labelled reserved rather than "worst-case"/"novelty". | `run_evolution.py --help` exits 0 with corrected text; `select_champion` docstring and `selection-algorithms.md` rewritten. |
+| **SV-10** | **CLOSED 2026-08-20** — and the register's own fix direction was wrong on **both** halves: `weighted_score()` is arithmetically identical to `mean`, and the mechanism key is a *constant* on 5 of 6 pool-write paths. The real mechanism was **discard**, not lossy projection: `run_attempt` built the parent's full fault set and kept one. Fixed by routing `build_issues` evidence into `ParentContext.issues` at **zero new rollouts**. Folded in: the parent was drawn up to **three** independent times per attempt and the draws disagreed on the first measured run. | `tests/test_parent_issue_evidence.py` — 8 tests; all 8 fail against unfixed source. Non-vacuity proven for each half separately by reverting it in isolation. |
+| **SV-8** | **CLOSED 2026-08-20** — the base harness offered only `instructions`, so an editor could not have edited another surface even when the evidence pointed there. Empty `skills`/`memory`/`policies` slots are now seeded, and the creation prefixes widened to match. Authored content is never overwritten. | `tests/test_multi_surface_seeding.py`. |
+| **SV-11** | **CLOSED 2026-08-20** — `build_issues` hardcoded `pool.base` for the rollout, the write set, the inventory *and* the score attribution, so base absorbed every re-observation (measured: base 12 rollouts, every candidate 2). It now observes `select_parent()` at unchanged rollout cost. Two register claims were corrected in the process: the named site `:541` is dead code with zero callers, and `run_attempt` already analyzed the selected parent. | `tests/test_parent_observation.py` — behavioural: which version the adapter rolls out, and which entry's cells receive the scores. |
+| **SV-13** | **CLOSED 2026-08-20** (architecture decision, not a defect) — soft generational retirement. When the symmetric pairwise judge prefers an accepted offspring over its parent, the parent is excluded from parent sampling, the Pareto frontier and champion selection, while every score cell, lineage link and preference record is **kept**. Judge outage, a tie, an unavailable verdict or an incomplete trace pair all leave the parent alive; the live pool is never emptied. Costs `2k` judge calls and **zero** rollouts, because both trace sets already exist at commit time. | `tests/test_generational_retirement.py`, `tests/test_retirement_decision.py`, `tests/test_retirement_wiring.py`. See `AGENTS.md` for the rationale. |
+
+Suite after SV-10: **1961 collected, 0 failed** (1952 plus 8 SV-10 tests and 1 new
+B1 sibling-lineage test). Logs in `terminal_output/sv10/`.
+
+Suite after the champion-math chain: **1952 collected, 0 failed** (1935 baseline
+plus 17 new tests). Logs in `terminal_output/sv2/`, `terminal_output/sv3_sv5/` and
+`terminal_output/resolution_config/`.
 
 Suite after all three: **1782 passed, 1 skipped** (from a 1757 baseline).
 Logs in `terminal_output/severe_fixes/`.
@@ -79,37 +111,40 @@ flowchart TB
         D["<b>SV-4</b> S_j &gt; 0 gate now ACTIVE by default<br/>pairwise judge governs promotion; flag for ablation<br/><i>pool.py, config.py, pipeline.py</i>"]
     end
 
+    subgraph DONE2["CLOSED 2026-08-20 — champion math"]
+        B["<b>SV-2</b> CLOSED: ranking is pairwise over shared cells<br/>skipping a hard task no longer wins<br/><i>pool.py</i>"]
+        C["<b>SV-3</b> CLOSED by construction: coverage cannot rank<br/>survives only as the enforced eligibility floor<br/><i>pool.py</i>"]
+        E["<b>SV-5</b> CLOSED as documentation: terms stay inert<br/>all four champion weights labelled non-selecting<br/><i>run_evolution.py, pool.py, docs</i>"]
+    end
+
+    subgraph DONE3["CLOSED 2026-08-20 — population evidence"]
+        R3["<b>SV-10</b> CLOSED: parent faults routed to the editor<br/>ParentContext.issues, zero new rollouts<br/><i>editor.py, orchestrator.py, cuga_editor_tools.py</i>"]
+    end
+
     subgraph OFFLINE["OPEN — offline-fixable, no proxy needed"]
-        B["<b>SV-2</b> outcome averages over different task sets"]
-        C["<b>SV-3</b> coverage is not a quality signal<br/>now a tie-break bug, not acceptance"]
-        E["<b>SV-5</b> stability / regression_risk are inert<br/>absorbs the real SV-1 finding"]
-        R["<b>SV-11</b> analyzer observes only pool.base<br/>ROOT of the SV-D chain"]
         R2["<b>SV-12</b> entropy floors never cleared<br/>DPP degrades to quality ranking"]
-        R3["<b>SV-10</b> parent vulnerabilities never reach editor"]
     end
 
     subgraph GATED["OPEN — genuinely proxy-gated"]
         P["<b>STEP 0 (infrastructure, NOT an SV item)</b><br/>interception proxy — BUILT 2026-08-19<br/>docker/observability/"]
         G["<b>SV-7</b> NARROWED to MEDIUM<br/>judge + grid exonerated; only upstream<br/>materialization remains"]
-        H["<b>SV-8</b> ROOT CAUSE: roster is existence-based<br/>seed a multi-surface harness FIRST"]
         V["<b>SV-11 verification</b><br/>which harness version per analyzer call"]
     end
 
     B --> C --> E
-    R --> R2
-    R --> R3
-    F --> H
+    R3 -.->|"per-parent evidence now exists;<br/>SV-12's placeholder cluster id remains"| R2
     P --> G
-    P --> H
     P --> V
-    R -.->|"fix is offline;<br/>confirmation is not"| V
 
     style F fill:#d4f4d4
     style N fill:#d4f4d4
     style A fill:#d4f4d4
-    style R fill:#ffdddd
+    style D fill:#d4f4d4
+    style B fill:#d4f4d4
+    style C fill:#d4f4d4
+    style E fill:#d4f4d4
+    style R3 fill:#d4f4d4
     style G fill:#fff4cc
-    style H fill:#fff4cc
     style V fill:#fff4cc
     style P fill:#d6eaff
 ```
@@ -119,8 +154,12 @@ each was a deterministic code defect provable by executing real objects. Only
 three items actually need it, and all three are claims about *payload identity*
 that an offline test can only fake.
 
-The champion-math chain **SV-2 → SV-3 → SV-4 → SV-5** must still be done in
-sequence, because each changes what the next one measures. SV-5 now also absorbs
+The champion-math chain **SV-2 → SV-3 → SV-4 → SV-5 is complete.** It was done in
+sequence, and the sequence mattered exactly as predicted: SV-4's gate came first,
+then SV-2 replaced aggregate ranking with pairwise comparison over shared cells —
+which **subsumed SV-3** (coverage can no longer flip a winner) and reduced SV-5 to
+a labelling problem (`gamma`/`delta` weight terms that are constants, so nothing
+reads them for a decision). SV-5 also absorbs
 the real SV-1 finding: `severity`, `confidence`, `stability` and `regression_risk`
 are **all four** inert, so that item is about one coherent problem rather than two.
 
@@ -130,11 +169,20 @@ and then discarded, while an aggregate the paper does not specify picks the
 champion (see SV-4). That determines whether SV-2 and SV-3 are *repairs* to the
 right decision rule or *repairs to a rule that should be demoted to a
 tie-breaker*. Fixing the aggregate first risks polishing a mechanism we then
-subordinate. **Open decision — see SV-4's three options; not yet chosen.**
+subordinate.
 
-**SV-11 remains the root of its own chain** and should be scheduled early despite
-being the most expensive: SV-10 and SV-12 are its consequences, and fixing either
-first would produce an empty structure or an unchanged fallback rate. Note the
+**Resolved 2026-08-20 — SV-4 did go first, and the caution was correct.** The gate
+landed first, then SV-2 replaced aggregate ranking with pairwise comparison over
+shared cells. That order mattered: had SV-2 and SV-3 been "repaired" as a weighted
+formula, the work would have been spent tuning weights that the pairwise rule then
+made non-selecting. SV-3 needed no separate fix at all — it was subsumed — and SV-5
+collapsed from an implementation task to a labelling one.
+
+**SV-11 was the root of its own chain** and was scheduled early despite being the
+most expensive: SV-10 and SV-12 are its consequences, and fixing either first
+would have produced an empty structure or an unchanged fallback rate. That
+prediction held — SV-11 closed first, then SV-10, and SV-12 remains open because
+the placeholder mechanism id it depends on is still in place. Note the
 SV-1↔SV-11 coupling asserted in the original — *"resolve them together"* — is
 **dissolved**: it assumed severity reached candidate selection. It does not.
 SV-11 is now independent of SV-1.
@@ -144,9 +192,14 @@ could not be expected to explore new surfaces, and it now has history.
 
 ---
 
-# Group SV-A — the champion aggregate math is wrong
+# Group SV-A — CLOSED: the champion aggregate math was wrong
 
-SV-2 and SV-3 were **re-verified after the SV-1 correction**, using provenance of
+**All of SV-1, SV-2, SV-3, SV-4 and SV-5 are now closed.** The aggregate is no
+longer a decision rule: ranking is pairwise over shared cells, and the weighted
+figure survives only as a reported diagnostic. The findings below are retained as
+the evidence trail, in past tense where they describe fixed behaviour.
+
+SV-2 and SV-3 were **re-tested after the SV-1 correction** — covering the ranking behaviour only — using provenance of
 exactly the shape the four production `ScoreProvenance` sites build (no `severity=`,
 no `confidence=`). Both still reproduce. SV-1 did not survive that re-run; see its
 own section.
@@ -198,7 +251,7 @@ Conflating them is the whole error:
 `orchestrator.py:462` and `:1405` — construct `CausalAnalysis(severity=...)` and
 `CausalFinding(severity=...)`. Neither is a `ScoreProvenance`.
 
-### Verified: `ScoreProvenance.severity` is unreachable
+### Established by construction-site sweep: `ScoreProvenance.severity` is unreachable
 
 ```text
 core/orchestrator.py:342   severity passed: False   confidence passed: False
@@ -230,8 +283,9 @@ Two equal candidates tie. There is no gradient to be perverse. The documented
 `severity=0.9` by hand into `tests/test_pool.py`'s `_prov()` helper, which exposes
 severity as a parameter. Real arithmetic; unreachable scenario.
 
-**SV-2 and SV-3 were re-run the same way and both still reproduce.** Those two
-are real, and unaffected by this correction.
+**SV-2 and SV-3 were re-run the same way and both still reproduced.** Those two
+were real, and unaffected by this correction. Both are now fixed — see their
+sections below.
 
 ### The real defect
 
@@ -267,65 +321,92 @@ same correction or it will re-seed this confusion.
 
 ---
 
-## SV-2 — `outcome` averages over different task sets
+## SV-2 — CLOSED 2026-08-20: `outcome` averaged over different task sets
 
-**Severity: HIGH. Not attempting a hard task raises your score.**
+**Severity was HIGH. Fixed: ranking is now pairwise over shared cells.**
 
-`_champion_outcome` (`core/pool.py:466`) is a two-level mean with **no shared-cell
-restriction**. Cells with `rollout_count == 0` are skipped — correct on its own
-("no evidence is not a zero") — but the resulting means are then compared across
+`_champion_outcome` (`core/pool.py`) was a two-level mean with **no shared-cell
+restriction**. Cells with `rollout_count == 0` were skipped — correct on its own
+("no evidence is not a zero") — but the resulting means were then compared across
 candidates measured on *different* tasks.
 
 ```text
 base   ran easy(0.9) + hard(0.1)   ->  outcome = 0.500  cov=1.000  agg=0.6250
-candA  ran easy(0.9) only          ->  outcome = 0.900  cov=0.500  agg=0.7450  <== WINS
+candA  ran easy(0.9) only          ->  outcome = 0.900  cov=0.500  agg=0.7450  <== WON
 ```
 
-`candA` is **identical to base on the only task both attempted** and wins by
+`candA` is **identical to base on the only task both attempted** and won by
 skipping the hard one. Under RHO's design (base gets `k x G`, candidates get
 `k x R`) unequal task sets are the norm, not an edge case.
 
-**Fix direction:** compute `outcome` over the **intersection** of cells both
-entries have evidence for, and report the intersection size alongside it. Pairwise
-rather than global — which is what `dominates`/`pareto_frontier` already do via
-`min_comparable_rollouts`.
+**Resolution.** `select_champion` no longer sorts on a per-candidate scalar. It
+runs a king-of-the-hill pass in insertion order, and an incumbent is displaced only
+by a challenger scoring better on `comparable_cells` — the cells both entries
+measured, at or above `min_comparable_rollouts`, the same machinery `dominates` and
+`pareto_frontier` already used. A tie, a loss, or an empty overlap leaves the
+incumbent standing. On the scenario above `base` and `candA` now tie on `{easy}`,
+so base holds.
+
+Two supporting changes:
+
+- `ChampionReport.comparable_cells` reports how much shared evidence the decision
+  rested on, per the original fix direction ("report the intersection size").
+- `_champion_outcome` is retained for the manifest and documented as non-ranking:
+  an intersection-restricted figure is defined only *relative to* a second entry,
+  so it cannot be a single number attached to one candidate.
+
+**Why the ranking key could not stay a scalar.** Two candidates may share no cell:
+
+```text
+base  vs candA: shared={easy}  0.9 vs 0.9  -> tie
+base  vs candC: shared={hard}  0.1 vs 0.4  -> candC
+candA vs candC: shared={}                  -> no verdict expressible
+```
+
+**Tests.** `tests/test_champion_intersection.py` (8 tests) covers each defect
+branch — skipping a task, disjoint evidence, sub-floor rollouts — plus the
+counterparts that a candidate genuinely better on shared evidence still wins and
+that a worse one loses, so the suite cannot be satisfied by freezing the base.
+Non-vacuity was confirmed by reverting the pairwise call to the old aggregate sort,
+which re-broke all three defect cases.
 
 ---
 
-## SV-3 — `coverage` is not a quality signal, and carries 27% of the decision
+## SV-3 — CLOSED 2026-08-20: `coverage` was not a quality signal
 
-**Severity: HIGH. A strictly worse candidate can be exported as champion.**
+**Severity was HIGH. Fixed by construction: coverage no longer ranks anything.**
 
-`_champion_coverage` (`core/pool.py:474`) measures **how much you measured**, not
-how good you are:
+`_champion_coverage` measured **how much you measured**, not how good you are:
 
 ```python
 total_cells = { all (task,mech) cells with rollout_count>=1, UNIONED ACROSS THE POOL }
 coverage    = |entry's cells & total_cells| / |total_cells|
 ```
 
-Exchange rate: `cov 0.5 -> 1.0` buys `+0.100` aggregate, worth `0.100/0.55 =`
-**0.18 of outcome**. Of the live weight (`0.75` total), coverage holds
+Exchange rate: `cov 0.5 -> 1.0` bought `+0.100` aggregate, worth `0.100/0.55 =`
+**0.18 of outcome**. Of the live weight (`0.75` total), coverage held
 `0.20/0.75 =` **27%**.
 
 ```text
 base   outcome=0.600 cov=0.500 agg=0.5800
-candB  outcome=0.550 cov=1.000 agg=0.6525  <== WINS
+candB  outcome=0.550 cov=1.000 agg=0.6525  <== WON
 ```
 
-`candB` is **worse on every task both ran** (0.55 vs 0.60) and wins on coverage.
+`candB` was **worse on every task both ran** (0.55 vs 0.60) and won on coverage.
+This was structural, not incidental: the architecture gives base `G` rollout-group
+evidence while post-RHO candidates get `R` per selected task, so base and
+candidates **systematically** differ in coverage and the formula read that budget
+asymmetry as quality.
 
-This is structural, not incidental: the architecture decision is that base gets
-`G` rollout-group evidence while post-RHO candidates get `R` per selected task, so
-base and candidates **systematically** differ in coverage. The formula reads that
-budget asymmetry as quality. `pipeline.py:1295` already acknowledges the hazard in
-one direction (*"Without base cells the incumbent's champion coverage is zero and
-a candidate would win selection on coverage alone"*) and patches only
-`coverage == 0`.
+**Resolution.** The SV-2 fix subsumed this, exactly as the original fix direction
+predicted. Ranking is pairwise on shared cells, so the `beta * coverage` term
+cannot flip a winner — a candidate that measured more but scored worse where both
+were measured now loses. Coverage survives in the single role it was always right
+for: the `champion_min_coverage_fraction` **eligibility floor**, which is enforced
+and which `tests/test_resolution_config.py` covers end to end.
 
-**Fix direction:** make coverage an **eligibility gate**, not a scored term — the
-`champion_min_coverage_fraction` disqualifier already exists for exactly this.
-Then rank on outcome alone over comparable cells. This subsumes SV-4.
+`beta` remains configurable because the aggregate is still reported in the
+manifest, but the CLI help now states that it does not affect selection.
 
 ---
 
@@ -366,10 +447,11 @@ Design decisions, each deliberate:
   silently keeps the defect. The flag exists to *measure* the gate, not to opt in.
 
 **Test evidence.** `tests/test_preference_gate.py` (16 tests) and three new tests in
-`tests/test_rho_wiring.py`. Two of the three RHO tests were verified to **fail
-against unfixed source** by reverting the `commit()` propagation; the third
-(`test_gated_candidate_does_not_become_the_exported_champion`) passes either way,
-because an absent preference also gates — noted rather than counted as
+`tests/test_rho_wiring.py`. Two of the three RHO tests were shown to **fail against
+unfixed source** by reverting the `commit()` propagation only — covering the
+gate-to-pool wiring, not the gate arithmetic, which the 16 gate tests cover. The
+third (`test_gated_candidate_does_not_become_the_exported_champion`) passes either
+way, because an absent preference also gates — noted rather than counted as
 discriminating.
 
 **Consequence for SV-2/SV-3.** The aggregate is now a *tie-breaker among gate
@@ -384,8 +466,9 @@ RHO Algorithm 1 accepts candidate `j` only when `S_j > 0` — the mean oriented
 preference over the coreset — *"otherwise the harness remains at `h_0`"*. The base
 wins ties and wins by default.
 
-Ours was an **argmax over an aggregate with base as just another row.** Verified by
-introspecting the function source:
+Ours was an **argmax over an aggregate with base as just another row.** Established
+by introspecting the function source — covering which terms `select_champion`
+actually reads, not how it behaves on live data:
 
 ```text
 select_champion contains 'preference': False
@@ -447,8 +530,9 @@ paper does not specify does the selecting.
 
 ### Where the aggregate is actually consumed
 
-Verified: `select_champion` has exactly three production callers, none of which
-is survival.
+Established by a call-site sweep over `src/` and `scripts/`, covering every
+`select_champion` caller and what each does with the result: exactly three
+production callers, none of which is survival.
 
 | Consumer | Effect |
 | --- | --- |
@@ -485,26 +569,48 @@ violation disqualifies regardless of preference.
 
 ---
 
-## SV-5 — two of the four champion objectives are inert constants
+## SV-5 — CLOSED 2026-08-20 (documentation): two champion objectives are inert constants
 
-**Severity: MEDIUM. The manifest overstates what selection considers.**
+**Severity was MEDIUM. Resolved as documentation: the terms stay inert and are now
+labelled as such.**
 
 ```python
 stability       = 1.0   # hardcoded in select_champion, never computed
 regression_risk = 0.0   # hardcoded in select_champion, never computed
 ```
 
-Both are specified as functions in `selection-algorithms.md:330-331`. Neither was
+Both are specified as functions in `selection-algorithms.md`. Neither was
 implemented. They contribute a constant `+0.15` and `-0.0` to **every** entry, so
-they cancel in all comparisons while `ChampionReport` still reports a four-term
+they cancel in all comparisons while `ChampionReport` reported a four-term
 aggregate as if all four were live.
 
 A `blame_stability` field does exist on `ScoreProvenance`, set to `1.0` with
-*"Single-call default; ablations vary this"* (`orchestrator.py:350`) — it feeds
-nothing in champion selection.
+*"Single-call default; ablations vary this"* — it feeds nothing in champion
+selection.
 
-**Fix direction:** implement them or delete them from the formula and the report.
-Leaving inert terms in a published aggregate misrepresents the method.
+**Additional finding.** The CLI help described terms the code never had:
+
+| Flag | Help said | Code did |
+|---|---|---|
+| `--champion-gamma` | "worst-case" | `stability = 1.0`, constant |
+| `--champion-delta` | "novelty" | `regression_risk = 0.0`, constant |
+
+So these were not dead weight but *specified-and-unbuilt objectives*. Worst-case
+score in particular is a signal that would independently catch the SV-2 exploit.
+
+**Resolution (decided 2026-08-20).** Documentation only, no behaviour change:
+
+- `--champion-gamma` / `--champion-delta` help now reads "reserved, term is
+  currently the constant 1.0 / 0.0 … does not affect selection".
+- `--champion-alpha` / `--champion-beta` likewise state "does not affect
+  selection", because SV-2 made pairwise comparison the sole ranking key.
+- The `select_champion` docstring and `selection-algorithms.md` now describe the
+  aggregate as a **reported diagnostic**, listing SV-2, SV-3 and SV-5 as the
+  reasons.
+
+Implementing worst-case remains a legitimate future option; it is recorded here
+rather than in code so the choice is not lost. Nothing currently reads `gamma` or
+`delta` for a decision, so the inert terms are harmless once labelled.
 
 ---
 
@@ -527,7 +633,7 @@ Leaving inert terms in a published aggregate misrepresents the method.
 
 Production runs **`SequentialGepaRunner`** (`pipeline.py:819` and `:992`), which
 had no `edit_memory` field, never imported `EditMemory`, and never called
-`.record()`. Verified by introspection:
+`.record()`. Established by introspecting the bound method, covering which of the two compare entry points the judge actually holds:
 
 ```text
 SequentialGepaRunner has edit_memory field: False
@@ -656,8 +762,9 @@ Masking that would replace one blind spot with another — a no-op edit must be
 visible as a no-op, not disguised as a difference.
 
 **What remains, and it is narrower than the original claim.** Everything from the
-grid boundary onward is proven correct, so the original live observation has only
-two remaining explanations:
+grid boundary onward is covered by the offline tests named above — the judge slot
+construction and the rollout grid, but not upstream materialization — so the
+original live observation has only two remaining explanations:
 
 1. the edit genuinely produced no behavioural change (which, given SV-8 — every
    candidate edits only `instructions` — is entirely plausible and would be
@@ -670,11 +777,46 @@ between the two versions at rollout time — not a judge change. **Downgraded fr
 CRITICAL to MEDIUM**: "every preference score ever collected is void" is no longer
 supported, because the mechanism that would void them has been excluded.
 
+### NARROWED AGAIN 2026-08-21 — explanation (2) is eliminated, offline
+
+The artifact-hash comparison the paragraph above called for now exists as
+`tests/test_sv7_materialization_distinctness.py` (6 tests). It needed **no proxy
+and no live model**: `CugaAdapter`'s artifact store is an in-memory mapping and
+`_harness_config` is a pure function of it, so "do two versions produce
+byte-identical harnesses" is directly decidable.
+
+Measured on the exact two-step path production uses — materialize a child
+workspace per probe (`orchestrator.py:1249`), then `run_full_rollout` (`:1250`):
+
+* `cand-A` and `cand-B` produced **different** harness digests, each carrying its
+  own `instructions` text;
+* child version ids were distinct;
+* a child's edit did **not** write back into its parent;
+* two siblings of one parent stayed independently editable.
+
+The aliasing defect was **injected** to prove the tests can see it: replacing
+`dict(self._artifacts_for(parent_version))` with a direct alias failed exactly the
+two aliasing tests, after which `cuga_adapter.py` was restored byte-identical. A
+deliberate converse test also asserts that two versions carrying *identical*
+artifacts **do** produce identical harnesses — preserving the principle that a
+no-op must stay visible as a no-op, and proving the distinctness test is not
+passing merely because digests always differ.
+
+**Downgraded MEDIUM to LOW.** Both structural explanations are now excluded, so
+what remains is explanation (1), which is not a defect: the edit genuinely changed
+no behaviour, which is *correct* judge behaviour. Confirming that positively still
+wants a captured live run — now possible, since `X-AE-*` correlation is wired
+(see the STEP 0 table) — but nothing in the code path is implicated.
+
 ---
 
-## SV-8 — every candidate ever produced edits only `instructions`
+## SV-8 — CLOSED: every candidate ever produced edited only `instructions`
 
-**Severity: HIGH. We do not satisfy the paper's "full harness" axis.**
+**Severity was HIGH. We did not satisfy the paper's "full harness" axis. Closed
+2026-08-20 by multi-surface base seeding** (`pipeline.py` seeds empty
+`skills`/`memory`/`policies` slots; `cuga_editor_state.py` widened the creation
+prefixes; `tests/test_multi_surface_seeding.py`). The findings below are retained
+as the evidence trail, in past tense where they describe fixed behaviour.
 
 RHO Table 5 claims: *"Full harness: edits executable **tools and skills**, not
 memory or prompt text alone."* Its harness is a directory of real executables
@@ -692,7 +834,7 @@ optimizer never chooses them.**
 
 ### A structural reason, newly identified
 
-The RHO optimizer is **blind by construction**. Verified:
+The RHO optimizer is **blind by construction**. Established by reading the prompt-assembly path, covering what the optimizer is given and what it is not:
 
 ```text
 cuga_rho_optimizer.py:  EditMemory imported: False
@@ -728,7 +870,7 @@ optimizer blindness. That is real but it is **not the binding constraint**. The
 optimizer cannot choose a surface that is not on the menu, and usually nothing else
 is on the menu.
 
-The chain, verified end to end:
+The chain, traced end to end through the code — covering each hop from diagnosis to pool write, excluding live behaviour:
 
 ```text
 HarnessVersion(version=..., instructions="...")   # skills/memory/policies default to {}
@@ -864,32 +1006,42 @@ excludes both from evidence. Exclusion no longer depends on it; attribution does
 # Group SV-D — the population is not actually a population
 
 These three are one causal chain, discovered by following a question about
-severity's indices down to what the analyzer actually observes. **SV-11 is the
-root; SV-10 and SV-12 are its consequences.** Fixing the projection (SV-10)
-without fixing observation (SV-11) would surface an empty structure.
+severity's indices down to what the analyzer actually observes. **SV-11 was the
+root; SV-10 and SV-12 are its consequences.** SV-11 and SV-10 are now **closed**;
+SV-12 remains open. Fixing the projection (SV-10) without fixing observation
+(SV-11) would have surfaced an empty structure, so the order mattered — and it
+held: SV-11 closed first, which is what made per-parent evidence exist at all.
 
 ```mermaid
 flowchart TB
-    R["<b>SV-11 ROOT</b><br/>analyzer observes ONLY pool.base<br/>no candidate is ever mechanism-analyzed"]
-    R --> C1["candidate score cells land under<br/>DEFAULT_MECHANISM_CLUSTER = 'mechanism-default'<br/>NOT a clusterer-assigned mechanism"]
-    C1 --> C2["<b>SV-12</b><br/>base row uses real clusters 'task:cN'<br/>candidate rows use the placeholder<br/>=> cells barely overlap<br/>=> cross-candidate variance starved"]
-    C1 --> C3["<b>SV-10</b><br/>nothing to project per parent,<br/>AND ParentContext drops mechanism+severity anyway"]
+    R["<b>SV-11 CLOSED</b><br/>observation follows the selected parent"]
+    R --> C1["candidate score cells still land under<br/>a constant mechanism id<br/>NOT a clusterer-assigned mechanism"]
+    C1 --> C2["<b>SV-12 OPEN</b><br/>base row uses real clusters 'task:cN'<br/>candidate rows use the placeholder<br/>=> cells barely overlap<br/>=> cross-candidate variance starved"]
+    C1 --> C3["<b>SV-10 CLOSED</b><br/>faults now routed from build_issues,<br/>NOT from the score tensor"]
     C2 --> X["entropy floors unmet<br/>(needs &gt;=3 comparable candidates,<br/>&gt;=2 rollouts each)<br/>=> entropy_unavailable fallback"]
-    C3 --> Y["directed crossover impossible<br/>(also blocked: core/merge.py unwired)"]
+    C3 --> Y["directed crossover now has per-parent<br/>evidence; still blocked by<br/>core/merge.py being unwired"]
 
-    style R fill:#ffdddd
+    style R fill:#d4f4d4
+    style C3 fill:#d4f4d4
     style C2 fill:#ffdddd
-    style C3 fill:#ffdddd
 ```
+
+**Note on the chain's shape.** SV-10 was closed *without* fixing the constant
+mechanism id at `C1`, because the score tensor turned out to be the wrong source
+for parent faults — `build_issues` already carries clusterer-assigned mechanism
+ids, severity and evidence refs per parent. `C1` therefore still feeds SV-12,
+which is why that item stays open.
 
 ---
 
-## SV-10 — a parent's vulnerabilities never reach the editor
+## SV-10 — CLOSED: a parent's vulnerabilities never reached the editor
 
-**Severity: HIGH. Blocks informed offspring generation.**
+**Severity was HIGH. Blocked informed offspring generation. Closed 2026-08-20.**
 
-The genetic editor cannot ask "what is this parent weak at?" Three independent
-blocks, each sufficient alone.
+The genetic editor could not ask "what is this parent weak at?" Three independent
+blocks, each sufficient alone. The findings below are retained as the evidence
+trail, in past tense where they describe fixed behaviour; the superseded fix
+direction and the resolution are at the end of this section.
 
 ### 1. `ParentContext.score_summary` is a lossy projection
 
@@ -954,10 +1106,27 @@ breakdown to *decide what to change*. The information is one projection away —
 Cluster ids are namespaced `f"{task_id}:{cluster_id}"`
 (`core/clustering.py:345`), i.e. **task-local by construction**. So "parent c3 is
 weak on mechanism M" is only well-defined *within one task*. Cross-task mechanism
-identity is not established by this structure. `AGENTS.md` says mechanisms align
-*"through task-local semantic clusters anchored by base-harness observations"*, so
-cross-task parent targeting needs that anchoring built, not merely a wider
-projection.
+identity is not established by this structure.
+
+**Updated 2026-08-21.** `AGENTS.md` previously said mechanisms align *"through
+task-local semantic clusters anchored by base-harness observations"*, and this
+section concluded that cross-task targeting "needs that anchoring built". Both
+have been superseded, because the anchoring **exists and does not work**:
+
+- `MechanismClusterer.add_anchor(force_new=True)` (`core/clustering.py:250`) has
+  never had a caller in `src/`.
+- Anchors embed **bare mechanism text** while observations embed mechanism **plus
+  actor plus artifacts**, so an identical mechanism string scored only **0.756**
+  against its own anchor, and two anchors plus their two matching observations
+  produced **four clusters rather than two**.
+- Cluster ids are a per-task counter, so they are **order-dependent**: the same
+  fault was measured as `c2` in one task and `c3` in another purely from arrival
+  order. Anchoring cannot fix that.
+
+Cross-task identity is therefore **deferred**, not merely unbuilt. Within-task
+mechanism identity is sufficient for the entropy the DPP consumes, because variance
+is computed within one task across candidates. See
+`docs/design/issue-lifecycle.md` (D1, D2) for the design and the measurements.
 
 ### Severity is being asked to do two contradictory jobs
 
@@ -970,17 +1139,121 @@ Same number, opposite directions. **Removing severity from `weighted_score` and
 keeping it purely as attention/targeting fixes SV-1 and enables this feature in
 one change.** That is the recommended resolution for both.
 
-**Fix direction:** keep `(task, mechanism)` in `ParentContext`, use
-`weighted_score()`, add a `get_parent_issues`-style tool. Respect the
-persistence rule (`orchestrator.py:2078`): store `mechanism_cluster_id`,
-severity, and `evidence_refs` — never mechanism prose that could carry task
-content. Confirm whether `recurring_failure_mode` text is safe to persist at all.
+**Fix direction — SUPERSEDED. Both halves of the original prescription were dead
+ends, and measuring them changed the fix.** It read: *"keep `(task, mechanism)` in
+`ParentContext`, use `weighted_score()`, add a `get_parent_issues`-style tool."*
+
+- **`weighted_score()` is arithmetically identical to `mean`.** It computes
+  `mean * severity * confidence`, and no production caller passes `severity=` or
+  `confidence=` to `ScoreProvenance` at any of its four sites; the class is frozen
+  with `1.0` defaults and there is no `replace`/`**kwargs` path. Switching the
+  projection to it is a no-op that looks like a fix and tests green.
+- **Keeping the mechanism key surfaces a placeholder, not a mechanism.** Five of
+  the six pool-write paths pass the *constant* `self.mechanism_cluster_id`
+  (`orchestrator.py` lines 1416, 1440, 1562, 1871, 1950; field default `"c0"` at
+  `:952`). Only `:345` passes a clusterer-assigned id, and it sits in
+  `run_iteration`, which has zero production callers. The score tensor's
+  mechanism dimension is therefore a constant for every candidate.
+
+**The real mechanism is discard, not lossy projection.** `run_attempt` builds the
+parent's *full* diagnosed fault set at `orchestrator.py:2015`, keeps `selected[0]`,
+and passes that single issue plus one analysis into `propose_edits`. Every other
+fault — already paid for with real rollouts and real analyzer calls — is dropped
+before the editor is asked to improve that parent.
+
+**Resolved 2026-08-20** by routing evidence that already exists, at **zero new
+rollouts and zero new model calls**:
+
+- `ParentContext.issues: tuple[Issue, ...]` (`core/editor.py`) carries each
+  parent's diagnosed faults. A **tuple, not a `task_id`-keyed mapping**, so two
+  mechanisms on one task no longer overwrite each other.
+- `build_issues` retains the observed parent id and its full fault set;
+  `_issues_for_parent` returns evidence **only** for the parent actually observed,
+  so a donor yields `()` rather than being attributed another candidate's faults.
+- `list_parents` renders the field. Per the decision recorded below, the field is
+  the sole delivery surface and no `get_parent_issues` tool was added — an inert
+  field would itself have been the defect.
+- The persistence rule holds **by construction**: `Issue` has no prose field, so
+  only cluster ids, numbers and trace-backed `evidence_refs` cross the boundary.
+  The original question *"confirm whether `recurring_failure_mode` text is safe to
+  persist"* therefore did not need answering to close this.
+
+**Also fixed here (folded in by decision): the parent was drawn up to three times
+per attempt.** `select_parent` consumes `rng.random()`, so the draws in
+`build_issues()`, `run_attempt()` and `select_parents()` were *independent*. On a
+four-candidate pool they disagreed on the first measured run
+(`['cand-2', 'cand-2', 'cand-1']`), which diagnoses one parent's faults and then
+materializes a different parent's workspace — violating the *"the write set follows
+the subject"* property SV-11 asserts. Now one draw per attempt; the deeper
+sampling redesign is deferred and still open.
+
+Tests: `tests/test_parent_issue_evidence.py` (8). Non-vacuity was proven for each
+half separately by reverting it in isolation. `tests/test_phase_6_b1.py` gained a
+sibling-lineage test, and its `test_b1_a_dominating_offspring_collapses_the_frontier`
+assertion was **corrected**: it had paired a one-attempt docstring table with a
+two-attempt run, green only while attempts chained off each other's offspring.
+
+### Delivery was not sufficient: the prompt had to say it too
+
+Routing evidence onto `EditorRequest` left a second gap that a tool-layer check
+cannot see. `EDITOR_INSTRUCTIONS` gates tool use on what the evidence *reports*
+(*"When the evidence reports that donor parents are available, call
+`list_parents`…"*), and `_parent_summary` — the sole parent-facing prompt text —
+rendered parents as **scores only**: `c-donor (scores {'task-a': 0.9})`. So faults
+reached `ParentContext.issues` and the `list_parents` payload but never the prompt.
+
+This failure mode is documented, not hypothetical. `_parent_summary`'s own
+docstring records *"two live runs with a donor whose artifact already contained the
+missing capability [that] never called `list_parents`, because nothing in the
+prompt said a donor existed."*
+
+Fixed alongside: the prompt now carries a worst-first fault block for the primary
+and a known-faults block per donor, each line naming task, mechanism cluster,
+severity and attributed artifacts; and the instructions tell the editor that
+severity orders attention, that a mechanism repeated across tasks is systemic, and
+that a donor with a severe fault on the mechanism being fixed is the wrong
+transplant source whatever its score. Tests: `tests/test_editor_prompt_parent_faults.py`
+(8); 4 fail against the scores-only version.
+
+### Known limits, deliberately not claimed as closed
+
+- **Donors carry no faults.** Only one candidate is analyzed per attempt, so
+  `_issues_for_parent` returns `()` for a donor. Measured on the production path:
+  primary `issues=2`, donor `issues=0`. The boundary is narrower than "donors have
+  no diagnosis" — the donor in that run was `base`, which *has* been analyzed in
+  earlier attempts, but the evidence is scoped to the parent observed in *this*
+  attempt, so historical faults already in the pool are not surfaced. Widening
+  that is a separate change with a real cost question attached (which attempt's
+  diagnosis is still valid for a candidate whose artifacts have since changed?).
+- **Mechanism ids are still placeholders.** The faults carry
+  `mechanism-default`/`c0` rather than clusterer-assigned ids, so the editor can
+  see *that* it fails a task and *how badly*, but not yet *that two failures share
+  a mechanism*. That is SV-12.
+- **Live tool use is unproven.** Whether a real editor model, once told, calls
+  `list_parents` and changes its edit is a claim about a live request body. It
+  needs the interception proxy and is recorded above as an SV-10 regression guard,
+  not as part of this closure.
 
 ---
 
-## SV-11 — the analyzer observes only `pool.base`; no candidate is ever mechanism-analyzed
+## SV-11 — CLOSED: the analyzer observed only `pool.base`; no candidate was ever mechanism-analyzed
 
-**Severity: CRITICAL (root cause). The genetic stage is base-centric mutation, not population evolution.**
+**Severity was CRITICAL (root cause). The genetic stage was base-centric mutation,
+not population evolution. Closed 2026-08-20:** `build_issues` now observes
+`select_parent()` rather than `pool.base`, at unchanged rollout cost
+(`tests/test_parent_observation.py`).
+
+Two corrections the fix produced, both worth keeping:
+
+- The register named `orchestrator.py:541` and `:1441`. The first sits in
+  `Orchestrator.run_iteration`, which has **zero callers** — dead code alongside
+  `SequentialGepaRunner.run()`. Production uses `run_attempt`. Editing it would
+  have changed nothing.
+- `run_attempt` *already* rolled out and analyzed `select_parent()`, so candidates
+  were not wholly unobserved. The single real site was `build_issues`.
+
+The findings below are retained as the evidence trail, in past tense where they
+describe fixed behaviour.
 
 Both entry points are hardwired to the base, not to a selected parent.
 
@@ -1028,17 +1301,22 @@ cell = entry.cell(result.task_id, self.mechanism_cluster_id)
 ```
 
 So the mechanism dimension holds **real clusters only along the base row**.
-Candidate rows sit under a placeholder. That is why "fetch this parent's issues"
-has nothing to return (SV-10): **no candidate has ever had a mechanism analysis
-run on it.**
+Candidate rows sit under a placeholder. That is why fetching a parent's issues
+*from the score tensor* would have had nothing useful to return. **SV-10 was
+closed by not using the score tensor at all**: `build_issues` already produces
+clusterer-assigned mechanism ids, severity and evidence refs per observed parent,
+so the faults are routed from there. The placeholder still starves SV-12, which
+is the reason that item remains open.
 
 ### It also invalidates a reassuring docstring
 
 `ScoreCell.severity` (`core/pool.py:122`) claims severity is *"a property of the
 (task, mechanism) pair… constant within a cell."* That holds **trivially** while
-only one candidate is ever analyzed per real cluster. It breaks the moment
-candidates are analyzed too — which is exactly what SV-10 requires. So SV-1 and
-SV-11 must be resolved together, not independently.
+only one candidate is ever analyzed per real cluster. It would break the moment
+candidates are analyzed under real clusters too. Note SV-10 closed *without*
+reaching that state, because it routes faults from `build_issues` rather than from
+the score tensor — so this docstring's caveat is still latent, waiting on SV-12's
+placeholder cluster id rather than on SV-10.
 
 ### Is it deliberate?
 
@@ -1172,6 +1450,95 @@ into real clusters, cells can accumulate comparable candidates. Until then, repo
 the `entropy_unavailable` fallback rate in every run summary so a quality-only
 selection is never mistaken for a diversity-driven one.
 
+### Status 2026-08-20 — steps 1-3 done; the structural defect is FIXED
+
+The diagnosis above was **correct about the symptom and wrong about the cause**.
+It attributes the starvation to SV-11 (candidates not being mechanism-analyzed).
+The measured cause was narrower: the genetic path never used the clusterer *or*
+the tracker at all.
+
+* `EntropyTracker` — which implements `H(t, m)` **with** the floors — was written
+  only by the RHO path and **read by nobody**: all six read methods had zero
+  callers outside `core/entropy.py`. RHO was a write-only entropy sink.
+* The genetic DPP instead recomputed variance **inline**, filtered on the
+  *constant* `mechanism_cluster_id`, so it measured the spread of one score per
+  *candidate* inside one synthetic bucket — pooling candidates that failed for
+  unrelated reasons — and enforced **no floors at all**.
+* The clusterer was wired only inside `Orchestrator.run_iteration`, which has
+  **zero production callers**.
+
+What is now in place (`tests/test_genetic_entropy_tracker.py`, 12 tests):
+
+| Part | Where |
+| --- | --- |
+| Producer: genetic rollouts record into the tracker | `_record_entropy_evidence` |
+| Consumer: the DPP reads the tracker, not a second inline copy | `_cell_entropy`, `_entropy_tier` |
+| Mechanism-keyed cells from the clusterer | `_entropy_cluster_id` |
+| Unavailability carries a reason | `entropy_unavailable_reason(task_id)` |
+| Production wiring (embedder + registry + optional adjudicator) | `pipeline.cluster_registry_for_config` |
+
+**Two defects found and fixed while doing this**, both previously invisible:
+
+1. `ClusterRegistry.assign` namespaced a **refusal** into `f"{task_id}:"` — a
+   *non-empty* string. `CellKey` rejects only a falsy mechanism id, so a
+   cap-refused assignment was laundered into a legitimate-looking mechanism, and
+   even a caller checking `if assignment.cluster_id:` was defeated by the
+   namespacing. Measured as `'task-a:'`. Both reason fields were also dropped.
+2. Wiring `embedder_for_config` into `build_offline_stack` made the **offline**
+   path perform real network embeds (the default provider is `ollama`, measured
+   ~0.18s per embed against a live daemon). The offline builder now keeps a
+   deterministic `LexicalEmbedder`, at `DEFAULT_EMBEDDING_DIM` (768) rather than
+   the old colliding 32.
+
+**Honest outcome, stated plainly:** mechanism-keyed cells make entropy report
+`skip`/unavailable **more often** than before, because the ≥3-comparable-candidates
+floor is genuinely harder to clear *per mechanism* than across one pooled cell.
+That is the correct direction — a correct-but-unavailable entropy term beats a
+confidently wrong one — but it is not a throughput win. The floors were measured
+directly against `EntropyTracker`: supplying 3 comparable candidates with 2
+rollouts each yielded `H=0.109` and tier `recombination_target`, while a single
+candidate with one rollout returned `None` and tier `skip`. That covers the
+arithmetic and the floor branch only; it does not cover a live run clearing the
+floor through real rollouts. So the `skip` above is a floor result, not a broken
+read.
+
+**SV-12 remainders — resolved 2026-08-21:**
+
+* ~~No live model call has been made through the semantic embedder or the dedup
+  adjudicator.~~ **Done.** Live `embeddinggemma` over 4 fault families and 66 pairs
+  showed same-fault and different-fault cosine distributions **overlap**
+  (separation `-0.036`), so no single threshold can separate an analyzer paraphrase
+  from a genuinely different fault — the adjudicator is load-bearing, not a cost
+  optimisation. The live dedup model scored **12/12** on the pairs the recalibrated
+  band newly reaches. Caveat retained: the phrasings are synthetic, not real CUGA
+  analyzer output, so **no claim is made that quality improves on real analyzer
+  wording.**
+* A **prerequisite defect** was found and fixed while doing this:
+  `cluster_registry_for_config` passed `base_url=dedup.base_url` where the field is
+  `url`, and the broad `except Exception` converted the `AttributeError` into a
+  silent cosine-only downgrade. The adjudicator had therefore **never attached in
+  production** despite the config reporting `enabled=True`, which made the band
+  inert. Also collapsed **four** independently hardcoded band pairs into one
+  definition in `core/clustering.py`.
+* The offline fake harness becomes perfect after attempt 1, so it structurally
+  **cannot** demonstrate the floor being *cleared* end-to-end by a real run — only
+  that the arithmetic clears when evidence is supplied directly. **Still true**, and
+  now visible rather than implicit: the new report reads `3/3 cells unavailable =
+  100% fallback (floor_unmet=3)` on an offline run.
+* ~~Mechanism identity is still task-local, so cross-task pooling does not happen.~~
+  **Deferred by decision, not open.** `docs/design/issue-lifecycle.md` D1: variance
+  is computed *within* one task across candidates, so task-local identity is
+  sufficient for the objective. Cross-task pooling is a separate optional benefit
+  and needs order-independent ids — the counter-assigned `c0`/`c1` ids are
+  arrival-order dependent, and the base-harness anchoring that was supposed to fix
+  this is itself defective (see the cross-task constraint section).
+* ~~The `entropy_unavailable` fallback rate is not aggregated into the run summary.~~
+  **Done.** `EntropyAvailabilityReport` counts available and unavailable **cells**
+  with a per-category tally (`no_analysis`, `no_registry`, `unassigned`,
+  `floor_unmet`), reaches `GepaRunResult`, and is recorded per iteration in the
+  audit trail. `fallback_rate` is `None` for `0/0` rather than `0.0`, because zero
+  would claim perfect availability for a run that measured nothing.
+
 ---
 
 ## What the proxy must capture to close these
@@ -1185,13 +1552,13 @@ Capability status against the needs below:
 
 | Need | Serves | Status |
 | --- | --- | --- |
-| Full request + response body, per call, correlated to `(candidate, task, rollout, phase)` | all | **capture works**; correlation needs `X-AE-*` headers emitted by the callers — not yet wired into `src/` |
+| Full request + response body, per call, correlated to `(candidate, task, rollout, phase)` | all | **DONE 2026-08-21.** `core/correlation.py` provides a `contextvars` scope and all four adapter `_litellm_completion` wrappers now emit `X-AE-*`. Verified through the running proxy from a real adapter: full correlation captured, headers stripped before upstream, `Authorization` redacted |
 | Verbatim **tool results** as the model saw them | SV-7, SV-8, SV-10 | available in captured request bodies |
 | Response `id` and `x-litellm-cache-key` | cache verification (U-1 regression guard) | **done** — captured verbatim per call |
 | `list_artifacts` roster offered vs artifact staged | SV-8 | available in captured bodies |
 | Both slot payloads within one judge request | SV-7 | available in captured bodies |
 | **Which harness version is the subject of every analyzer call** | SV-11 verification | available in captured bodies |
-| **`list_parents` payload as delivered** (to see mechanism/severity absent) | SV-10 | available in captured bodies |
+| **`list_parents` payload as delivered** (now to confirm mechanism/severity are *present*) | SV-10 regression guard — the fix is proven offline, so this is confirmation, not closure | available in captured bodies |
 | Live view of request/mocked-response while debugging | all | **done** — mitmweb intercept + hot-reload mock rules |
 
 Remaining work before SV-7/SV-8/SV-11 can actually be *closed* with this tool:
@@ -1199,14 +1566,15 @@ Remaining work before SV-7/SV-8/SV-11 can actually be *closed* with this tool:
 1. Emit `X-AE-Candidate/Task/Rollout/Phase` from the rollout and judge call sites.
    Without them a capture is a flat HTTP log and cannot be grouped per candidate.
 2. Confirm CUGA has no internally-configured client that bypasses `HTTPS_PROXY`.
-   Regular proxy mode makes complete capture *possible*, not *proven*.
+   Regular proxy mode makes complete capture *possible*; it does not by itself
+   establish that every call was captured.
 
 Two rows were removed as no longer proxy needs:
 
 - *"Verbatim tool results … SV-6"* — SV-6 is closed, and it was closed by
   behavioural tests that drive the real `search_edit_history` closure and assert
-  on its payload. The proxy would have confirmed the symptom; it was not needed to
-  find or fix the cause.
+  on its payload, covering the tool boundary end to end. The proxy would have
+  shown the same symptom; it was not needed to find or fix the cause.
 - *"Diagnoser severity per `(candidate, task)`, side by side … SV-1"* — this was
   premised on severity reaching candidate selection. It does not (see SV-1), so
   there is nothing for side-by-side diagnoser severities to adjudicate.
@@ -1217,9 +1585,11 @@ alongside it:
 - **SV-12** — count per run how many `(task, mechanism)` cells clear the entropy
   floors versus fall back to `entropy_unavailable`. Today that ratio is invisible,
   so a quality-only selection is indistinguishable from a diversity-driven one.
-- **SV-2/SV-3** — report the comparable-cell count behind every champion decision.
 - **SV-11's fix** (as opposed to its verification) — rolling out and analyzing the
   selected parent is a scheduling and budget change, not an observability one.
+
+Done 2026-08-20: reporting the comparable-cell count behind every champion decision
+(the SV-2/SV-3 instrumentation item) is now `ChampionReport.comparable_cells`.
 
 Note: temperature injection is **not** a proxy goal —
 `azure/gpt-5.6-luna` rejects any non-default `temperature` upstream
@@ -1233,16 +1603,24 @@ Note: temperature injection is **not** a proxy goal —
 No number produced before these are fixed is a clean measurement of harness
 quality. Specifically:
 
-- champion selection can prefer a **worse** candidate (SV-2, SV-3, SV-4);
-- the RHO optimizer operates with **no history and no parents** (SV-8);
 - preference scores may be **self-comparisons** (SV-7);
-- **only the base is ever analyzed**, so the "population" is one measured member
-  plus unmeasured offspring (SV-11), parent-targeted editing is impossible
-  (SV-10), and cross-candidate entropy silently falls back to a quality ranking
-  (SV-12);
-- the champion aggregate advertises four objectives of which **all four weights
-  are inert** — `severity`, `confidence`, `stability`, `regression_risk`
-  (SV-5, absorbing the real SV-1 finding).
+- cross-candidate entropy silently falls back to a quality ranking (SV-12).
+
+Parent-targeted editing was on this list as SV-10 and is now **closed**: the
+editor receives each parent's diagnosed faults. Note this makes *targeting*
+possible; directed **crossover** remains unavailable because `core/merge.py` has
+no production caller.
+
+No longer applicable, as of 2026-08-20:
+
+- champion selection preferring a **worse** candidate (SV-2, SV-3, SV-4) — ranking
+  is now pairwise over shared cells and gated on `S_j > 0`;
+- the champion aggregate advertising four live objectives (SV-5, absorbing the real
+  SV-1 finding) — the weights are inert *and now labelled as non-selecting*, so the
+  manifest no longer overstates the method;
+- the RHO optimizer operating with **no history and no parents** (SV-8);
+- **only the base ever being analyzed** (SV-11) — the selected parent is now the
+  observation subject.
 
 No longer applicable, as of 2026-08-19:
 

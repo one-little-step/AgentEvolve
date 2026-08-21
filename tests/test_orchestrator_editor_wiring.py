@@ -73,14 +73,21 @@ def test_propose_edits_passes_parents_to_the_editor() -> None:
     assert len(primaries) == 1
 
 
-def test_propose_edits_passes_the_creatable_prefix() -> None:
+def test_propose_edits_passes_the_creatable_prefixes() -> None:
+    """SV-8: the editor must receive every authorized surface, not just one.
+
+    Asserting non-empty alone would pass with the old scalar prefix, so this
+    pins that all three editable surfaces arrive.
+    """
     runner, editor = _wired()
     issue, task = _first_issue_and_task(runner)
     _, analysis = runner.observe(runner.pool.base, task)
     runner.propose_edits(
         runner.pool.base, issue, task, analysis, "att-wiring-2"
     )
-    assert editor.seen.creatable_prefix != ""
+    prefixes = editor.seen.creatable_prefixes
+    assert prefixes
+    assert {p.split("/", 1)[0] for p in prefixes} == {"skills", "memory", "policies"}
 
 
 def test_propose_edits_returns_observed_parent_ids() -> None:

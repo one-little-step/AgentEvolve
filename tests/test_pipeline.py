@@ -471,12 +471,21 @@ def test_vanilla_harness_puts_instructions_in_the_editable_artifact_set() -> Non
     assert artifacts["instructions"] == VANILLA_HARNESS.instructions
 
 
-def test_a_harness_owning_nothing_still_gets_one_editable_slot() -> None:
-    """The fallback stays: with an empty inventory every issue is dropped for
-    lack of attribution and the loop can never act."""
+def test_a_harness_owning_nothing_gets_one_editable_slot_per_surface() -> None:
+    """The fallback stays -- with an empty inventory every issue is dropped for
+    lack of attribution and the loop can never act -- but SV-8 widens it.
+
+    Previously this asserted exactly ``{"skills/generated-evolved": ""}``, which
+    is the defect in miniature: the optimizer was handed one surface and the
+    conclusion "every candidate edits only instructions" followed structurally.
+    """
     artifacts = pipeline._harness_artifacts(HarnessVersion(version="bare"))
 
-    assert artifacts == {"skills/generated-evolved": ""}
+    assert artifacts == {
+        "skills/generated-evolved": "",
+        "policies/generated-evolved": "",
+        "memory/generated-evolved": "",
+    }
 
 
 def test_a_vanilla_based_candidate_registers_instructions_as_writable() -> None:

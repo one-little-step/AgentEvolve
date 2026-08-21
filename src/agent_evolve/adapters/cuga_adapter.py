@@ -16,6 +16,7 @@ from agent_evolve.core.contracts import (
     ExecutionTrace,
     TraceEvent,
 )
+from agent_evolve.adapters.cuga_editor_state import DEFAULT_CREATABLE_PREFIXES
 from agent_evolve.cuga_wrapper import CugaWrapper
 
 # Artifact-id prefixes that map onto CUGA harness groups understood by
@@ -48,8 +49,17 @@ class CugaAdapter:
     adapter_name: str = "cuga"
     # Created artifacts must carry the CUGA group first so ``_harness_slot``
     # accepts them; a flat ``generated/<name>`` would raise ValueError.
-    creatable_prefix: str = "skills/generated-"
+    #
+    # SV-8: one prefix per editable surface. ``created_artifact_count`` counts
+    # these to enforce the pool-wide creation cap, so a surface missing here is
+    # a surface whose generated artifacts accumulate uncounted.
+    creatable_prefixes: tuple[str, ...] = DEFAULT_CREATABLE_PREFIXES
     _workspaces: dict[str, dict[str, str]] = field(default_factory=dict)
+
+    @property
+    def creatable_prefix(self) -> str:
+        """First authorized prefix. Kept for callers reading a single value."""
+        return self.creatable_prefixes[0] if self.creatable_prefixes else ""
 
     # ------------------------------------------------------------------ #
     # Seeding seam
@@ -133,11 +143,18 @@ class CugaAdapter:
         return dict(artifacts)
 
     def created_artifact_count(self, version: str) -> int:
-        """How many artifacts in this version came from editor creation."""
+        """How many artifacts in this version came from editor creation.
+
+        Counts every authorized surface: the pool-wide creation cap reads this,
+        so omitting a surface would let generated artifacts past the cap.
+        """
+        prefixes = self.creatable_prefixes
+        if not prefixes:
+            return 0
         return sum(
             1
             for artifact_id in self._artifacts_for(version)
-            if artifact_id.startswith(self.creatable_prefix)
+            if artifact_id.startswith(prefixes)
         )
 
     # ------------------------------------------------------------------ #

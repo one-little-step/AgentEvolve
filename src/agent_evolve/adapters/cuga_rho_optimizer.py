@@ -39,7 +39,10 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any, Callable, Mapping, Sequence
 
-from agent_evolve.adapters.cuga_editor_state import EditStagingArea
+from agent_evolve.adapters.cuga_editor_state import (
+    DEFAULT_CREATABLE_PREFIXES,
+    EditStagingArea,
+)
 from agent_evolve.adapters.cuga_workspace_agent import run_workspace_agent
 
 OPTIMIZER_MODEL_ID = "cuga-rho-optimizer"
@@ -48,7 +51,14 @@ OPTIMIZER_MODEL_ID = "cuga-rho-optimizer"
 #: ``cuga_adapter.py`` accepts only ``instructions`` or a
 #: ``skills|policies|memory/<name>`` prefix, so a flat ``generated/<name>`` would
 #: raise at registration and the creation path would be dead code.
-CREATABLE_PREFIX = "skills/generated-"
+#:
+#: SV-8: one prefix per surface. A scalar ``skills/generated-`` meant the only
+#: artifact the optimizer could *create* was a skill, so ``memory/`` and
+#: ``policies/`` were reachable by replacement alone -- and until multi-surface
+#: seeding landed there was nothing on those surfaces to replace.
+CREATABLE_PREFIXES: tuple[str, ...] = DEFAULT_CREATABLE_PREFIXES
+#: Retained for callers reading a single prefix; see ``CREATABLE_PREFIXES``.
+CREATABLE_PREFIX = CREATABLE_PREFIXES[0]
 
 #: Tool name -> CUGA app group. The keys are the exact tool surface.
 APP_NAMES: dict[str, str] = {
@@ -224,7 +234,10 @@ Rules:
 - `stage_replace` OVERWRITES the artifact wholesale: it does not append. If you
   intend to keep existing content, `read_artifact` first and include what you
   are keeping in the content you stage.
-- A newly created artifact must be named `{CREATABLE_PREFIX}<name>`.
+- A newly created artifact must be named `<surface>/generated-<name>`, where
+  `<surface>` is one of `skills`, `memory` or `policies`. Choose the surface that
+  fits what you are writing: a reusable procedure is a skill, a durable fact the
+  agent should recall is memory, a hard constraint is a policy.
 - Prefer ONE well-placed edit that addresses the top recurring mode over several
   shallow edits spread across surfaces.
 - If nothing in the evidence justifies a change, stage nothing. That outcome is
@@ -409,7 +422,8 @@ def build_optimizer_prompt(
         "  read_artifact(artifact_id)           current content of one artifact\n"
         "  stage_replace(artifact_id, content)  stage a rewrite (OVERWRITES it all)\n"
         "  stage_create(artifact_id, content)   stage a new "
-        f"{CREATABLE_PREFIX}<name>\n"
+        f"{'|'.join(p.split('/', 1)[0] for p in CREATABLE_PREFIXES)}"
+        "/generated-<name>\n"
         "  list_staged()                        what you have staged so far\n"
         "  unstage(artifact_id)                 drop one staged edit\n"
         "  submit_candidate(rationale)          finalize ONCE when you are done\n"
@@ -505,7 +519,7 @@ def build_optimizer_callables(
         return json.dumps(
             {
                 "artifacts": sorted(base_artifacts),
-                "creatable_prefix": CREATABLE_PREFIX,
+                "creatable_prefixes": list(CREATABLE_PREFIXES),
             }
         )
 
@@ -699,7 +713,7 @@ class RhoOptimizer:
             # 0's edits and collapse the diversity this stage exists to produce.
             staging = EditStagingArea(
                 write_set=tuple(sorted(base)),
-                creatable_prefix=CREATABLE_PREFIX,
+                creatable_prefixes=CREATABLE_PREFIXES,
             )
             plan: dict = {}
             callables = build_optimizer_callables(base, ordered, staging, plan)

@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import math
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from agent_evolve.core.clustering import DEFAULT_BAND_HIGH, DEFAULT_BAND_LOW
 from agent_evolve.core.errors import BudgetExceededError
 from agent_evolve.core.run_logging import LogCaptureConfig
 
@@ -27,6 +29,72 @@ class EmbeddingConfig:
     model: str
     provider: str
     fallback: str = "lexical"
+
+
+#: Ambiguity band defaults for the mechanism-dedup adjudicator. Module-level
+#: constants rather than class-attribute reads: ``slots=True`` turns a dataclass
+#: field into a ``member_descriptor``, so ``MechanismDedupConfig.band_low`` is a
+#: descriptor object, not the number.
+#:
+#: **Re-exported, not redefined.** The band is one policy decision, and it was
+#: previously written out at four independent sites -- here, on
+#: ``MechanismClusterer``, on ``ClusterRegistry`` and in ``pipeline`` -- which
+#: can drift apart silently, because a wrong band produces a plausible-looking
+#: clustering rather than an error. ``core.clustering`` owns the numbers because
+#: it owns the decision that consumes them; see :data:`DEFAULT_BAND_LOW` there
+#: for the live calibration behind these values. Core-to-core import only.
+_DEFAULT_DEDUP_BAND_LOW = DEFAULT_BAND_LOW
+_DEFAULT_DEDUP_BAND_HIGH = DEFAULT_BAND_HIGH
+
+
+@dataclass(frozen=True, slots=True)
+class MechanismDedupConfig:
+    """The small model that adjudicates ambiguous mechanism-cluster merges.
+
+    Deliberately separate from every other model role. Embedding cosine decides
+    the clear cases for free; this model is consulted only where cosine is
+    measurably unreliable -- inside a similarity band around the join threshold,
+    and on a forced merge at the cluster cap. Keeping its endpoint, model id and
+    key independent of the rollout/analyzer/judge/editor roles is what makes it
+    affordable to run a *small* model here regardless of how large those are.
+
+    ``enabled=False`` is the default, so the adjudicator never fires unless it
+    was configured on purpose: an unconfigured deployment keeps exactly today's
+    cosine-only behaviour rather than silently acquiring a model dependency.
+
+    ``band_low``/``band_high`` bracket the ambiguous region in cosine similarity.
+    A pair below ``band_low`` is confidently distinct and a pair at or above
+    ``band_high`` is confidently the same mechanism; only the span between them
+    is worth a model call.
+    """
+
+    url: str = ""
+    model: str = ""
+    api_key: str = ""
+    enabled: bool = False
+    band_low: float = _DEFAULT_DEDUP_BAND_LOW
+    band_high: float = _DEFAULT_DEDUP_BAND_HIGH
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.band_low <= 1.0:
+            raise ValueError("band_low must be in [0, 1]")
+        if not 0.0 <= self.band_high <= 1.0:
+            raise ValueError("band_high must be in [0, 1]")
+        if self.band_low > self.band_high:
+            raise ValueError(
+                f"band_low ({self.band_low}) must be <= band_high "
+                f"({self.band_high}): an inverted band would make every pair "
+                "ambiguous and every assignment a model call"
+            )
+        if self.enabled and not self.model:
+            raise ValueError(
+                "mechanism dedup is enabled but no model was configured; "
+                "refusing to enable an adjudicator that cannot be called"
+            )
+        if self.enabled and not self.url:
+            raise ValueError(
+                "mechanism dedup is enabled but no endpoint was configured"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +175,9 @@ class ResolvedConfig:
     features: FeatureGates
     budgets: BudgetLimits
     embedding: EmbeddingConfig
+    mechanism_dedup: MechanismDedupConfig = field(
+        default_factory=MechanismDedupConfig
+    )
     dpp_max_items: int = 100
     dpp_theta: float = 0.7
     dpp_score_floor: float = 0.1
@@ -198,6 +269,15 @@ class ResolvedConfig:
                 "model": self.embedding.model,
                 "provider": self.embedding.provider,
                 "fallback": self.embedding.fallback,
+            },
+            # ``api_key`` is deliberately absent: this mapping is written to run
+            # manifests and logs, and a credential must never be persisted.
+            "mechanism_dedup": {
+                "url": self.mechanism_dedup.url,
+                "model": self.mechanism_dedup.model,
+                "enabled": self.mechanism_dedup.enabled,
+                "band_low": self.mechanism_dedup.band_low,
+                "band_high": self.mechanism_dedup.band_high,
             },
             "dpp_max_items": self.dpp_max_items,
             "dpp_theta": self.dpp_theta,
@@ -299,6 +379,24 @@ _VALID_OVERRIDES = {
 }
 
 
+def _env_float(env: Mapping[str, str], key: str, default: float) -> float:
+    """Read a float from the environment, or fail loudly.
+
+    A malformed value raises rather than falling back to the default: silently
+    ignoring ``BAND_LOW=hgh`` would run the whole session on a threshold the
+    operator did not choose and believes they set.
+    """
+    raw = env.get(key)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{key} must be a number, got {raw!r}"
+        ) from exc
+
+
 def resolve_profile(
     name: str,
     environ: Mapping[str, str] | None = None,
@@ -306,11 +404,25 @@ def resolve_profile(
     seed: int = 0,
     **overrides: Any,
 ) -> ResolvedConfig:
+    """Resolve a named profile into a concrete configuration.
+
+    ``environ`` defaults to :data:`os.environ`. It previously defaulted to an
+    empty dict, which made **every** ``env.get(...)`` below dead in production:
+    neither stack builder passes the argument, so nothing an operator exported
+    was ever read. The failure was silent because each var has a default, so the
+    config resolved successfully with default values and nothing raised --
+    ``AE_MECHANISM_DEDUP_*`` could never enable the adjudicator, and the Ollama
+    endpoint appeared to work only because its default happens to match a stock
+    local install.
+
+    Passing an explicit mapping (including ``{}``) still wins, so tests stay
+    deterministic and ambient shell state cannot leak into an offline run.
+    """
     profile = _PROFILES.get(name)
     if profile is None:
         raise ValueError(f"unknown profile: {name!r}")
 
-    env = environ if environ is not None else {}
+    env = environ if environ is not None else os.environ
 
     features = FeatureGates(*profile["gates"])
     embedding = EmbeddingConfig(
@@ -318,12 +430,30 @@ def resolve_profile(
         model=env.get("OLLAMA_EMBEDDING_MODEL", _DEFAULT_EMBEDDING_MODEL),
         provider="ollama",
     )
+    # The mechanism-dedup adjudicator is opt-in and independently addressed, so a
+    # small cheap model can serve it whatever the other roles use. Absent env
+    # vars leave it disabled, which preserves today's cosine-only behaviour.
+    dedup_model = env.get("AE_MECHANISM_DEDUP_MODEL", "")
+    dedup_url = env.get("AE_MECHANISM_DEDUP_BASE_URL", "")
+    mechanism_dedup = MechanismDedupConfig(
+        url=dedup_url,
+        model=dedup_model,
+        api_key=env.get("AE_MECHANISM_DEDUP_API_KEY", ""),
+        enabled=bool(dedup_model and dedup_url),
+        band_low=_env_float(
+            env, "AE_MECHANISM_DEDUP_BAND_LOW", _DEFAULT_DEDUP_BAND_LOW
+        ),
+        band_high=_env_float(
+            env, "AE_MECHANISM_DEDUP_BAND_HIGH", _DEFAULT_DEDUP_BAND_HIGH
+        ),
+    )
 
     kwargs: dict[str, Any] = {
         "profile_name": name,
         "features": features,
         "budgets": BudgetLimits(),
         "embedding": embedding,
+        "mechanism_dedup": mechanism_dedup,
         "seed": seed,
         "deferred_features": profile["deferred"],
     }

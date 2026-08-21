@@ -39,6 +39,7 @@ from agent_evolve.core.contracts import (
     ExecutionTrace,
 )
 from agent_evolve.core.errors import WriteAuthorizationError
+from agent_evolve.core.issues import Issue
 from agent_evolve.core.memory import (
     AttemptStatus,
     EditAttempt,
@@ -73,18 +74,50 @@ class ParentContext:
     The primary parent owns the workspace being written. Donors are read-only:
     the editor may draw content from a donor but always writes into the
     primary's workspace.
+
+    ``issues`` carries this parent's *diagnosed faults* -- what it is weak at and
+    on which surface -- so the editor can act on a mechanism rather than infer one
+    from a score. Without it the editor learns only *"parent c3 scored 0.4 on
+    gaia-7"* and never *"...because of mechanism M, at severity 0.8, attributable
+    to these artifacts"* (SV-10).
+
+    Two properties this field is built to preserve:
+
+    * **No prose crosses the boundary.** :class:`Issue` carries cluster ids,
+      numbers and trace-backed ``evidence_refs`` -- no ``mechanism_description``
+      and no ``recurring_failure_mode``. The editor prompt is a persistence
+      surface under ``AGENTS.md``, so the sanitization rule holds *by
+      construction* here rather than by a filter that could later be forgotten.
+    * **Same-task mechanisms do not collide.** This is a tuple, not a mapping
+      keyed on ``task_id``. The projection it replaces
+      (``{t_id: cell.mean for (t_id, _m), cell in ...}``) silently kept whichever
+      mechanism came last in iteration order, so a parent failing one task two
+      different ways presented as failing it once.
+
+    Why not the score tensor, which the SV-10 register entry proposed: its
+    mechanism dimension holds a *constant* for every candidate (five of the six
+    pool-write paths pass ``self.mechanism_cluster_id``), and
+    ``ScoreCell.weighted_score()`` is arithmetically identical to ``mean``
+    because ``ScoreProvenance.severity`` is never written in production. Both
+    halves of that projection would have produced a fix-shaped no-op.
     """
 
     candidate_id: str
     version: str
     is_primary: bool
     score_summary: Mapping[str, float] = field(default_factory=dict)
+    #: This parent's diagnosed faults. Empty when it has no diagnosis yet --
+    #: absence of evidence, never a missing attribute.
+    issues: tuple[Issue, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.candidate_id:
             raise ValueError("candidate_id is required")
         if not self.version:
             raise ValueError("version is required")
+        # Accept any sequence and freeze it: a caller passing a list would
+        # otherwise hand a mutable alias into a frozen dataclass.
+        object.__setattr__(self, "issues", tuple(self.issues))
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,12 +140,26 @@ class EditorRequest:
     # Candidates the editor may draw from. Empty means single-parent editing.
     # Exactly one entry must be primary when non-empty.
     parents: tuple[ParentContext, ...] = ()
-    # Prefix new artifact ids must carry. Empty disables creation.
-    creatable_prefix: str = ""
+    # Prefixes new artifact ids may carry. Empty disables creation.
+    # A bare string is accepted and normalized to a one-tuple; treating it as an
+    # iterable of characters would authorize every id.
+    creatable_prefixes: tuple[str, ...] = ()
     # Generated artifacts already present pool-wide, for the creation cap.
     pool_created_count: int = 0
 
     def __post_init__(self) -> None:
+        # Accept a scalar prefix and normalize to a tuple. ``core/`` must stay
+        # adapter-neutral, so this duplicates the coercion rather than importing
+        # the adapter-side helper.
+        raw = self.creatable_prefixes
+        if isinstance(raw, str):
+            object.__setattr__(self, "creatable_prefixes", (raw,) if raw else ())
+        else:
+            object.__setattr__(
+                self,
+                "creatable_prefixes",
+                tuple(str(p) for p in raw if str(p)),
+            )
         if not self.write_set:
             raise ValueError("write_set is required (cannot be empty)")
         if not self.issue_id:
@@ -130,6 +177,16 @@ class EditorRequest:
                     "parents must contain exactly one primary parent, "
                     f"got {len(primaries)}"
                 )
+
+    @property
+    def creatable_prefix(self) -> str:
+        """First authorized prefix, or ``""`` when creation is disabled.
+
+        Compatibility accessor for callers reasoning about a single prefix. Any
+        code deciding *whether* an id may be created must check membership in
+        ``creatable_prefixes``; this cannot represent more than one surface.
+        """
+        return self.creatable_prefixes[0] if self.creatable_prefixes else ""
 
 
 @dataclass(frozen=True, slots=True)

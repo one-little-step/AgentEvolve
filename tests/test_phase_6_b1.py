@@ -69,13 +69,79 @@ def test_b1_pool_grows_only_by_accepted_attempts(tmp_path: Path) -> None:
     assert result.pool_size == result.seeded_candidate_count + result.accepted
 
 
-def test_b1_frontier_keeps_more_than_one_non_dominated_candidate(
+def test_b1_frontier_is_not_trivially_collapsed_before_any_attempt(
     tmp_path: Path,
 ) -> None:
-    """c1 and c2 each win a distinct task, so no single candidate dominates."""
+    """c1 and c2 each win a distinct task, so neither dominates the other.
+
+    Measured with ``n_attempts=0``-equivalent seeding: c1 scores
+    ``task-a=1.0, task-b=0.0`` and c2 the mirror image, so both sit on the
+    frontier.
+
+    **Why this no longer asserts a frontier of >= 2 after attempts run (SV-11).**
+    ``build_issues`` used to diagnose ``pool.base`` regardless of the selected
+    parent, so an attempt inherited base's failures and its offspring never
+    strictly dominated the seeded pair. Now that observation follows the selected
+    parent, the offspring is built on c2 and measures
+    ``task-a=1.0, task-b=1.0`` -- which *strictly dominates both* c1 and c2, so a
+    frontier of exactly 1 is the mathematically correct answer:
+
+        base                               task-a=0.0  task-b=0.0
+        c1                                 task-a=1.0  task-b=0.0
+        c2                                 task-a=0.0  task-b=1.0
+        base-v0+attempt-c2+att-i001-s0000  task-a=1.0  task-b=1.0   <- dominates
+
+    Asserting >= 2 here would now require the loop to *fail* to produce a
+    dominating candidate, which is the opposite of what the experiment is for.
+    """
+    result = run_b1_experiment(seed=0, storage_root=tmp_path, n_attempts=1, embedder=_offline())
+
+    assert result.seeded_candidate_count == 3
+    assert {"c1", "c2"} <= set(result.pool_candidate_ids)
+    assert result.frontier_size >= 1
+
+
+def test_b1_a_dominating_offspring_collapses_the_frontier(tmp_path: Path) -> None:
+    """The frontier must reflect measured dominance, not pool size.
+
+    Pins the consequence of SV-11 directly: once the parent is the observation
+    subject, ONE attempt yields an offspring that wins every cell and is
+    therefore the sole non-dominated entry even though four candidates exist.
+
+    **Corrected while closing SV-10.** This assertion previously read
+    ``pool_size == 4`` and ``frontier_size == 1`` against ``n_attempts=2``, which
+    paired the docstring's one-attempt table above with a two-attempt run. It was
+    green only because attempt 2 then chained onto attempt 1's offspring; once
+    SV-10 made both attempts breed from the same observed parent, the second
+    attempt produced an accepted *sibling* and the real numbers became 5 and 2.
+    The mismatch was mine, not a regression.
+    """
+    result = run_b1_experiment(seed=0, storage_root=tmp_path, n_attempts=1, embedder=_offline())
+
+    assert result.pool_size == 4
+    assert result.frontier_size == 1
+
+
+def test_b1_siblings_breed_from_the_same_observed_parent(tmp_path: Path) -> None:
+    """SV-10: every attempt in a run breeds from the parent it diagnosed.
+
+    ``select_parent`` consumes ``rng.random()``, so before SV-10 each attempt drew
+    its own parent and attempt 2 chained onto attempt 1's offspring
+    (``...att-i001-s0000+att-i002-s0001``). Now both attempts observe, diagnose
+    and edit ``c2``, so the offspring are *siblings* -- each an independent repair
+    of the same diagnosed parent rather than a chain whose later links were
+    diagnosed on a different candidate.
+    """
     result = run_b1_experiment(seed=0, storage_root=tmp_path, n_attempts=2, embedder=_offline())
 
-    assert result.frontier_size >= 2
+    assert result.pool_size == 5
+    assert result.accepted == 2
+    offspring = [c for c in result.pool_candidate_ids if "att-i" in c]
+    assert len(offspring) == 2
+    # Siblings: neither offspring id is a prefix-extension of the other.
+    assert not any(
+        a != b and b.startswith(a) for a in offspring for b in offspring
+    ), f"offspring chained instead of branching from one parent: {offspring}"
 
 
 # ---------------------------------------------------------------------- #

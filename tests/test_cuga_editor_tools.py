@@ -83,7 +83,7 @@ def _ctx(**overrides) -> EditorToolContext:
         issue_id="issue-1",
         write_set=("skills/retrieval",),
         current_artifacts={"skills/retrieval": "primary body"},
-        creatable_prefix="skills/generated-",
+        creatable_prefixes=("skills/generated-",),
         parents=(
             ParentContext("cand-1", "v-primary", True, {"task-a": 0.0}),
             ParentContext("cand-2", "v-donor", False, {"task-a": 0.9}),
@@ -92,7 +92,7 @@ def _ctx(**overrides) -> EditorToolContext:
     ctx = EditorToolContext(
         staging=EditStagingArea(
             write_set=request.write_set,
-            creatable_prefix=request.creatable_prefix,
+            creatable_prefixes=request.creatable_prefixes,
         ),
         evidence=EvidenceView(
             analysis=analysis, trace=trace, task=task,

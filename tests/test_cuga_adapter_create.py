@@ -141,5 +141,25 @@ def test_created_artifact_count_tracks_generated_prefix() -> None:
     assert adapter.created_artifact_count(ws.version) == 1
 
 
-def test_creatable_prefix_is_declared() -> None:
-    assert CugaAdapter.creatable_prefix == "skills/generated-"
+def test_creatable_prefixes_are_declared_for_every_surface() -> None:
+    """SV-8: creation is authorized on all three editable surfaces.
+
+    Was a scalar ``creatable_prefix``, which confined creation to ``skills/``
+    and left ``memory/``/``policies/`` reachable by replacement alone. Asserted
+    on the field rather than the compatibility property, which reports only the
+    first prefix.
+    """
+    assert CugaAdapter.creatable_prefixes == (
+        "skills/generated-",
+        "memory/generated-",
+        "policies/generated-",
+    )
+
+
+def test_the_single_prefix_accessor_still_reports_a_usable_value() -> None:
+    """Callers reading one prefix keep working; it is the first authorized one."""
+    adapter = CugaAdapter(
+        wrapper=CugaWrapper(InMemoryRuntime(), RuntimeSettings(model="test-model"))
+    )
+
+    assert adapter.creatable_prefix == "skills/generated-"

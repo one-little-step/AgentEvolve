@@ -62,9 +62,35 @@ def test_stage_create_rejects_flat_generated_prefix() -> None:
     assert "skills/generated-" in outcome.reason
 
 
-def test_stage_create_rejects_policies_and_memory_namespaces() -> None:
-    area = _area()
+def test_stage_create_now_accepts_policies_and_memory_namespaces() -> None:
+    """SV-8 reverses the former single-surface policy.
+
+    This test previously asserted that ``policies/`` and ``memory/`` creation was
+    *rejected*, which encoded the defect: with creation confined to ``skills/``
+    the optimizer could only ever add a skill, and since the live harness seeded
+    no other surface there was nothing on ``memory/``/``policies/`` to replace
+    either. Both surfaces map to real CUGA harness slots via ``_harness_slot``,
+    so authorizing them is not speculative.
+
+    The cap is widened here only so all three surfaces fit in one attempt; the
+    default cap of 2 is asserted by
+    ``test_stage_create_enforces_per_attempt_cap_of_two``.
+    """
+    area = _area(per_attempt_create_cap=3)
     for artifact_id in ("policies/generated-x", "memory/generated-x"):
+        outcome = area.stage_create(artifact_id, "body")
+        assert outcome.accepted, f"{artifact_id}: {outcome.reason}"
+
+
+def test_stage_create_still_rejects_a_namespace_cuga_cannot_receive() -> None:
+    """Widening the surfaces must not widen them to anything.
+
+    ``_harness_slot`` accepts ``instructions`` or ``skills|policies|memory/``
+    only, so an id outside those groups would raise at registration and the
+    creation path would be dead code.
+    """
+    area = _area()
+    for artifact_id in ("tools/generated-x", "bin/generated-x", "generated-flat"):
         outcome = area.stage_create(artifact_id, "body")
         assert not outcome.accepted, artifact_id
 

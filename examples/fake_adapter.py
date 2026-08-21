@@ -80,7 +80,21 @@ class FakeAdapter:
     adapter_name: str = "fake"
     # Creation authority mirrors CugaAdapter so offline wiring tests
     # exercise the same creation path the real adapter uses.
-    creatable_prefix: str = "skills/generated-"
+    #
+    # SV-8: one prefix per editable surface. If this stayed a scalar while
+    # CugaAdapter widened, every offline test would keep rehearsing the
+    # single-surface path the real adapter no longer takes -- exactly the
+    # offline/live divergence that hid the starved roster in the first place.
+    creatable_prefixes: tuple[str, ...] = (
+        "skills/generated-",
+        "memory/generated-",
+        "policies/generated-",
+    )
+
+    @property
+    def creatable_prefix(self) -> str:
+        """First authorized prefix; mirrors ``CugaAdapter``'s accessor."""
+        return self.creatable_prefixes[0] if self.creatable_prefixes else ""
 
     def __init__(self, base_artifacts: Sequence[tuple[str, str, str]] = _BASE_ARTIFACTS) -> None:
         # version -> {artifact_id: content}
@@ -91,6 +105,11 @@ class FakeAdapter:
         self._workspaces: dict[str, dict[str, str]] = {}
         # version -> (parent_version, attempt_id)
         self._lineage: dict[str, tuple[str, str]] = {}
+        # Rollouts served, and the versions they ran against. Lets a test assert
+        # observation *cost* and observation *subject* separately -- SV-11 turns
+        # on the subject changing while the count does not.
+        self.rollout_calls: int = 0
+        self.rolled_out_versions: list[str] = []
 
         # Seed the base version.
         base_version = "base-v0"
@@ -204,10 +223,12 @@ class FakeAdapter:
                     raise ValueError(
                         f"artifact {aid!r} already exists; use 'replace'"
                     )
-                if not aid.startswith(self.creatable_prefix):
+                if not self.creatable_prefixes or not aid.startswith(
+                    tuple(self.creatable_prefixes)
+                ):
                     raise ValueError(
-                        f"created artifact {aid!r} must start with "
-                        f"{self.creatable_prefix!r}"
+                        f"created artifact {aid!r} must start with one of "
+                        f"{sorted(self.creatable_prefixes)}"
                     )
                 new_content = str(payload["content"])
                 staging[aid] = new_content
@@ -266,6 +287,9 @@ class FakeAdapter:
     ) -> object:
         if workspace.attempt_id not in self._workspaces:
             raise KeyError(f"unknown workspace: {workspace.attempt_id!r}")
+
+        self.rollout_calls += 1
+        self.rolled_out_versions.append(workspace.parent_version)
 
         staging = self._workspaces[workspace.attempt_id]
 

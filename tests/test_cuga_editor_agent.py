@@ -73,7 +73,7 @@ def _request() -> EditorRequest:
         issue_id="issue-1",
         write_set=("skills/retrieval",),
         current_artifacts={"skills/retrieval": "primary body"},
-        creatable_prefix="skills/generated-",
+        creatable_prefixes=("skills/generated-",),
         parents=(
             ParentContext("cand-1", "v-primary", True, {"task-a": 0.0}),
             ParentContext("cand-2", "v-donor", False, {"task-a": 0.9}),

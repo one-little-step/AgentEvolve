@@ -472,20 +472,37 @@ def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
                        ))
     group.add_argument("--probe-budget-fraction", type=float, default=None,
                        help="fraction of rollouts reserved for probes (default: 0.15)")
-    # --- champion selection weights ---
+    # --- champion aggregate weights (reported, not used for ranking) ---
+    # SV-2: ranking is a pairwise comparison restricted to the cells both entries
+    # measured, so none of these four weights can change which candidate wins. They
+    # still parameterise the aggregate recorded in the manifest, which is why they
+    # remain configurable -- but the help text must not imply they select anything.
+    #
+    # gamma and delta additionally weight terms that were never implemented
+    # (`stability = 1.0`, `regression_risk = 0.0`; SV-5). Their old help strings
+    # named them "worst-case" and "novelty", which described a specification rather
+    # than the code.
     group.add_argument("--champion-alpha", type=float, default=None,
-                       help="champion weight: mean score (default: 0.55)")
+                       help="reported aggregate weight: mean score (default: 0.55; "
+                            "does not affect selection)")
     group.add_argument("--champion-beta", type=float, default=None,
-                       help="champion weight: coverage (default: 0.20)")
+                       help="reported aggregate weight: coverage (default: 0.20; "
+                            "does not affect selection -- use "
+                            "--champion-min-coverage-fraction to act on coverage)")
     group.add_argument("--champion-gamma", type=float, default=None,
-                       help="champion weight: worst-case (default: 0.15)")
+                       help="reported aggregate weight: reserved, term is currently "
+                            "the constant 1.0 (default: 0.15; does not affect "
+                            "selection)")
     group.add_argument("--champion-delta", type=float, default=None,
-                       help="champion weight: novelty (default: 0.10)")
+                       help="reported aggregate weight: reserved, term is currently "
+                            "the constant 0.0 (default: 0.10; does not affect "
+                            "selection)")
     group.add_argument("--champion-min-coverage-fraction", type=float, default=None,
                        help=(
                            "minimum task coverage before a candidate may be "
                            "champion (default: 0.0). Raise this to stop a "
-                           "candidate winning on one lucky task"
+                           "candidate winning on one lucky task. Unlike the "
+                           "weights above, this is enforced"
                        ))
     # Ablation switch, not a feature toggle. Absent (the default) the RHO paper's
     # S_j > 0 acceptance gate is ACTIVE; passing this disables it so a run can
@@ -964,6 +981,19 @@ def _run_rho_preflight(args: argparse.Namespace) -> "RoundConfig | int":
     return config
 
 
+def _offline_preference_judge() -> object:
+    """The deterministic preference judge used by ``--dry-run``.
+
+    Imported at call time so a live run never loads the examples package. Shares
+    the offline RHO judge, so a dry run exercises the same acceptance-gate and
+    retirement logic a live run does -- just with a verdict that is a pure
+    function of the traces rather than a model call.
+    """
+    from examples.fake_rho_components import OfflinePreferenceJudge
+
+    return OfflinePreferenceJudge()
+
+
 def _rho_components_for(args: argparse.Namespace) -> dict[str, object]:
     """The five RHO components this run should use.
 
@@ -1119,6 +1149,11 @@ def main(argv: list[str] | None = None) -> int:
             profile=args.profile,
             log_capture=log_capture,
             config_overrides=resolve_config_overrides(args),
+            # The deterministic judge, so a dry run rehearses generational
+            # retirement and pairwise resolution rather than skipping them. A
+            # judge-free dry run would report "base won" for reasons that have
+            # nothing to do with the harness under test.
+            preference_judge=_offline_preference_judge(),
         )
     else:
         built = _build_live(args, log_capture)

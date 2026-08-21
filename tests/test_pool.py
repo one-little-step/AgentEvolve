@@ -514,21 +514,33 @@ def test_select_champion_deterministic_tiebreak_by_id():
     assert champ.candidate_id == "candidate-a"
 
 
-def test_select_champion_uses_config_weights():
+def test_select_champion_ranks_pairwise_not_by_config_weights():
+    """SV-2: the weights are reported, but they do not rank.
+
+    This test previously asserted the opposite -- that coverage-heavy weights flip
+    the winner to ``candidate-b``. That behaviour *was* SV-3: ``candidate-b`` is
+    worse on the only cell both measured (0.5 vs 0.9) and won on breadth of
+    measurement alone.
+
+    Ranking is now the pairwise intersection comparison, so ``candidate-a`` holds
+    under every weighting. The weights remain in :class:`ChampionReport` as a
+    diagnostic, which is what the aggregate assertion below pins.
+    """
     p = PersistentPool(min_comparable_rollouts=2)
     p.add_base(_candidate("base"))
     p.add_candidate(_candidate("candidate-a"))
     p.add_candidate(_candidate("candidate-b"))
-    # candidate-a: better outcome, half coverage; candidate-b: full coverage.
+    # candidate-a: better on the shared cell, half coverage.
+    # candidate-b: full coverage, worse where they overlap.
     for r in range(2):
         p.record_score("candidate-a", *_prov("t", "c0", rollout=r, score=0.9))
         p.record_score("candidate-b", *_prov("t", "c0", rollout=r, score=0.5))
         p.record_score("candidate-b", *_prov("t", "c1", rollout=r, score=0.5))
         p.record_score("base", *_prov("t", "c0", rollout=r, score=0.1))
-    # Default weights favor outcome -> candidate-a.
     _make_eligible(p, "candidate-a", "candidate-b")
     assert p.select_champion().candidate_id == "candidate-a"
-    # Coverage-heavy weights flip the result to candidate-b.
+    # Coverage-heavy weights no longer flip the result: a candidate cannot win by
+    # having measured more when it is worse everywhere both were measured.
     config = resolve_profile(
         "minimal",
         champion_alpha=0.1,
@@ -536,7 +548,13 @@ def test_select_champion_uses_config_weights():
         champion_gamma=0.0,
         champion_delta=0.0,
     )
-    assert p.select_champion(config=config).candidate_id == "candidate-b"
+    report = p.select_champion(config=config)
+    assert report.candidate_id == "candidate-a"
+    # The configured weights still reach the reported aggregate, so a manifest
+    # reader can reproduce the number even though it decided nothing.
+    assert report.aggregate == pytest.approx(
+        0.1 * report.outcome + 0.9 * report.coverage
+    )
 
 
 # ---------------------------------------------------------------------- #

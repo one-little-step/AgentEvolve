@@ -305,7 +305,7 @@ def test_search_edit_history_tool_reports_the_prior_attempt_to_the_model() -> No
     )
     tools = build_tool_callables(
         EditorToolContext(
-            staging=EditStagingArea(write_set=("skills/retrieval",), creatable_prefix=""),
+            staging=EditStagingArea(write_set=("skills/retrieval",), creatable_prefixes=()),
             evidence=EvidenceView(
                 analysis=analysis,
                 trace=trace,

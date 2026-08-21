@@ -69,7 +69,14 @@ from agent_evolve.benchmarks.cuga_executor import (
 )
 from agent_evolve.benchmarks.runner import run_benchmark
 from agent_evolve.core.analyzer import FakeAnalyzerJudge
-from agent_evolve.core.clustering import LexicalEmbedder, MechanismEmbedder
+from agent_evolve.core.clustering import (
+    DEFAULT_BAND_HIGH,
+    DEFAULT_BAND_LOW,
+    ClusterRegistry,
+    LexicalEmbedder,
+    MechanismEmbedder,
+)
+from agent_evolve.core.embeddings import DEFAULT_EMBEDDING_DIM, build_embedder
 from agent_evolve.core.rho.cache import JsonDiskCache
 from agent_evolve.core.config import ResolvedConfig, resolve_profile
 from agent_evolve.core.contracts import (
@@ -97,6 +104,7 @@ from agent_evolve.core.run_logging import (
 from agent_evolve.core.storage import StorageBackend
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from agent_evolve.core.resolution import FinalResolution
     from agent_evolve.core.rho.history import HistoryLoadReport
     from agent_evolve.core.rho.rounds import RhoHooks
 
@@ -136,12 +144,151 @@ NOISE_FLOOR_PP = 16.67
 #: parity with a serial run passes a path explicitly.
 DEFAULT_WORKER_KNOWLEDGE_SEED: Path | None = None
 
-#: The mechanism cluster every score cell is keyed by. One fixed cluster keeps
-#: cells comparable across candidates; task-local semantic clustering is a
-#: separate, unbuilt stage.
+#: The mechanism cluster every *pool* score cell is keyed by.
+#:
+#: This constant is load-bearing and must stay constant. Champion comparison
+#: intersects on the complete ``(task_id, mechanism_cluster_id)`` key
+#: (``pool.py:449-451``), and a diagnosed mechanism necessarily *differs* between
+#: a parent and the offspring bred to fix it. Keying pool cells by diagnosed
+#: mechanism therefore empties the comparable-cell overlap: measured, a candidate
+#: scoring 0.9 on every task against a parent's 0.5 stops dominating, and the
+#: Pareto frontier reports both candidates -- which reads like healthy diversity
+#: but means nothing could be compared. It fails silently, so
+#: ``tests/test_embedder_wiring.py`` guards it.
+#:
+#: Per-mechanism variance belongs in ``EntropyTracker``, whose cells exist to be
+#: split by mechanism, not in the pool tensor, whose cells exist to be shared.
 DEFAULT_MECHANISM_CLUSTER = "mechanism-default"
 
+#: Ambiguity band handed to :class:`ClusterRegistry` when mechanism dedup is not
+#: configured. **Re-exported from** ``core.clustering``, which owns the single
+#: definition: this was previously a fourth independent copy of ``0.60``/``0.85``
+#: and four copies of one policy number drift apart silently. They are only
+#: consulted when an adjudicator exists, so with dedup off they are inert.
+_DEFAULT_CLUSTER_BAND_LOW = DEFAULT_BAND_LOW
+_DEFAULT_CLUSTER_BAND_HIGH = DEFAULT_BAND_HIGH
+
 _OFFLINE_ROLLOUT_ISOLATION = "in-process (fake adapter)"
+
+
+def embedder_for_config(
+    config: "ResolvedConfig",
+    *,
+    dim: int | None = None,
+    timeout: float | None = None,
+    transport: object | None = None,
+) -> MechanismEmbedder:
+    """Build the mechanism embedder the resolved config actually declares.
+
+    This is the seam that was missing. ``config.embedding`` defaulted to
+    ``provider="ollama"`` while both stack builders hardcoded
+    ``LexicalEmbedder(dim=32)`` and ``build_embedder`` had no caller anywhere in
+    ``src/`` -- so the configuration advertised semantic embeddings and
+    production ran hashed-token cosine, which measures word overlap rather than
+    meaning. Four descriptions of one identical fault using different vocabulary
+    produced four separate clusters, so the per-mechanism evidence floor could
+    never be cleared.
+
+    ``dim`` defaults to :data:`DEFAULT_EMBEDDING_DIM` (768) rather than the old
+    hardcoded 32: a 32-slot hashed space collides aggressively, which fragments
+    one mechanism across several clusters on its own.
+
+    Degradation to the lexical fallback is *reported* through
+    ``FallbackEmbedder.fallback_reason``, never silent, so a coarse clustering
+    can never be mistaken for a fine one.
+    """
+    kwargs: dict[str, object] = {
+        "dim": DEFAULT_EMBEDDING_DIM if dim is None else dim
+    }
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    if transport is not None:
+        kwargs["transport"] = transport
+    return build_embedder(config.embedding, **kwargs)  # type: ignore[arg-type]
+
+
+def cluster_registry_for_config(
+    config: "ResolvedConfig",
+    *,
+    embedder: MechanismEmbedder | None = None,
+) -> "ClusterRegistry":
+    """Build the mechanism :class:`ClusterRegistry` the config declares.
+
+    This is the second half of the same seam ``embedder_for_config`` opens. The
+    registry supplies the **entropy tracker's** cell keys, so the quality of
+    mechanism identity decides whether cross-candidate entropy measures
+    within-mechanism variance or pools unrelated faults into one cell.
+
+    The dedup adjudicator is attached only when ``config.mechanism_dedup`` is
+    fully configured (both a model and an endpoint). It is imported lazily from
+    ``agent_evolve.adapters`` **here rather than in core**: ``core/`` must never
+    import an agent implementation, so the adapter is constructed at this
+    composition boundary and injected as a structural
+    ``MechanismAdjudicator``.
+
+    A dedup import or construction failure is not fatal. Falling back to
+    cosine-only clustering is the prior behaviour and is strictly better than
+    failing a run over an optional cost-saving refinement; the reason is
+    surfaced on stderr rather than swallowed.
+
+    That breadth is also what hid a real defect for an entire step. This function
+    passed ``base_url=dedup.base_url`` while :class:`MechanismDedupConfig`'s
+    field is ``url``, so every fully-configured deployment raised
+    ``AttributeError`` *into the fallback path* and ran cosine-only while the
+    config reported ``enabled=True``. The adjudicator had therefore never
+    attached in production, which made the ambiguity band inert -- the band is
+    consulted only when an adjudicator exists. The endpoint is now read through
+    a checked accessor so a rename raises here rather than degrading silently,
+    and ``tests/test_dedup_band_defaults.py`` asserts an adjudicator actually
+    arrives when dedup is enabled.
+    """
+    resolved_embedder = (
+        embedder if embedder is not None else embedder_for_config(config)
+    )
+    dedup = getattr(config, "mechanism_dedup", None)
+    adjudicator = None
+    band_low = _DEFAULT_CLUSTER_BAND_LOW
+    band_high = _DEFAULT_CLUSTER_BAND_HIGH
+    if dedup is not None and getattr(dedup, "enabled", False):
+        try:
+            from agent_evolve.adapters.cuga_mechanism_adjudicator import (
+                CugaMechanismAdjudicator,
+            )
+
+            # Read the endpoint BEFORE entering the adapter, and fail loudly on a
+            # field-name mismatch instead of letting the broad except below
+            # convert it into a silent cosine-only downgrade.
+            if not hasattr(dedup, "url"):  # pragma: no cover - guards a rename
+                raise AttributeError(
+                    "MechanismDedupConfig has no 'url' field; the dedup endpoint "
+                    "cannot be resolved. This must not degrade silently: the "
+                    "adjudicator would never attach and the ambiguity band would "
+                    "be inert."
+                )
+            adjudicator = CugaMechanismAdjudicator(
+                model=dedup.model,
+                base_url=dedup.url,
+                api_key=dedup.api_key,
+            )
+            band_low = dedup.band_low
+            band_high = dedup.band_high
+        except Exception as exc:  # pragma: no cover - optional dependency path
+            import sys as _sys
+
+            _sys.stderr.write(
+                f"[mechanism-dedup] disabled, falling back to cosine-only "
+                f"clustering: {type(exc).__name__}: {exc}\n"
+            )
+            adjudicator = None
+    return ClusterRegistry(
+        # One embedder instance shared across per-task clusterers: a semantic
+        # embedder may hold a connection or cache, and a factory returning a
+        # fresh one per task would pay that cost once per task.
+        embedder_factory=lambda: resolved_embedder,
+        adjudicator=adjudicator,
+        band_low=band_low,
+        band_high=band_high,
+    )
 
 
 def describe_knowledge_choice(seed: Path | None) -> str:
@@ -446,6 +593,11 @@ class EvolutionStack:
     #: tell an operator to discount a real cross-candidate result as inert.
     mode: str = "genetic"
     _closers: tuple[Callable[[], None], ...] = ()
+    #: Memoised final resolution (SV-13d). Resolving costs rollouts when several
+    #: candidates survive, and ``run_evolution.py`` asks for the winner twice --
+    #: once to measure it, once to export it. One cached answer keeps the cost
+    #: single and guarantees both agree on who won.
+    _winner: "FinalResolution | None" = field(default=None, repr=False)
 
     # -- inspection ------------------------------------------------------- #
 
@@ -576,6 +728,20 @@ class EvolutionStack:
                 ),
             )
             summaries.append(summary)
+            # SV-12: how often entropy was measurable this run. Recorded per
+            # iteration because the answer changes as evidence accumulates: a
+            # 100% fallback rate early and a falling one later is a healthy run,
+            # whereas a rate stuck at 100% means every issue was selected on
+            # quality alone and no conclusion about entropy-guided selection is
+            # supported. Both cases report H = 0.0 per task, so without this the
+            # two are indistinguishable in the record.
+            report = self.runner.entropy_availability()
+            entropy_payload: dict[str, object] = {
+                "cells_available": report.cells_available,
+                "cells_unavailable": report.cells_unavailable,
+                "fallback_rate": report.fallback_rate,
+                "reasons": dict(report.reasons),
+            }
             # The attempt's own identity travels with the counts: an accepted or
             # rejected edit is only attributable through its attempt and issue,
             # and ``reason`` is the only record of *why* a rejection happened.
@@ -599,17 +765,96 @@ class EvolutionStack:
                     "reason": outcome.reason,
                     "artifact_ids": list(outcome.artifact_ids),
                     "fallback_reason": outcome.fallback_reason,
+                    "entropy_availability": entropy_payload,
                 },
             )
         return tuple(summaries)
 
     def champion_version(self) -> str:
-        """The best candidate's version, or the base's when none was accepted."""
+        """The winning candidate's version, or the base's when none was accepted.
+
+        SV-13d: resolved by :meth:`resolve_winner`, which prefers pairwise
+        judgement over the aggregate. ``scripts/run_evolution.py`` calls this and
+        then :meth:`export_pool`, so the resolution is memoised -- resolving twice
+        would pay the survivors' rollout cost twice and, with a non-deterministic
+        judge, could name a different winner in the exported file than the one
+        just measured.
+        """
         try:
-            champion = self.pool.select_champion(config=self.runner.config)
+            resolution = self.winner()
         except ValueError:
             return self.base_version
-        return self.pool.get(champion.candidate_id).version
+        return self.pool.get(resolution.candidate_id).version
+
+    def winner(self) -> "FinalResolution":
+        """Memoised :meth:`resolve_winner`.
+
+        The cached value is the run's single answer to "who won": every consumer
+        (measurement, export, provenance) must agree, and re-resolving invites
+        both double cost and disagreement.
+        """
+        if self._winner is None:
+            self._winner = self.resolve_winner()
+        return self._winner
+
+    def resolve_winner(self) -> "FinalResolution":
+        """Resolve the live pool to one winner (SV-13d).
+
+        Two paths, and the first is free: if generational retirement has left a
+        single live candidate, it wins outright with no rollouts and no judge
+        calls. Otherwise the survivors are rolled once per coreset task and
+        resolved by symmetric pairwise preference -- ``N-1`` comparisons, so
+        ``2(N-1)`` model calls.
+
+        **Why not the score ranking.** ``select_champion`` reads recorded scores;
+        the ladder reads trajectories. Since SV-2 the score path is no longer
+        *wrong* -- it compares candidates pairwise on the cells both measured, so a
+        candidate can no longer win by skipping a hard task -- but a judge can still
+        prefer a candidate whose numbers tie while its reasoning is sound, which no
+        score comparison can express. ``select_champion`` remains the explicit
+        fallback when no judge is configured, and the resolution says so.
+
+        The rollouts here are the honest cost of this stage: unlike retirement,
+        which reuses traces both sides already produced, final resolution needs a
+        fresh comparable set across survivors that may have been measured in
+        different iterations.
+        """
+        from agent_evolve.core.resolution import resolve_final_candidate
+
+        live = self.pool.live_candidate_ids()
+        # A sole survivor (or an empty pool) needs no traces: resolution
+        # short-circuits before any comparison, so rolling anything would be
+        # buying evidence nothing reads.
+        if len(live) <= 1:
+            return resolve_final_candidate(
+                self.pool,
+                tasks=self.tasks,
+                traces={},
+                compare=self.runner.compare_preference,
+                config=self.runner.config,
+            )
+
+        traces: dict[str, dict[str, object]] = {}
+        for candidate_id in live:
+            version = self.pool.get(candidate_id).version
+            observed = self.runner.rollout_group(
+                version, self.tasks, prefix=f"final-{candidate_id}"
+            )
+            per_task: dict[str, object] = {}
+            for rollout in observed:
+                if rollout.trace is None or not rollout.scorable:
+                    continue
+                per_task[rollout.task.task_id] = rollout.trace
+            if per_task:
+                traces[candidate_id] = per_task
+
+        return resolve_final_candidate(
+            self.pool,
+            tasks=self.tasks,
+            traces=traces,
+            compare=self.runner.compare_preference,
+            config=self.runner.config,
+        )
 
     def export_pool(self, path: Path) -> tuple[Path, ...]:
         """Persist every pool candidate as a re-runnable harness file.
@@ -626,16 +871,23 @@ class EvolutionStack:
             away.
 
         Returns the files written, champion last, so a caller can report them.
+
+        SV-13d: the champion is whoever :meth:`winner` resolved -- pairwise
+        preference when a judge is configured, the documented aggregate otherwise.
+        The resolution is memoised, so this names the *same* candidate
+        :meth:`champion_version` measured; resolving again could disagree with the
+        number just reported and would pay the rollout cost twice.
         """
         target = Path(path)
+        resolution: "FinalResolution | None"
         try:
-            champion_id: str | None = self.pool.select_champion(
-                config=self.runner.config
-            ).candidate_id
+            resolution = self.winner()
+            champion_id: str | None = resolution.candidate_id
         except ValueError:
             # No candidate carries comparable evidence yet, so selection has no
             # opinion. The base is still exported and still named the champion:
             # it is what the next run would execute against.
+            resolution = None
             champion_id = None
 
         def provenance_for(entry: object, *, is_champion: bool) -> dict[str, object]:
@@ -643,6 +895,16 @@ class EvolutionStack:
             record["source_base_version"] = self.base_version
             record["grader_name"] = self.grader_name
             record["task_ids"] = [t.task_id for t in self.tasks]
+            if is_champion and resolution is not None:
+                # How this candidate won, not merely that it did. An
+                # ``aggregate_fallback`` champion was chosen from recorded scores
+                # rather than judged trajectories -- since SV-2 that is a pairwise
+                # comparison on shared cells, not the defective weighted ranking,
+                # but a reader must still be able to tell the two routes apart.
+                record["selection_method"] = resolution.method
+                record["selection_reason"] = resolution.reason
+                record["selection_comparisons"] = resolution.comparisons
+                record["selection_judge_calls"] = resolution.judge_calls
             return record
 
         champion_entry = (
@@ -736,6 +998,43 @@ def _override_kwargs(overrides: Mapping[str, object] | None) -> dict:
     return {k: v for k, v in dict(overrides or {}).items() if k != "environ"}
 
 
+def _default_preference_judge() -> object:
+    """The real CUGA preference judge, imported at call time.
+
+    Deferred so importing this module never pulls in the CUGA SDK: the offline
+    suite must stay importable without it.
+    """
+    from agent_evolve.adapters.cuga_preference_judge import PreferenceJudge
+
+    return PreferenceJudge()
+
+
+def _bind_preference_judge(judge: object | None) -> Callable[..., object] | None:
+    """Resolve a judge object to the runner's ``compare`` callable.
+
+    Accepts either an object exposing ``compare_symmetric`` or a bare callable, so
+    a test can inject a plain function. ``None`` disables the judge, and with it
+    generational retirement -- which is the correct behaviour for the offline
+    default, where acquiring a model-shaped dependency by accident would be worse
+    than having no verdict.
+
+    ``compare_symmetric`` is required rather than ``compare``: the two-call
+    antisymmetric form is what cancels position bias, and a one-sided verdict
+    would let slot order decide which harness leaves the breeding population.
+    """
+    if judge is None:
+        return None
+    symmetric = getattr(judge, "compare_symmetric", None)
+    if symmetric is not None:
+        return symmetric  # type: ignore[return-value]
+    if callable(judge):
+        return judge  # type: ignore[return-value]
+    raise TypeError(
+        "preference_judge must expose compare_symmetric(task, baseline, "
+        f"candidate) or be callable; got {type(judge).__name__}"
+    )
+
+
 def build_offline_stack(
     *,
     task_count: int = 3,
@@ -746,6 +1045,7 @@ def build_offline_stack(
     analyzer_factory: Callable[[], object] | None = None,
     analyzer_workers: int = 1,
     editor: object | None = None,
+    preference_judge: object | None = None,
     benchmark: Benchmark | None = None,
     grader: str | None = None,
     storage: StorageBackend | None = None,
@@ -827,12 +1127,27 @@ def build_offline_stack(
         if isinstance(editor_memory, EditMemory)
         else EditMemory(storage=storage)
     )
+    # SV-12: the OFFLINE stack stays offline. ``embedder_for_config`` honours a
+    # config whose default provider is ``ollama``, which reaches a live endpoint
+    # when one is running -- measured at ~0.18s per embed against a local Ollama,
+    # which both slows the suite and makes offline results depend on whether a
+    # daemon happens to be up. The offline path therefore keeps a deterministic
+    # lexical embedder, at the larger DEFAULT_EMBEDDING_DIM rather than the old
+    # 32, because a 32-slot hashed space collides hard enough to fragment one
+    # mechanism across clusters (measured cosine 0.822 between unrelated texts).
+    _mech_embedder: MechanismEmbedder = LexicalEmbedder(dim=DEFAULT_EMBEDDING_DIM)
+    _mech_registry = cluster_registry_for_config(config, embedder=_mech_embedder)
     runner = SequentialGepaRunner(
         adapter=resolved_adapter,  # type: ignore[arg-type]
         pool=pool,
         analyzer_judge=resolved_analyzer,  # type: ignore[arg-type]
         editor=resolved_editor,  # type: ignore[arg-type]
-        embedder=LexicalEmbedder(dim=32),
+        # SV-12: the embedder and the mechanism registry the CONFIG declares,
+        # not a hardcoded 32-dim lexical hash. The registry keys the entropy
+        # tracker's cells; mechanism_cluster_id below stays constant because the
+        # POOL needs shared keys for champion comparability (SV-2).
+        embedder=_mech_embedder,
+        cluster_registry=_mech_registry,
         storage=storage,
         config=config,
         mechanism_cluster_id=DEFAULT_MECHANISM_CLUSTER,
@@ -840,6 +1155,7 @@ def build_offline_stack(
         scorer=scorer,
         analyzer_factory=analyzer_factory,  # type: ignore[arg-type]
         edit_memory=edit_memory,
+        compare_preference=_bind_preference_judge(preference_judge),
     )
     return EvolutionStack(
         runner=runner,
@@ -899,6 +1215,7 @@ def build_live_stack(
     allow_unsafe_concurrency: bool = False,
     log_capture: LogCaptureConfig | None = None,
     max_rollouts_per_worker: int | None = None,
+    preference_judge: object | None = None,
     config_overrides: Mapping[str, object] | None = None,
 ) -> EvolutionStack:
     """Assemble the live stack: real CUGA rollouts, real analyzer, real editor.
@@ -1011,6 +1328,8 @@ def build_live_stack(
     # and the editor (whose history tools read it). Two instances would give the
     # editor an empty store to read from, which is the SV-6 failure mode.
     edit_memory = EditMemory(storage=storage)
+    _mech_embedder = embedder_for_config(config)
+    _mech_registry = cluster_registry_for_config(config, embedder=_mech_embedder)
     runner = SequentialGepaRunner(
         adapter=adapter,
         pool=pool,
@@ -1020,7 +1339,12 @@ def build_live_stack(
         editor=CugaEditorAgent(
             adapter=adapter, memory=edit_memory, log_sink=sinks["editor"]
         ),
-        embedder=LexicalEmbedder(dim=32),
+        # SV-12: the embedder and the mechanism registry the CONFIG declares,
+        # not a hardcoded 32-dim lexical hash. The registry keys the entropy
+        # tracker's cells; mechanism_cluster_id below stays constant because the
+        # POOL needs shared keys for champion comparability (SV-2).
+        embedder=_mech_embedder,
+        cluster_registry=_mech_registry,
         storage=storage,
         config=config,
         mechanism_cluster_id=DEFAULT_MECHANISM_CLUSTER,
@@ -1029,6 +1353,20 @@ def build_live_stack(
         rollout_batch=rollout_batch,
         analyzer_factory=analyzer_factory,
         edit_memory=edit_memory,
+        # The judge reaches *every* mode, not just the RHO ones. It used to be
+        # bound only in ``build_rho_hooks``, which ``--mode genetic`` never calls,
+        # so a genetic run produced candidates with ``preference is None`` and the
+        # SV-4 gate disqualified all of them: base was the only exportable
+        # harness however well an offspring scored. It also meant generational
+        # retirement could never fire outside RHO.
+        #
+        # Constructed lazily and defaulted here rather than in the signature so
+        # importing this module never requires the CUGA SDK.
+        compare_preference=_bind_preference_judge(
+            preference_judge
+            if preference_judge is not None
+            else _default_preference_judge()
+        ),
     )
     return EvolutionStack(
         runner=runner,
@@ -1047,13 +1385,38 @@ def build_live_stack(
     )
 
 
+# SV-8: the name every seeded surface slot carries. It keeps the ``generated-``
+# marker so a seeded slot is identifiable as machine-owned by id alone -- the
+# same property ``created_artifact_count`` and the pool-wide creation cap rely
+# on -- and so nothing mistakes it for authored harness content.
+_SEEDED_SLOT = "generated-evolved"
+
+
 def _harness_artifacts(harness: HarnessVersion) -> dict[str, str]:
     """Map a harness version onto the adapter's artifact ids.
 
     The base must own at least one writable artifact, or every issue is dropped
-    for lack of attribution and the loop can never act. A harness with no
-    injected artifacts therefore gets one empty, editable skill slot rather than
-    an empty inventory that would fail silently.
+    for lack of attribution and the loop can never act.
+
+    **SV-8: one empty editable slot per surface.** The optimizer chooses from
+    what ``list_artifacts`` reports, and that reports only artifacts that
+    *exist*. A live ``HarnessVersion(instructions=...)`` carries empty
+    ``skills``/``memory``/``policies`` -- including the sole builtin,
+    ``VANILLA_HARNESS`` -- so the roster was ``{"instructions"}`` and "every
+    candidate edits only instructions" was structural, not a preference the
+    optimizer expressed. Seeding one empty slot per surface makes the other
+    three reachable.
+
+    Two properties this deliberately holds to:
+
+    * **Empty, never authored.** Starter content would be a hand-written prior,
+      and a later measured gain could not be attributed to evolution rather than
+      to the seed.
+    * **Never overwrites.** A surface the harness already populates is left
+      exactly as it is; seeding fills gaps only.
+
+    The offline stack already had several surfaces, which is why no dry run ever
+    reproduced the starved roster.
     """
     artifacts: dict[str, str] = {}
     if harness.instructions:
@@ -1061,8 +1424,9 @@ def _harness_artifacts(harness: HarnessVersion) -> dict[str, str]:
     for group in ("skills", "policies", "memory"):
         for name, body in getattr(harness, group).items():
             artifacts[f"{group}/{name}"] = body
-    if not artifacts:
-        artifacts["skills/generated-evolved"] = ""
+    for group in ("skills", "policies", "memory"):
+        if not any(a.startswith(f"{group}/") for a in artifacts):
+            artifacts[f"{group}/{_SEEDED_SLOT}"] = ""
     return artifacts
 
 
@@ -1203,6 +1567,18 @@ def build_rho_hooks(
         from agent_evolve.adapters.cuga_preference_judge import PreferenceJudge
 
         preference_judge = PreferenceJudge()
+
+    # SV-13: the genetic runner uses the *same* symmetric judge to decide whether
+    # an offspring has superseded its parent. One instrument for retirement,
+    # promotion (SV-4) and final resolution -- otherwise a candidate could be
+    # retired by one standard and promoted by another.
+    #
+    # ``compare_symmetric``, not ``compare``: the two-call antisymmetric form is
+    # what cancels position bias, and a one-sided verdict would let slot order
+    # decide which harness leaves the breeding population.
+    stack.runner.compare_preference = (
+        preference_judge.compare_symmetric  # type: ignore[union-attr]
+    )
 
     tasks_by_id = {task.task_id: task for task in stack.tasks}
 

@@ -373,9 +373,27 @@ def _env_settings() -> tuple[str | None, str | None, str | None]:
 
 
 def _litellm_completion(**request: object) -> object:
-    """Live model call. Imported lazily so unit tests stay offline."""
+    """Live model call. Imported lazily so unit tests stay offline.
+
+    Attaches the ambient ``X-AE-*`` run correlation so the observability proxy can
+    tie each captured call to its ``(candidate, task, rollout, phase)``. mitmproxy
+    sees only socket bytes, and the addon strips these before the request goes
+    upstream, so no vendor endpoint receives internal identifiers. Outside a
+    correlation scope nothing is added and the call is unchanged.
+
+    Caller-supplied ``extra_headers`` are merged into, never replaced, and the
+    caller's own dict is not mutated.
+    """
     import litellm
 
+    from agent_evolve.core.correlation import correlation_headers
+
+    if correlation := correlation_headers():
+        supplied = request.get("extra_headers") or {}
+        request = {
+            **request,
+            "extra_headers": {**supplied, **correlation},
+        }
     return litellm.completion(**request)
 
 

@@ -323,6 +323,15 @@ required test asserts that `task-a` and `test-b` never aggregate together.
 
 ## Champion Selection
 
+Ranking is **pairwise on shared evidence**, not by a weighted aggregate. Eligible
+candidates are compared king-of-the-hill in insertion order, and an incumbent is
+displaced only by a challenger that scores better over the `(task, mechanism)`
+cells *both* candidates measured, at or above `min_comparable_rollouts`. A tie, a
+loss, or an empty overlap all leave the incumbent standing. Genuine ties between
+comparable candidates break by ascending `candidate_id`.
+
+The manifest still reports this aggregate:
+
 ```text
 aggregate(c) =
     alpha * Outcome(c)
@@ -332,7 +341,22 @@ aggregate(c) =
 ```
 
 Defaults: `alpha=0.55`, `beta=0.20`, `gamma=0.15`, `delta=0.10`, all recorded in
-the manifest. Protected floors are disqualifying and evaluated before the
-aggregate. Candidates lacking the configured minimum comparison coverage are
-reported separately and cannot win by default. The manifest records every
-component, coverage figure, tie-breaker, and the disqualification list.
+the manifest. **It is a diagnostic, not a ranking key** — no weight can change
+which candidate wins. Three findings forced that:
+
+- **SV-2** — `Outcome` averaged over whatever cells each candidate happened to
+  measure, so *not attempting* a hard task raised a candidate's score. Comparison
+  is now restricted to the shared-cell intersection.
+- **SV-3** — `ProcessCoverage` measures how much was measured, not how good the
+  candidate is, and held 27% of the live weight, so a strictly worse candidate
+  could win on breadth alone. Coverage is now an **eligibility floor**
+  (`champion_min_coverage_fraction`), which *is* enforced.
+- **SV-5** — `Stability` is hardcoded `1.0` and `RegressionRisk` hardcoded `0.0`.
+  Neither was ever implemented, so they cancel in every comparison and `gamma`
+  and `delta` weight nothing.
+
+Protected floors are disqualifying and evaluated before any comparison, as are
+retired candidates and candidates failing the `S_j > 0` acceptance gate. The
+manifest records every component, the coverage figure, the shared-cell count
+behind the decision (`comparable_cells`), the tie-breaker, and the
+disqualification list.

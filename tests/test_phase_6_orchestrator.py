@@ -493,12 +493,23 @@ def test_run_is_deterministic_for_a_fixed_seed() -> None:
 def test_run_persists_attempt_records_when_storage_is_configured(
     tmp_path: Path,
 ) -> None:
+    """Every attempt that actually ran leaves a record.
+
+    Asserted as "one record per attempted edit" rather than a hardcoded 2:
+    since SV-11 made ``build_issues`` diagnose the selected parent, an accepted
+    candidate that now passes every task correctly yields no further work item,
+    so the second call is a planned non-attempt rather than an edit. Requiring 2
+    records would force the loop to keep re-diagnosing failures it had already
+    fixed, which was the defect.
+    """
     storage = JSONFileStorage(tmp_path)
     runner = _runner(storage=storage)
 
-    runner.run([_task()], n_attempts=2)
+    result = runner.run([_task()], n_attempts=2)
 
-    assert len(storage.list_records("attempts")) == 2
+    attempted = [o for o in result.attempts if o.status is not AttemptStatus.PENDING]
+    assert attempted, "no attempt ran at all"
+    assert len(storage.list_records("attempts")) == len(attempted)
 
 
 def test_persisted_records_never_contain_the_expected_substring(

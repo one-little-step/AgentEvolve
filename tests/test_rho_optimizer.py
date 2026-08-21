@@ -442,12 +442,16 @@ def test_read_diagnosis_rejects_an_unknown_task() -> None:
     assert json.loads(captured[0])["status"] == "error"
 
 
-def test_prompt_lists_artifact_ids_and_the_creatable_prefix() -> None:
+def test_prompt_lists_artifact_ids_and_every_creatable_surface() -> None:
     prompt = build_optimizer_prompt(BASE, ())
 
     assert "instructions" in prompt
     assert "skills/search" in prompt
-    assert CREATABLE_PREFIX in prompt
+    # SV-8: the optimizer must be told it may create on any editable surface,
+    # not only under skills/.
+    for surface in ("skills", "memory", "policies"):
+        assert surface in prompt, f"{surface} not named in the prompt"
+    assert "generated-" in prompt
     assert "submit_candidate" in prompt
 
 
