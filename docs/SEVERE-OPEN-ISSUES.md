@@ -13,6 +13,15 @@ aliasing defect injected to prove the tests detect it). What remains is not a co
 defect: the edit genuinely produced no behavioural change, which given SV-8 (every
 candidate edits only `instructions`) would be *correct* judge behaviour.
 
+**SV-8's proxy question is answered for the genetic editor, 2026-08-21.** A real
+`CugaAgent` editor run through the interception proxy shows the four-surface
+roster reaching the model verbatim, and a `skills/` edit surviving apply ->
+harness config -> on-disk `SKILL.md`. Neither seeding nor delivery explains the
+historical "only `instructions`" observation. What does survive as an explanation
+is a **turn-ordering asymmetry**: `instructions` is the only surface whose
+concrete writable id is knowable before `list_artifacts` is called. See SV-8
+below. Surface *preference* is still unmeasured — that arm was mocked.
+
 **SV-12 CLOSED 2026-08-21.** The structural defect was fixed 2026-08-20; the three
 remainders then named are now addressed. Live model calls have been made through
 both the semantic embedder and the dedup adjudicator; the ambiguity band is
@@ -48,7 +57,9 @@ offline test can only fake:
 - **SV-7** — did the judge receive two *different* trajectories, or the same one
   twice?
 - **SV-8** — which artifact surface was the optimizer *offered* versus which it
-  chose?
+  chose? **Answered 2026-08-21 for the genetic editor** (roster captured in the
+  turn-2 body); still open for the RHO optimizer, and surface *preference*
+  remains unmeasured because the arm that captured the roster was mocked.
 - **SV-11 verification** — which harness version was the subject of each analyzer
   call? (The *fix* is not proxy-gated; the confirmation is.)
 
@@ -859,6 +870,89 @@ content is a runnable script.
 versus what it staged, and whether it ever considered a non-`instructions` surface
 before choosing.
 
+### Proxy verification, 2026-08-21 — the roster is offered, and it arrives late
+
+The proxy need above is now **satisfied for the genetic editor**. One real
+`CugaEditorAgent` -> real `CugaAgent` (cuga 0.2.20) invocation was run through
+`docker/observability/proxy.sh run`, with mock rules driving the turns so the arm
+cost nothing upstream. Probe and log:
+`terminal_output/sv8/sv8_editor_surface_probe.py`,
+`terminal_output/sv8/02-mocked-editor-probe.log`.
+
+Three findings, in descending order of how much they change the picture.
+
+**1. CUGA-internal calls are intercepted.** Three `/chat/completions` flows to
+`ete-litellm...` were captured from one editor invocation. This closes the
+question `docker/observability/README.md` lists as unverified: CUGA's internal
+client *does* honour `HTTPS_PROXY`, so the editor's LLM layer is observable even
+though the editor deliberately goes through `CugaAgent` rather than through our
+four LiteLLM wrappers. Those flows carry **no** `X-AE-*` correlation labels, and
+that is expected rather than a defect — `correlation_scope` only decorates our own
+wrappers. Any capture-side analysis of editor traffic must therefore correlate by
+timestamp and body content, not by label.
+
+**2. All four surfaces really are offered, in bytes.** The turn-2 request body
+contains the literal `list_artifacts` return:
+
+```text
+{"writable": ["instructions", "memory/generated-evolved",
+              "policies/generated-evolved", "skills/generated-evolved"],
+ "creatable_prefixes": ["skills/generated-", "memory/generated-",
+                        "policies/generated-"]}
+```
+
+So the 2026-08-20 seeding fix holds on the live path, and "offered" is now
+established from what the model was actually sent rather than from what the
+adapter believes it exposes.
+
+**3. A non-`instructions` edit survives the whole chain.** The mocked arm staged
+`skills/generated-evolved`; `apply_structured_edits` changed that artifact's
+`version_hash` and **only** that one; `_harness_config` carried the text into the
+rollout payload's `skills` group verbatim; and `materialize_harness` wrote
+`skills/generated-evolved/SKILL.md` with the edit's first line promoted into the
+YAML `description:` field — the exact field `EDITOR_INSTRUCTIONS` says drives skill
+selection. A skills edit is therefore not inert.
+
+**What this arm does NOT establish.** The staged surface was dictated by the mock
+rule, so **surface preference is not measured here at all**. A mocked verdict must
+never be read as a model's choice. Also untested: `memory/` and `policies/`
+materialization specifically, and whether a rollout model actually *selects* the
+written skill at runtime.
+
+### The residual finding: the roster arrives one turn late
+
+The offered roster is present in turn 2 — because turn 2 is the first request that
+can contain the *result* of `list_artifacts`. It is absent from turn 1, and the
+asymmetry that leaves behind is not symmetric across surfaces:
+
+| Available in turn 1 | `instructions` | `skills/…`, `policies/…`, `memory/…` |
+| --- | --- | --- |
+| Surface *kind* named in prompt prose | yes | yes |
+| A **writable concrete id** the model could pass to `stage_replace` | **yes** — `instructions` is simultaneously the kind name and a valid id | **no** — the concrete ids require the slot name `generated-evolved`, which appears nowhere in turn 1 |
+| Creatable prefix (`skills/generated-`, …) | n/a | **no** — absent from turn 1 |
+
+So a model that stages an edit before calling `list_artifacts` has exactly one
+surface it can name correctly, and it is `instructions`. Every other surface costs
+it one extra tool call first. That is a real gradient toward `instructions`, and it
+is structural rather than a preference — which makes it the surviving candidate
+explanation for the historical "only `instructions`" observation, now that seeding
+and delivery are both ruled out.
+
+A second, independent pull in the same direction: `EDITOR_INSTRUCTIONS` itself
+calls `instructions` *"usually the highest leverage choice available"* for
+turn-level mechanisms, and *"the most direct path to the model that exists here"*.
+Both statements are true, so this is not a defect to delete — but it does mean
+prose and roster latency push the same way.
+
+**Not fixed here, deliberately.** Both candidate remedies (naming the concrete
+writable ids in the turn-1 prompt, or rebalancing the surface-fit prose) change
+what the optimizer is told and would invalidate comparison against any
+previously measured run. Neither should be adopted on the strength of a mocked
+arm: the measurement that justifies a change is an **unmocked** editor invocation
+where the surface choice is the model's own. That run is the natural companion to
+the live end-to-end run already queued as priority 1.
+
+
 **Fix direction:** after SV-6, give the RHO optimizer surface-history awareness
 (which surfaces prior candidates already touched, and how those fared), then decide
 whether to add a tools artifact class. Not a prompt-wording fix.
@@ -1555,7 +1649,7 @@ Capability status against the needs below:
 | Full request + response body, per call, correlated to `(candidate, task, rollout, phase)` | all | **DONE 2026-08-21.** `core/correlation.py` provides a `contextvars` scope and all four adapter `_litellm_completion` wrappers now emit `X-AE-*`. Verified through the running proxy from a real adapter: full correlation captured, headers stripped before upstream, `Authorization` redacted |
 | Verbatim **tool results** as the model saw them | SV-7, SV-8, SV-10 | available in captured request bodies |
 | Response `id` and `x-litellm-cache-key` | cache verification (U-1 regression guard) | **done** — captured verbatim per call |
-| `list_artifacts` roster offered vs artifact staged | SV-8 | available in captured bodies |
+| `list_artifacts` roster offered vs artifact staged | SV-8 | **DONE 2026-08-21** — captured from a real `CugaAgent` editor run: the turn-2 body carries the literal four-surface `writable` roster. See SV-8's "Proxy verification" section |
 | Both slot payloads within one judge request | SV-7 | available in captured bodies |
 | **Which harness version is the subject of every analyzer call** | SV-11 verification | available in captured bodies |
 | **`list_parents` payload as delivered** (now to confirm mechanism/severity are *present*) | SV-10 regression guard — the fix is proven offline, so this is confirmation, not closure | available in captured bodies |
@@ -1565,9 +1659,15 @@ Remaining work before SV-7/SV-8/SV-11 can actually be *closed* with this tool:
 
 1. Emit `X-AE-Candidate/Task/Rollout/Phase` from the rollout and judge call sites.
    Without them a capture is a flat HTTP log and cannot be grouped per candidate.
-2. Confirm CUGA has no internally-configured client that bypasses `HTTPS_PROXY`.
-   Regular proxy mode makes complete capture *possible*; it does not by itself
-   establish that every call was captured.
+2. ~~Confirm CUGA has no internally-configured client that bypasses
+   `HTTPS_PROXY`.~~ **Answered 2026-08-21 for the editor path.** A real
+   `CugaAgent` editor invocation produced three captured `/chat/completions`
+   flows, so CUGA's internal client honours `HTTPS_PROXY` and regular proxy mode
+   does capture CUGA-internal traffic. Two caveats that survive: this covers the
+   editor agent specifically, not yet every CUGA subagent a full rollout
+   instantiates; and CUGA-internal flows arrive **unlabelled** (`X-AE-*` comes
+   from our LiteLLM wrappers, which the editor bypasses by design), so
+   editor-traffic analysis must correlate by timestamp and body content.
 
 Two rows were removed as no longer proxy needs:
 

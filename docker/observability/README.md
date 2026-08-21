@@ -124,5 +124,10 @@ interactive debugging — mitmproxy alone covers that.
   keep package installs and telemetry out of the capture. A new provider whose
   host does not match will be proxied but **not captured** — add the hint.
 - JSONL bodies are capped at 256 KiB; the full body is still in `flows.mitm`.
-- Whether CUGA has an internal client that ignores `HTTPS_PROXY` is **not yet
-  verified**. Regular mode makes complete capture *possible*, not *proven*.
+- **CUGA-internal calls ARE captured** (verified 2026-08-21). A real `CugaAgent`
+  editor invocation produced three captured `/chat/completions` flows, so CUGA's
+  internal client honours `HTTPS_PROXY`. Two limits on that result: it covers the
+  editor agent, not yet every subagent a full rollout instantiates; and those
+  flows carry **no `X-AE-*` labels**, because correlation headers come from our
+  own LiteLLM wrappers and the editor goes through `CugaAgent` by design. Group
+  editor traffic by timestamp and body content, not by label.

@@ -1,472 +1,348 @@
 # Implemented Pipeline Map
 
-**Verified against the codebase on 2026-08-20** (branch `dev7`, last commit
-`8d48a8f` with the SV-2/SV-3/SV-5/SV-8/SV-10/SV-11/SV-13 work uncommitted in the
-working tree, suite `1961 collected, 0 failed`). Verification covers the control
-flow, the file:line anchors and the issue statuses in this document; it was derived
-by reading and executing the code, not from the design docs, and it does not cover
-any live CUGA run. Where code and design doc disagree, the **code** is reported here
-and the divergence is flagged.
+**What this file is.** A map of what the code *actually does today*, with a
+`file:line` anchor on every claim so you can jump straight to the source and check
+it. It is deliberately not the target architecture — for that read
+`target-rho-parallel-gepa.md`. Where the two diverge, this file wins for questions
+of the form *"is that wired?"*.
 
-Every box carries its `file:line` so you can cross-reference directly. Line
-numbers drift as code moves — the accompanying grep anchor in each table is the
-durable reference.
+**Status of this map: audited 2026-08-21 against `dev7` by static analysis, covering
+reachability only.** Every **LIVE / GATED / TEST-ONLY / DEAD / ABSENT** marker below
+was derived by parsing the code — an AST call-graph over all of `src/`, plus AST
+import checks and targeted structural greps. A reachability claim means "a caller
+exists / does not exist", established statically. The exact commands are in §11 so
+you can re-run them.
+
+*Excluded from that audit:* no claim here was confirmed by executing a full live
+run — across all three mode **branches** and every one of the ten RHO **routes**,
+none was observed end to end. Static reachability is not runtime behaviour, so
+nothing in this document is evidence of a **behavioural gain**. Two exclusions
+worth naming because they are easy to over-read: entropy is not known to clear its
+evidence floors in practice, and no real model's artifact-surface *preference* has
+been measured (§10).
+
+Suite at time of writing: **2105 passed, 1 skipped, 0 failed**.
+
+---
 
 ## Legend
 
-| Colour | Meaning |
+Used in every diagram and table below.
+
+| Marker | Meaning |
 | --- | --- |
-| 🟩 green | Implemented **and** wired into a real run |
-| 🟦 blue | Implemented, wired, but semantics disputed / under active repair |
-| 🟨 yellow | Partially implemented — capability exists, never exercised in practice |
-| 🟥 red | **Not wired** — code exists but no production caller, or hardcoded stub |
-| ⬜ grey | Formula / annotation, not an execution step |
+| **LIVE** | Reachable from a production entry point (`scripts/run_evolution.py`) and executes |
+| **GATED** | Implemented and reachable, but off under the default profile |
+| **TEST-ONLY** | Implemented, exercised by tests, **no** production caller |
+| **DEAD** | Defined, zero callers anywhere in `src/` |
+| **ABSENT** | Not implemented at all |
+
+A note on why `TEST-ONLY` and `DEAD` are separated: a green test suite proves code
+*runs*, never that it runs *in production*. Across all 2105 passing cases, several
+**modules** listed in §8 are fully tested and still unreachable on the live path —
+`core/merge.py` and `core/parallel.py` are the two largest.
 
 ---
 
-## 0. Correction to a common premise
+## 1. The production spine
 
-`select_champion` is **not** part of the genetic stage. It lives at
-`core/pool.py:577` and has exactly three callers, none inside the genetic loop:
-
-```
-core/orchestrator.py:2160   SequentialGepaRunner.run()   <- NOT used by run_evolution.py
-pipeline.py:606             champion_version()           <- reporting
-pipeline.py:614             export_pool()                <- writes champion.json
-```
-
-It is a **post-hoc reporting/export selector over the whole pool**, shared by all
-three modes. The genetic loop never consults it; `run_round` never calls it.
-`rounds.py` is explicit: *"Rank orders the report and picks a champion; it never
-decides survival."*
-
-**Consequence:** champion defects change **which harness you export and carry into
-the next run** via `--harness`, not who survives a round. In a chained multi-run
-experiment that error compounds.
-
----
-
-## 1. Three modes, one code path
-
-`core/rho/rounds.py:69`
-
-```python
-PHASES: dict[str, tuple[str, ...]] = {
-  "rho":         _RHO_PHASES,                              # 10 phases
-  "genetic":     ("genetic_iterations",),                  # legacy GEPA loop only
-  "rho-genetic": _RHO_PHASES + ("genetic_iterations",),    # RHO then genetic
-}
-```
+The one path a real run takes. Everything else in this document hangs off it.
 
 ```mermaid
 flowchart TB
-    CLI["scripts/run_evolution.py<br/>--mode {rho | genetic | rho-genetic}"]
+    CLI["scripts/run_evolution.py<br/>--mode, --profile, --iterations"]:::live
+    BLS["pipeline.build_live_stack<br/>pipeline.py:1199"]:::live
+    BOS["pipeline.build_offline_stack<br/>pipeline.py:1038"]:::live
+    RC["config.resolve_profile<br/>core/config.py — reads os.environ"]:::live
+    STACK["pipeline.EvolutionStack<br/>pipeline.py:568"]:::live
+    RUNNER["core.orchestrator.SequentialGepaRunner<br/>orchestrator.py:1022<br/><b>the production runner</b>"]:::live
+    ITER["EvolutionStack.run_iterations<br/>pipeline.py:691"]:::live
+    ATT["SequentialGepaRunner.run_attempt<br/>orchestrator.py:2383"]:::live
 
-    CLI -->|"mode != genetic"| RR["core/rho/rounds.py:335 run_rounds()<br/>-> :348 run_round()"]
-    CLI -->|"mode == genetic<br/>run_evolution.py:1149"| GEN["pipeline.py:539<br/>stack.run_iterations(n)"]
+    ORCH["core.orchestrator.Orchestrator<br/>orchestrator.py:208<br/>.run_iteration orchestrator.py:510"]:::testonly
 
-    RR --> P1_10["RHO phases 1..10"]
-    P1_10 -->|"only if 'genetic_iterations' in phases"| GHOOK["_run_genetic()<br/>rounds.py:740"]
-    GHOOK -->|"hooks.run_genetic(coreset_tasks, iters)<br/>pipeline.py:1372"| GEN
+    CLI --> BLS & BOS
+    BLS --> RC
+    BOS --> RC
+    RC --> STACK
+    STACK --> RUNNER
+    STACK --> ITER
+    ITER --> ATT
+    ORCH -.->|"zero src callers"| RUNNER
 
-    GEN --> POOL[("PersistentPool<br/>core/pool.py")]
-    P1_10 --> POOL
-    POOL --> EXPORT["pipeline.py:614 export_pool()<br/>-> pool.py:577 select_champion()"]
-    EXPORT --> NEXT["champion.json<br/>--harness for the NEXT run"]
-
-    style RR fill:#d6eaff
-    style GEN fill:#ffe9cc
-    style POOL fill:#e8ffe8
-    style EXPORT fill:#d6eaff
+    classDef live fill:#0b6,stroke:#053,color:#fff
+    classDef testonly fill:#fd7,stroke:#a70,color:#000
 ```
 
-**Key wiring fact:** the genetic phase is not a reimplementation.
-`pipeline.py:1385` narrows `stack.tasks` to the coreset, calls the *same*
-`run_iterations`, and restores it in `finally` — *"byte-for-byte the loop that
-produced the measured baseline."*
+**The `Orchestrator` / `SequentialGepaRunner` split matters and is easy to trip
+over.** `Orchestrator.run_iteration` (`orchestrator.py:510`) has **zero callers in
+`src/`**. `SequentialGepaRunner` is what both stack builders construct
+(`pipeline.py:1140`, `pipeline.py:1333`). Reading `run_iteration` to understand a
+live run will mislead you.
 
 ---
 
-## 2. RHO stage — 10 phases
+## 2. Modes and phases
 
-```mermaid
-flowchart TB
-    subgraph RHO["RHO ROUND — core/rho/rounds.py:348 run_round()"]
-      direction TB
-      H1["<b>P1 history_load</b><br/>hooks.load_history()<br/>core/rho/history.py"]
-      H2["<b>P2 trajectory_comprehension</b><br/>hooks.comprehend(record)<br/>adapters/cuga_rho_comprehender.py"]
-      H3["<b>P3 difficulty_fingerprint</b><br/>hooks.judge(record, summary)<br/>adapters/cuga_rho_judge.py<br/><i>paper Listing 2</i>"]
-      H4["<b>P4 coreset_selection</b><br/>core/rho/coreset.py:197 select_coreset()"]
-      H5["<b>P5 group_rollouts</b><br/>k x G on INCUMBENT<br/>rounds.py:622 _rollout_grid()"]
-      H6["<b>P6 group_diagnosis</b><br/>hooks.diagnose(task, traces)<br/>adapters/cuga_rho_diagnoser.py<br/><i>paper Listing 3</i>"]
-      H7["<b>P7 candidate_proposal</b><br/>N independent invocations<br/>adapters/cuga_rho_optimizer.py<br/><i>paper Listing 4</i>"]
-      H8["<b>P8 candidate_rollouts</b><br/>k x R per candidate"]
-      H9["<b>P9 preference_judging</b><br/>compare_symmetric()<br/>adapters/cuga_preference_judge.py<br/><i>paper Listing 5</i>"]
-      H10["<b>P10 pool_commit</b><br/><b>ALL N committed, never best-of-N</b>"]
-      H1-->H2-->H3-->H4-->H5-->H6-->H7-->H8-->H9-->H10
-    end
+Modes are data, not branches: `PHASES` in `core/rho/rounds.py` maps a mode name to
+an ordered phase tuple, and `phases_for(mode)` (`rounds.py:76`) resolves it.
 
-    H4 -.-> F4["<b>coreset.py:124</b><br/>normalized = max(difficulty/MAX_DIFFICULTY, score_floor)<br/>quality = normalized ** theta<br/>selector: dpp | difficulty_rank | random"]
-    H5 -.-> F5["<b>SV-9 CLOSED</b> rounds.py:610 _answered()<br/>ANSWERED_TRACE_STATUSES gate<br/>crashed status='error' traces create NO cell"]
-    H9 -.-> F9["<b>cuga_preference_judge.py:591</b><br/>score = (fwd - rev)/2<br/>position_bias = (fwd + rev)/2<br/><b>2 judge calls per pair</b>"]
-    H10 -.-> F10["<b>pipeline.py:1491</b> _record_pool_score<br/>clamp(value, 0, 1)<br/>severity/confidence omitted -> default 1.0"]
-
-    style H10 fill:#e8ffe8
-    style F5 fill:#e8ffe8
-    style F4 fill:#f0f0f0
-    style F9 fill:#f0f0f0
-    style F10 fill:#f0f0f0
-```
-
-### Phase-to-file table
-
-| Phase | Anchor | Hook | Implementation | Paper | Status |
-| --- | --- | --- | --- | --- | --- |
-| 1 history_load | `rounds.py` `history_load` | `load_history` | `core/rho/history.py` | — | 🟩 |
-| 2 trajectory_comprehension | `comprehend(` | `comprehend` | `adapters/cuga_rho_comprehender.py` | — | 🟩 |
-| 3 difficulty_fingerprint | `hooks.judge(` | `judge` | `adapters/cuga_rho_judge.py` | Listing 2 | 🟩 |
-| 4 coreset_selection | `coreset.py:197` | — (core) | `core/rho/coreset.py` | §4.1 | 🟩 |
-| 5 group_rollouts | `rounds.py:622` | `rollout` | `adapters/cuga_adapter.py` | Listing 1 | 🟩 |
-| 6 group_diagnosis | `diagnose(` | `diagnose` | `adapters/cuga_rho_diagnoser.py` | Listing 3 | 🟩 |
-| 7 candidate_proposal | `propose(` | `propose` | `adapters/cuga_rho_optimizer.py` | Listing 4 | 🟨 SV-8 |
-| 8 candidate_rollouts | `rounds.py:622` | `rollout` | same adapter, `R` per task | — | 🟩 |
-| 9 preference_judging | `pipeline.py:1410` | `compare` | `cuga_preference_judge.compare_symmetric` | Listing 5 | 🟦 SV-7 |
-| 10 pool_commit | `pipeline.py:1332` | `commit` | `core/pool.py:378 record_score` | Alg. 1 | 🟩 |
-
----
-
-## 3. Genetic stage — the legacy GEPA loop
-
-Lifecycle per `orchestrator.py:509 run_iteration`:
-
-```
-observe -> build_issues -> select_issues -> select_parent -> propose_edits
-        -> validate -> commit_to_pool
-```
-
-```mermaid
-flowchart TB
-    subgraph GENETIC["GENETIC — pipeline.py:539 -> orchestrator.py:509 run_iteration"]
-      direction TB
-      G1["<b>observe</b> orchestrator.py:1304<br/>rollouts per task"]
-      G2["<b>build_issues</b> :1427<br/>core/issues.py — trace-backed Issue"]
-      G3["<b>select_issues</b> :1623 DPP<br/>quality = cross-candidate score VARIANCE"]
-      G4["<b>select_parent</b> :1632<br/>pool.py:504 parent_frequencies()"]
-      G5["<b>propose_edits</b> :1683<br/>core/editor.py -> adapters/cuga_editor.py"]
-      G6["<b>validate</b> :478 _validate<br/>origin + worked + regression probes"]
-      G7["<b>commit_to_pool</b><br/>only if accepted"]
-      G1-->G2-->G3-->G4-->G5-->G6-->G7
-    end
-
-    G3 -.-> FG3["<b>coreset.py:11-13 WARNING</b><br/>RHO quality = judge difficulty<br/>GENETIC quality = score variance<br/><b>'Those two must not be unified'</b>"]
-    G3 -.-> SV12["<b>SV-12 OPEN</b><br/>entropy starved: needs >=3 comparable<br/>candidates per cell; blocked by the placeholder<br/>mechanism cluster id, not by SV-11"]
-    G4 -.-> FG4["<b>pool.py:504</b> frequency(c) = SUM over won (t,m)<br/>of severity x confidence<br/>both inert 1.0 => counts cells won<br/>needs rollout_count >= min_comparable_rollouts"]
-    G5 -.-> SV10["<b>SV-10 CLOSED 2026-08-20</b><br/>parent faults now routed to the editor<br/>ParentContext.issues from build_issues,<br/>NOT from the lossy score_summary"]
-    G6 -.-> FG6["<b>orchestrator.py:2043</b><br/>accept iff weighted_net_gain > net_gain_threshold (0.0)<br/>+ protected floors + retry budget<br/><b>SV-6 CLOSED:</b> retry budget now actually fires"]
-
-    style FG3 fill:#f0f0f0
-    style FG4 fill:#f0f0f0
-    style FG6 fill:#f0f0f0
-    style SV10 fill:#d4f4d4
-    style SV12 fill:#ffe6e6
-```
-
-**Two different quality functions, deliberately.** `coreset.py:11-13` is explicit:
-RHO's DPP quality is *judge-assigned difficulty*; genetic issue-selection quality
-is *cross-candidate score variance*. They answer different questions and must not
-be merged. This is also why `run_genetic` receives **coreset tasks only**:
-variance needs a populated `(task, mechanism)` cell, and after a RHO round cells
-exist only for the coreset. Off-coreset variance is *undefined*, not low.
-
----
-
-## 4. The scoring tensor and every selection formula
-
-```mermaid
-flowchart TB
-    subgraph CELL["ScoreCell — core/pool.py:90"]
-      C1["scores: list[float] in [0,1]<br/>provenance: list[ScoreProvenance] (pool.py:53)"]
-      C2["mean = sum(scores)/len(scores)  (0.0 if empty)<br/>severity = mean(p.severity)<br/>confidence = mean(p.confidence)"]
-      C3["<b>weighted_score() = mean x severity x confidence</b><br/>pool.py:140"]
-      C1-->C2-->C3
-    end
-
-    C3 --> INERT["<b>SV-1 RECLASSIFIED</b><br/>NO caller in src/ ever passes severity= or confidence=<br/>all 4 sites omit them: orchestrator.py:342, :1507, :1886, pipeline.py:1507<br/>frozen dataclass, no replace() path<br/><b>=> weighted_score() == mean, always</b>"]
-
-    C3 --> OUT["<b>_champion_outcome</b> pool.py<br/>mean of per-task mean weighted scores<br/>REPORTED ONLY since SV-2 — does not rank"]
-    C3 --> PF["<b>parent_frequencies</b> pool.py:504"]
-    C3 --> PAR["<b>pareto_frontier</b> :485 / <b>dominates</b> :462"]
-
-    OUT --> AGG
-    COV["<b>_champion_coverage</b> pool.py:570<br/>total = _observed_cells() :554<br/>coverage = |entry cells &cap; total| / |total|"] --> AGG
-    STAB["<b>stability = 1.0</b> pool.py:657<br/>HARDCODED"] --> AGG
-    RISK["<b>regression_risk = 0.0</b> pool.py:658<br/>HARDCODED"] --> AGG
-
-    AGG["<b>select_champion</b> pool.py<br/>RANKS PAIRWISE over comparable_cells (SV-2)<br/>king-of-the-hill, insertion order<br/>aggregate computed but REPORTED ONLY"]
-
-    AGG --> EFF["<b>EFFECTIVE rule since 2026-08-20</b><br/>rank = pairwise comparison on SHARED cells<br/>all four weights are non-selecting<br/>coverage acts only as the eligibility floor"]
-
-    style INERT fill:#ffe6e6
-    style STAB fill:#ffdddd
-    style RISK fill:#ffdddd
-    style EFF fill:#ffdddd
-    style C3 fill:#f0f0f0
-```
-
-### Eligibility gates applied BEFORE ranking — `pool.py:577`
-
-```python
-# 1. protected floors
-if entry.candidate_id in protected_floor_violations:  continue
-
-# 2. SV-4 RHO pairwise gate — ACTIVE BY DEFAULT
-if gate_applied and not entry.is_base:
-    if entry.preference is None or entry.preference <= 0.0:
-        disqualified.add(entry.candidate_id); continue
-
-# 3. coverage floor (default 0.0 = inactive)
-if coverage < min_coverage_fraction:                  continue
-
-if not scored: raise ValueError("no eligible candidates for champion selection")
-
-# 4. SV-2 ranking — PAIRWISE, not a sort on `aggregate`
-champion_id = order[0]                      # insertion order, base first
-for challenger_id in order[1:]:
-    verdict = self._pairwise_outcome_preference(challenger_id, champion_id)
-    if verdict > 0: champion_id = challenger_id   # better on SHARED cells only
-    # tie / loss / no overlap -> incumbent holds
-```
-
-**SV-4 gate semantics** (`config.py:146` `experimental_candidate_promotion=False`):
-
-- **Strict `> 0`** — a measured tie is not evidence of improvement.
-- **`preference is None` disqualifies** — no verdict means no evidence.
-- **Base is exempt** — it is the comparison subject, and gating it would raise
-  `ValueError` whenever nothing improved.
-- **Promotion only** — pool membership untouched; all N candidates retained.
-- `--experimental-candidate-promotion` disables it for an ablation arm.
-
-### Where the preference score goes — SV-4 CLOSED
-
-```mermaid
-flowchart LR
-    J["cuga_preference_judge.py:591<br/>compare_symmetric()<br/>2 judge calls/pair"]
-    J --> CE["CandidateEvidence.mean_preference"]
-    CE --> CM["pipeline.py:1332 commit()<br/>-> pool.py:349 record_preference()"]
-    CM --> PE["PoolEntry.preference"]
-    PE --> GATE["pool.py:577 select_champion()<br/><b>ELIGIBILITY GATE</b>"]
-    GATE --> CR["ChampionReport.preference<br/>.preference_gate_applied (pool.py:288)"]
-    J --> RS["RoundSummary.preference_mean<br/>rounds.py:306"]
-
-    style GATE fill:#e8ffe8
-    style CM fill:#e8ffe8
-```
-
-The paper's `S_j` now gates promotion. Judge wall-time is no longer spent on a
-signal that only reached the report.
-
----
-
-## 5. Wired vs NOT wired — verified by grep
-
-```mermaid
-flowchart LR
-    subgraph WIRED["🟩 WIRED (reachable in a real run)"]
-      W1["core/rho/* — all 10 phases"]
-      W2["core/pool.py — record_score, record_preference,<br/>outcome, coverage, parent_frequencies,<br/>pareto_frontier, dominates, select_champion"]
-      W3["core/entropy.py — PROTECTED, untouched"]
-      W4["core/clustering.py + embeddings.py — coreset DPP"]
-      W5["core/issues.py, blame.py, editor.py, evaluation.py"]
-      W6["core/parallel.py + parallel_analysis.py"]
-      W7["core/memory.py EditMemory — SV-6 fix<br/>pipeline.py:825, :1013"]
-      W8["benchmarks/cuga_process_pool.py — worker recycling"]
-      W9["benchmarks/cleanup.py — --cleanup-on-exit"]
-    end
-
-    subgraph DEAD["🟥 NOT WIRED (no production caller)"]
-      D1["<b>core/merge.py</b> (393 L) = CROSSOVER<br/>plan_merge, compute_diff, ConflictReport,<br/>merge_respects_protected_floors<br/>only importer: tests/test_merge.py:8"]
-      D2["<b>pool.prune()</b> pool.py:691<br/>only tests/test_pool.py:302,312,319"]
-      D3["<b>stability / regression_risk</b> = SV-5<br/>specified in selection-algorithms.md:330-331<br/>hardcoded pool.py:657-658"]
-      D4["<b>SequentialGepaRunner.run()</b> orchestrator.py:2160<br/>zero callers; run_evolution.py:1149 uses run_iterations"]
-      D5["<b>ScoreProvenance.severity/.confidence</b> = SV-1<br/>never supplied by any production site"]
-      D6["<b>X-AE-* correlation headers</b><br/>addon reads them; no caller emits them yet"]
-    end
-
-    style DEAD fill:#ffe6e6
-    style WIRED fill:#e8ffe8
-```
-
-### Crossover is not implemented in any runnable path
-
-`AGENTS.md` states crossover is *"provenance-preserving deterministic merge by
-default."* `core/merge.py` implements exactly that. **Nothing in `src/` imports
-it.** Established by an import sweep across `src/`, `tests/` and `scripts/`,
-covering every reference to the module — its only importer is its own test:
-
-```bash
-grep -rn 'core\.merge' src/ tests/ scripts/ | grep -v 'core/merge.py'
-#  tests/test_merge.py:8   <- only importer
-```
-
-So the genetic stage is **mutation-only**. `donor_count: int = 2`
-(`orchestrator.py:957`) hands donors to an LLM editor as *context*
-(`orchestrator.py:1683 propose_edits` → `select_parents(k=donor_count+1)`); it
-does not run the deterministic merge planner.
-
----
-
-## 6. Severe-issue register mapped onto the pipeline
-
-Authoritative status: `docs/SEVERE-OPEN-ISSUES.md`.
-
-```mermaid
-flowchart TB
-    subgraph CLOSED["🟩 CLOSED 2026-08-19"]
-      S4["<b>SV-4</b> S_j > 0 gate active<br/>pool.py:577 + config.py:146<br/>tests/test_preference_gate.py (16)"]
-      S6["<b>SV-6</b> runner owns EditMemory<br/>pipeline.py:825,1013<br/>tests/test_runner_edit_memory.py (13)"]
-      S9["<b>SV-9</b> crashed traces excluded<br/>rounds.py:610 _answered()<br/>tests/test_crashed_rollout_exclusion.py (12)"]
-      S1["<b>SV-1</b> RECLASSIFIED — not a perverse<br/>gradient; severity is inert<br/>pool.py:140 docs only, no behaviour change"]
-    end
-
-    subgraph CLOSED2["🟩 CLOSED 2026-08-20"]
-      S2["<b>SV-2</b> ranking is pairwise over shared cells<br/>pool.py"]
-      S3["<b>SV-3</b> subsumed by SV-2<br/>coverage is now only the eligibility floor<br/>pool.py"]
-      S5["<b>SV-5</b> documentation<br/>terms stay inert, now labelled as such<br/>pool.py"]
-      S8["<b>SV-8</b> multi-surface base seeding shipped<br/>empty skills/memory/policies slots seeded<br/>pipeline.py, cuga_editor_state.py"]
-      S11["<b>SV-11</b> build_issues observes the SELECTED parent<br/>cost-neutral; production path is run_attempt<br/>tests/test_parent_observation.py"]
-      S10["<b>SV-10</b> parent faults routed via ParentContext.issues<br/>zero new rollouts; 3 parent draws -> 1<br/>editor.py, orchestrator.py"]
-    end
-
-    subgraph OFFLINE["🟦 OPEN — offline-fixable"]
-      S12["<b>SV-12</b> entropy structurally starved<br/>placeholder mechanism id, NOT an SV-10 consequence<br/>needs live-shaped tasks to demonstrate"]
-    end
-
-    subgraph GATED["🟨 OPEN — needs live proxy capture"]
-      S7["<b>SV-7</b> NARROWED to MEDIUM<br/>judge + grid EXONERATED<br/>tests/test_judge_slot_distinctness.py (5)<br/>only upstream materialization remains"]
-    end
-
-    S11 --> S10
-    S11 -.->|"placeholder cluster id<br/>still unresolved"| S12
-    S8 --> S7
-
-    style CLOSED fill:#e8ffe8
-    style CLOSED2 fill:#e8ffe8
-    style OFFLINE fill:#d6eaff
-    style GATED fill:#fff4cc
-```
-
-### The two ranking defects — both CLOSED 2026-08-20
-
-| # | Was | Now |
+| Mode | Phase sequence | Status |
 | --- | --- | --- |
-| **SV-2** | `outcome` averaged over **different task sets** — no shared-cell restriction, so dropping a hard task raised your own mean. base ran easy(0.9)+hard(0.1) → `0.500`; candA ran only easy(0.9) → `0.900`, **won by skipping the hard task** | Ranking compares candidates pairwise over `comparable_cells`. On the shared `{easy}` cell the two now **tie**, so base holds. `ChampionReport.comparable_cells` reports the shared-evidence count |
-| **SV-3** | `coverage` measured how much you *measured*, not how well; `cov 0.5→1.0` bought `+0.100` aggregate = `0.18` of outcome, 27% of the live weight | **Subsumed by SV-2.** No weight can flip a winner, so coverage-as-quality is not expressible. Coverage survives only as the enforced `champion_min_coverage_fraction` eligibility floor |
+| `genetic` | `("genetic_iterations",)` | **LIVE** |
+| `rho` | the 10 `_RHO_PHASES` | **LIVE** |
+| `rho-genetic` | `_RHO_PHASES + ("genetic_iterations",)` | **LIVE** |
 
-**SV-9 interacts with these correctly.** A crashed rollout creates *no cell* instead
-of bad evidence. Under the old scalar mean that shrank a candidate's own denominator;
-under pairwise comparison a missing cell simply leaves the pair non-comparable for
-that cell, which is the honest reading.
+```mermaid
+flowchart LR
+    subgraph RHO["_RHO_PHASES — core/rho/rounds.py, driven by run_round rounds.py:348"]
+        direction TB
+        P1["1 history_load<br/>hook: load_history"]:::live
+        P2["2 trajectory_comprehension<br/>cuga_rho_comprehender.py"]:::live
+        P3["3 difficulty_fingerprint<br/>cuga_rho_judge.py"]:::live
+        P4["4 coreset_selection<br/>core/rho/coreset.py:188"]:::live
+        P5["5 group_rollouts<br/>_rollout_grid rounds.py:622"]:::live
+        P6["6 group_diagnosis<br/>cuga_rho_diagnoser.py"]:::live
+        P7["7 candidate_proposal<br/>cuga_rho_optimizer.py"]:::live
+        P8["8 candidate_rollouts"]:::live
+        P9["9 preference_judging<br/>cuga_preference_judge.py"]:::live
+        P10["10 pool_commit<br/>_record_scores rounds.py:680"]:::live
+        P1-->P2-->P3-->P4-->P5-->P6-->P7-->P8-->P9-->P10
+    end
+    P10 -->|"mode rho-genetic only"| G["genetic_iterations<br/>_run_genetic rounds.py:740"]:::live
+    classDef live fill:#0b6,stroke:#053,color:#fff
+```
 
-**SV-1 correction to earlier drafts of this document.** Previous revisions listed
-"severity is per-candidate" and "perverse gradient" as live defects A and B. Both
-are **wrong in production**: `ScoreProvenance.severity` and `.confidence` are
-never supplied by any of the four construction sites, so they hold `1.0` and
-`weighted_score() == mean`. Two unrelated fields share the name `severity` —
-`CausalAnalysis.severity` **does** influence diagnosis and targeting; the
-`ScoreProvenance` one does not.
+**`core/rho/rounds.py` may not import `cuga`, `litellm`, or
+`agent_evolve.adapters`.** Every model call arrives as an injected callable on
+`RhoHooks` (`rounds.py:162`); `hooks.require(name)` (`rounds.py:251`) raises rather
+than silently skipping a phase. All 17 hooks are bound in one place —
+`pipeline.build_rho_hooks` (`pipeline.py:1478`) — which is the only module allowed
+to tie core to adapters.
 
 ---
 
-## 7. Paper-fidelity status of the prompts
-
-`docs/research/rho-paper-prompt-fidelity.md`.
+## 3. Genetic loop, as it actually executes
 
 ```mermaid
 flowchart TB
-    G1["🟩 GAP 1 — judge efficiency axis<br/>cuga_preference_judge.py"]
-    G2["🟩 GAP 2 — consistency is reliability<br/>cuga_rho_diagnoser.py severity 0.4 band"]
-    G3["🟩 GAP 3 — 4 named per-rollout findings<br/>cuga_rho_diagnoser.py"]
-    G4["🟩 GAP 4 — 'with fewer wasted steps'<br/>cuga_rho_optimizer.py"]
-    G5["🟨 GAP 5 OPEN — 1-call vs 2-call judge<br/>cost decision only"]
-    G6["🟩 GAP 6 CLOSED — was S5-1/SV-4<br/>S_j > 0 gate now active"]
-    G7["🟩 GAP 7 CLOSED = SV-8<br/>multi-surface seeding: skills/memory/policies"]
+    OBS["rollout_group<br/>observe the selected parent"]:::live
+    BI["build_issues<br/>orchestrator.py:1619"]:::live
+    ATTR["attribute analysis to writable artifacts<br/>orchestrator.py:1540-1614"]:::live
+    BLD["issues.build_issue<br/>core/issues.py:155<br/><b>write_set = attributed ∩ writable</b>"]:::live
+    SEL["select_issues -> HierarchicalDPPSelector<br/>orchestrator.py:2051, issues.py:337"]:::live
+    PAR["select_parent — frequency-proportional<br/>orchestrator.py:2060"]:::live
+    PROP["propose_edits<br/>orchestrator.py:2120"]:::live
+    ED["CugaEditorAgent.propose_edit<br/>adapters/cuga_editor.py:241"]:::live
+    VAL["validate<br/>orchestrator.py:2222"]:::live
+    POOL["pool.record_score<br/>core/pool.py:399"]:::live
+    RET["decide_retirement<br/>core/retirement.py:70"]:::live
 
-    G2 -.-> NOTE["<b>Coupling now BENIGN</b><br/>earlier revisions warned that raising<br/>severity would raise a candidate's outcome<br/>SV-1 shows ScoreProvenance.severity is inert<br/>=> diagnoser severity cannot reach the aggregate"]
+    OBS --> BI --> ATTR --> BLD --> SEL --> PAR --> PROP --> ED --> VAL --> POOL --> RET
+    BLD -.->|"empty write_set<br/>-> issue dropped"| DROP["no issue built<br/>issues.py:187"]:::gated
 
-    style G1 fill:#e8ffe8
-    style G2 fill:#e8ffe8
-    style G3 fill:#e8ffe8
-    style G4 fill:#e8ffe8
-    style G6 fill:#e8ffe8
-    style G5 fill:#fff4cc
-    style G7 fill:#e8ffe8
-    style NOTE fill:#f0f0f0
+    classDef live fill:#0b6,stroke:#053,color:#fff
+    classDef gated fill:#89f,stroke:#036,color:#000
 ```
 
-**GAP 7 / SV-8 root cause, at code level.** `cuga_rho_optimizer.py:51` sets
-`CREATABLE_PREFIX = "skills/generated-"` and the prompt documents all four
-surfaces, so the *capability* exists. The blocker is upstream: `list_artifacts()`
-exposes only **existing** artifacts, and a bare live
-`HarnessVersion(instructions=...)` has empty `skills`, `memory`, `policies` — so
-the optimizer is usually offered `["instructions"]` and nothing else. The offline
-stack has multiple surfaces and therefore **does not reproduce** the live roster
-condition. Correct first fix is multi-surface base seeding, then surface-history
-awareness. There is also no executable-tool artifact class;
-`cuga_editor_tools.py` is the *editor's own* toolset, not an evolvable surface.
+`issues.py:186` is the single most consequential line for SV-8:
 
-`_CANDIDATE_FRAMINGS: tuple[str, ...] = ("",)` in `cuga_rho_optimizer.py` keeps
-the N proposals prompt-identical and independent.
+```python
+write_set = tuple(sorted(aid for aid in attributed if aid in writable_ids))
+if not write_set:
+    return None          # issues.py:187 — no writable attribution, no issue
+```
+
+The offered surface is therefore *analyzer blame ∩ adapter-declared writable*, not
+simply whatever the harness contains.
 
 ---
 
-## 8. Operational subsystems (not in the algorithm, required to run it)
+## 4. Artifact surfaces — seeded, offered, delivered
 
-Built in response to the 90 GB memory-exhaustion incident
-(`feedback/rho-memory-leak-report.md`) and the need for live interception.
+All four surfaces are **LIVE** as of 2026-08-21, verified at the LLM layer through
+the interception proxy (see `docs/SEVERE-OPEN-ISSUES.md`, SV-8 "Proxy
+verification").
+
+```mermaid
+flowchart LR
+    HV["HarnessVersion<br/>benchmarks/cuga_executor.py:309<br/>VANILLA_HARNESS :489"]:::live
+    HA["pipeline._harness_artifacts<br/>pipeline.py:1395<br/>seeds one EMPTY slot per surface"]:::live
+    REG["CugaAdapter.register_candidate<br/>adapters/cuga_adapter.py:68"]:::live
+    INV["artifact_inventory<br/>-> 4 writable descriptors"]:::live
+    TOOL["list_artifacts tool<br/>cuga_editor_tools.py:118"]:::live
+    APPLY["apply_structured_edits<br/>adapters/cuga_adapter.py"]:::live
+    HC["_harness_config<br/>rollout payload groups"]:::live
+    MAT["materialize_harness<br/>cuga_wrapper/__init__.py:304<br/>writes skills/&lt;n&gt;/SKILL.md"]:::live
+
+    HV --> HA --> REG --> INV --> TOOL --> APPLY --> HC --> MAT
+    classDef live fill:#0b6,stroke:#053,color:#fff
+```
+
+| Surface | Concrete id | Creatable prefix | Delivery route |
+| --- | --- | --- | --- |
+| `instructions` | `instructions` | — (scalar, always present) | assembled into context **every turn**, unconditional |
+| `skills/<name>` | `skills/generated-evolved` | `skills/generated-` | body enters context only if the model calls `load_skill`; first line becomes the selection `description:` |
+| `policies/<name>` | `policies/generated-evolved` | `policies/generated-` | loaded up front, applied only when its intent trigger matches |
+| `memory/<name>` | `memory/generated-evolved` | `memory/generated-` | retrievable facts; does **not** govern behaviour |
+
+Prefixes are `DEFAULT_CREATABLE_PREFIXES` at
+`adapters/cuga_editor_state.py:58`; the surface-routing guidance the editor is
+given lives in `EDITOR_INSTRUCTIONS`, `adapters/cuga_editor_skills.py:25`.
+
+**Residual gap (not a wiring defect).** The concrete ids for the three group
+surfaces contain the slot name `generated-evolved`, which appears **nowhere** in
+the turn-1 request; only `instructions` is nameable before `list_artifacts` is
+called. That asymmetry is the surviving explanation for the historical
+"only `instructions`" observation. Full detail in `SEVERE-OPEN-ISSUES.md` SV-8.
+
+---
+
+## 5. LLM call topology and observability
+
+**This is the section most likely to surprise you.** There are three distinct ways
+the system reaches a model, and they differ in whether the call can be correlated.
 
 ```mermaid
 flowchart TB
-    subgraph MEM["🟩 Memory-exhaustion fixes — tests/test_memory_leak_fixes.py (19)"]
-      M1["<b>Worker recycling</b> benchmarks/cuga_process_pool.py<br/>DEFAULT_MAX_ROLLOUTS_PER_WORKER = 25<br/>_recycle() replaces process<br/>CLI --max-rollouts-per-worker"]
-      M2["<b>Agent teardown</b> adapters/cuga_workspace_agent.py:301-313<br/>await aclose() in finally; del agent; gc.collect()<br/>same in adapters/cuga_editor.py"]
-      M3["<b>Bounded judge context</b> adapters/cuga_preference_judge.py<br/>_MAX_PAYLOAD_CHARS=2048, _MAX_RENDERED_EVENTS=120<br/>30 ev x 4 MB: 126 MB -> 63 KB (1954x)"]
-      M4["<b>Out-of-heap cleanup</b> benchmarks/cleanup.py<br/>--cleanup-on-exit; dry-run by default<br/>Playwright-path processes only, never bare firefox"]
+    subgraph A["Route 1 — direct LiteLLM wrapper — EMITS X-AE-* headers"]
+        A1["cuga_analyzer.py:740"]:::live
+        A2["cuga_mechanism_adjudicator.py:87"]:::live
+        A3["cuga_rho_comprehender.py:389"]:::live
+        A4["cuga_rho_judge.py:499"]:::live
+    end
+    subgraph B["Route 2 — run_workspace_agent -> CugaAgent — NO headers"]
+        B1["cuga_preference_judge.py:584"]:::gap
+        B2["cuga_rho_optimizer.py:720"]:::gap
+        B3["cuga_workspace_agent.py:279<br/>constructs CugaAgent"]:::gap
+    end
+    subgraph C["Route 3 — CugaEditorAgent -> CugaAgent — NO headers"]
+        C1["cuga_editor.py:439"]:::gap
     end
 
-    subgraph PROXY["🟩 Interactive proxy — docker/observability/"]
-      P1["proxy.sh — up / run / tail / env / down"]
-      P2["compose.yml — mitmproxy 11.0.0<br/>proxy 127.0.0.1:8082, UI 127.0.0.1:8083"]
-      P3["addons/correlate.py — correlation, Authorization<br/>redaction, X-AE-* stripping, hot-reload mocks"]
-      P4["mocks/rules.json (ignored)<br/>mocks/rules.example.json (committed)"]
-      P5["🟥 X-AE-Candidate / -Task / -Rollout / -Phase / -Run<br/>addon reads them; NO caller emits them yet"]
-    end
+    HDR["core/correlation.py:92<br/>correlation_headers()"]:::live
+    SCOPE["core/correlation.py:103<br/>correlation_scope()<br/><b>ZERO callers in src/ and scripts/</b>"]:::dead
+    PROXY["mitmproxy interceptor<br/>docker/observability/<br/>captures ALL routes"]:::live
 
-    style MEM fill:#e8ffe8
-    style PROXY fill:#e8ffe8
-    style P5 fill:#ffe6e6
+    A1 & A2 & A3 & A4 --> HDR
+    SCOPE -.->|"never set in production<br/>=> headers render empty"| HDR
+    A1 & A2 & A3 & A4 --> PROXY
+    B1 & B2 --> B3 --> PROXY
+    C1 --> PROXY
+
+    classDef live fill:#0b6,stroke:#053,color:#fff
+    classDef gap fill:#fd7,stroke:#a70,color:#000
+    classDef dead fill:#e55,stroke:#900,color:#fff
 ```
 
-**Rollout wrapper was never the agent leak.** `cuga_wrapper/__init__.py:2084`
-already had `asyncio.run(agent.aclose())` in a `finally` before this work. The
-worker path leaked by *reusing one wrapper across every rollout*, which is what
-`--max-rollouts-per-worker` addresses. Note that site swallows exceptions
-(`except Exception: pass`) — defensible, since cleanup must not mask rollout
-evidence, but a consistently failing `aclose()` there would be invisible.
+| Fact | Status | Anchor |
+| --- | --- | --- |
+| CUGA-internal calls **are** captured by the proxy | **verified 2026-08-21** | 3 flows from one editor run; `docker/observability/README.md` |
+| 4 adapters emit `X-AE-*` on the wire | **LIVE** | the four line refs above |
+| `correlation_scope` ever *sets* a label in production | **DEAD** | 0 callers in `src/`, 0 in `scripts/`, 12 in `tests/` |
+| Judge / optimizer / editor calls carry labels | **ABSENT** by construction | routes 2 and 3 bypass the wrappers |
 
-Current safe live-run shape:
+**Consequence to hold onto.** Correlation is only half-wired: the *emit* side
+exists, the *set* side has no production caller, so today every captured flow is
+unlabelled and must be grouped by timestamp and body content. Claims elsewhere
+that correlation is "DONE" refer to the emit side only.
 
-```bash
-set -a && . ./.env && set +a
-rm -f .cuga/knowledge/.lock
-./docker/observability/proxy.sh up          # UI http://127.0.0.1:8083 (pw: agentevolve)
-./docker/observability/proxy.sh run -- python scripts/run_evolution.py --mode rho \
-  --max-workers 6 --isolation process \
-  --max-rollouts-per-worker 20 \
-  --cleanup-on-exit
+---
+
+## 6. Scoring, selection, retirement
+
+```mermaid
+flowchart TB
+    CELL["ScoreCell in the tensor<br/>core/pool.py — record_score :399"]:::live
+    DOM["dominates — pool.py:483"]:::live
+    PF["pareto_frontier — pool.py:506"]:::live
+    FREQ["parent_frequencies — pool.py:531"]:::live
+    CH["select_champion — pool.py:670<br/><b>pairwise over shared cells</b>"]:::live
+    RETIRE["retire — pool.py:867<br/>soft, evidence retained"]:::live
+    DEC["decide_retirement<br/>core/retirement.py:70"]:::live
+    FIN["resolve_final_candidate<br/>core/resolution.py:141"]:::live
+    PRUNE["prune — pool.py:926"]:::dead
+
+    CELL --> DOM --> PF --> CH
+    CELL --> FREQ
+    DEC --> RETIRE
+    CH --> FIN
+    PRUNE -.->|"ablation-only, 0 callers"| CELL
+
+    classDef live fill:#0b6,stroke:#053,color:#fff
+    classDef dead fill:#e55,stroke:#900,color:#fff
 ```
 
-`--max-workers 10` or fewer, never 24. `--cleanup-on-exit` is destructive by
-design: without it, cleanup only reports reclaimable resources.
+Two invariants that are load-bearing and non-obvious:
+
+- **Champion ranking is pairwise over the cells two candidates share**
+  (`pool.py:670`). The weighted aggregate is a *reported diagnostic*, not a
+  decision rule — mechanism-keyed pool cells would make the shared-cell
+  intersection empty and regress this **silently**.
+- **Retirement is soft** (`pool.py:867`). Score cells, lineage and the preference
+  record are all retained; only parent sampling, the frontier and champion
+  selection exclude a retired entry. `prune()` is ablation-only and has no caller.
+
+---
+
+## 7. Mechanism clustering and entropy
+
+```mermaid
+flowchart TB
+    EMB["embedder_for_config<br/>pipeline.py:174"]:::live
+    REG["cluster_registry_for_config<br/>pipeline.py:210"]:::live
+    CR["ClusterRegistry<br/>core/clustering.py:492"]:::live
+    MC["MechanismClusterer<br/>clustering.py:209 — .assign :311"]:::live
+    ADJ["CugaMechanismAdjudicator<br/>adapters/cuga_mechanism_adjudicator.py"]:::live
+    TRK["EntropyTracker<br/>core/entropy.py:98"]:::live
+    REC["_record_entropy_evidence<br/>orchestrator.py:1760"]:::live
+    AVAIL["entropy_availability<br/>orchestrator.py:1867<br/>-> EntropyAvailabilityReport :932"]:::live
+    ANCH["add_anchor — clustering.py:304"]:::dead
+    D1["cell_entropy :178"]:::dead
+    D2["top_entropy_cells :294"]:::dead
+    D3["entropy_weighted_with_freshness :257"]:::dead
+
+    EMB --> REG --> CR --> MC
+    MC -->|"cosine in [0.45,0.75) only"| ADJ
+    REC --> TRK --> AVAIL
+    ANCH -.-> MC
+    D1 & D2 & D3 -.->|"0 callers"| TRK
+
+    classDef live fill:#0b6,stroke:#053,color:#fff
+    classDef dead fill:#e55,stroke:#900,color:#fff
+```
+
+- Shipped band `[0.45, 0.75)` with `join_threshold = 0.75`
+  (`core/clustering.py` `DEFAULT_BAND_LOW` / `DEFAULT_BAND_HIGH` /
+  `DEFAULT_JOIN_THRESHOLD`). Cosine alone cannot separate analyzer paraphrase from
+  a genuinely different fault, so the dedup LLM is **load-bearing**, not a cost
+  optimisation.
+- Mechanism identity is **task-local by design**. Cross-task pooling is deferred;
+  `add_anchor` is dead *and* known not to work as built (anchors embed bare
+  mechanism text, observations embed mechanism + actor + artifacts).
+- **Live reads:** `.entropy()` (`:213`), `.classify()` (`:233`), `.all_cells()`
+  (`:274`). **Dead reads:** the three above.
+- Pool cells stay constant-keyed while tracker cells are mechanism-keyed — the two
+  structures need opposite key policies. See the long comment at
+  `orchestrator.py:1022+`.
+
+---
+
+## 8. Not wired — the honest list
+
+| Item | Where | Status | Why it matters |
+| --- | --- | --- | --- |
+| **Crossover / merge** | `core/merge.py` (393 lines) | **DEAD** — zero importers in `src/` | `plan_merge` (`:267`), `compute_diff` (`:69`) fully built and unreachable. Provenance-preserving merge is a target-architecture decision with no runnable path |
+| **Parallel batch execution** | `core/parallel.py`; branch at `orchestrator.py:638` | **TEST-ONLY** | `use_parallel_batch=True` exists only on `RESEARCH_PARALLEL`/`FULL_ABLATION` (`orchestrator.py:170`/`:178`), which are referenced **only by tests**. `config.py _PROFILES` independently lists `parallel_execution` as *deferred* |
+| **`Orchestrator.run_iteration`** | `orchestrator.py:510` | **TEST-ONLY** | zero `src/` callers; live path is `run_iterations` -> `run_attempt` |
+| **`correlation_scope`** | `core/correlation.py:103` | **DEAD in production** | headers render empty; see §5 |
+| **`pool.prune`** | `pool.py:926` | **DEAD** | intentional — ablation only |
+| **`add_anchor`** | `clustering.py:304` | **DEAD** | and defective as built |
+| **3 entropy read APIs** | `entropy.py:178/257/294` | **DEAD** | no consumer |
+| **`entropy_unavailable_reason`** | `orchestrator.py:1998` | **DEAD** | `entropy_availability` (`:1867`) has 2 callers; the per-task reason accessor has none |
+| **Executable-tool artifact class** | — | **ABSENT** | RHO Table 5's harness includes runnable scripts; no artifact type here has executable content |
+| **Checkpoint / counterfactual replay** | — | **ABSENT** | no adapter reports a valid checkpoint capability; replay must never be assumed |
+| **Cross-task mechanism identity** | — | **ABSENT, deferred** | needs a design decision, not a patch |
 
 ---
 
@@ -474,105 +350,138 @@ design: without it, cleanup only reports reclaimable resources.
 
 ```mermaid
 flowchart TB
-    START["scripts/run_evolution.py"] --> CFG["core/config.py ResolvedConfig<br/>alpha/beta/gamma/delta, k, G, N, R, rounds<br/>:146 experimental_candidate_promotion=False"]
-    CFG --> MODE{"--mode"}
+    subgraph ENTRY["Entry"]
+        CLI["scripts/run_evolution.py"]:::live
+    end
+    subgraph BUILD["Wiring — the only core↔adapter seam"]
+        P["pipeline.py<br/>build_live_stack :1199<br/>build_rho_hooks :1478"]:::live
+    end
+    subgraph CORE["core/ — agent-neutral, no cuga/litellm imports"]
+        R["rho/rounds.py:348"]:::live
+        O["orchestrator.py:1022"]:::live
+        PO["pool.py:320"]:::live
+        I["issues.py:155"]:::live
+        E["entropy.py:98"]:::live
+        C["clustering.py:492"]:::live
+        M["merge.py — UNWIRED"]:::dead
+        PA["parallel.py — TEST-ONLY"]:::testonly
+    end
+    subgraph AD["adapters/ — CUGA-facing"]
+        AN["cuga_analyzer.py"]:::live
+        ED["cuga_editor.py:241"]:::live
+        OPT["cuga_rho_optimizer.py"]:::live
+        JG["cuga_preference_judge.py"]:::live
+        WA["cuga_workspace_agent.py:279"]:::live
+    end
+    subgraph OBS["Observability"]
+        PX["docker/observability/<br/>mitmproxy + mock rules"]:::live
+        CO["core/correlation.py<br/>emit LIVE / scope DEAD"]:::gap
+    end
 
-    MODE -->|rho| RHO10
-    MODE -->|rho-genetic| RHO10
-    MODE -->|genetic| GLOOP
+    CLI --> P --> R & O
+    O --> PO & I & E
+    I --> C
+    O --> ED
+    R --> OPT & JG & AN
+    OPT & JG --> WA
+    AN & ED & OPT & JG --> PX
+    CO --> PX
 
-    RHO10["core/rho/rounds.py:348 run_round<br/>P1..P10"] --> COMMIT["P10 pipeline.py:1332 commit<br/>ALL N committed, never best-of-N"]
-    COMMIT --> POOL[("PersistentPool core/pool.py<br/>ScoreCell tensor (cand, task, mech)<br/>+ PoolEntry.preference")]
-    COMMIT -->|"rho-genetic only<br/>coreset tasks only"| GLOOP
-
-    GLOOP["orchestrator.py:509 run_iteration<br/>observe->issues->select->edit->validate"] --> POOL
-
-    POOL --> ENT["core/entropy.py<br/>cross-candidate variance<br/>PROTECTED FILE"]
-    ENT -.->|"feeds issue selection<br/>SV-12: starved"| GLOOP
-
-    POOL --> G1{"protected floors?"}
-    G1 -->|pass| G2{"SV-4 gate<br/>preference > 0?<br/>base exempt"}
-    G2 -->|pass| G3{"coverage floor?"}
-    G3 -->|pass| CH["pool.py pairwise rank over shared cells<br/>king-of-the-hill, insertion order<br/>aggregate reported but not used<br/><b>SV-2 / SV-3 fixed here</b>"]
-    G2 -->|"None or <= 0"| DQ[["disqualified"]]
-
-    CH --> EXP["pipeline.py:614 export_pool<br/>champion.json + candidate-*.json"]
-    EXP --> NEXT["--harness for the NEXT run<br/>defects compound across chained runs"]
-
-    XMERGE["core/merge.py CROSSOVER<br/>393 L, zero production callers"] -.->|NOT WIRED| GLOOP
-
-    style POOL fill:#e8ffe8
-    style COMMIT fill:#e8ffe8
-    style G2 fill:#e8ffe8
-    style CH fill:#d6eaff
-    style ENT fill:#d6eaff
-    style XMERGE fill:#ffe6e6
+    classDef live fill:#0b6,stroke:#053,color:#fff
+    classDef dead fill:#e55,stroke:#900,color:#fff
+    classDef testonly fill:#fd7,stroke:#a70,color:#000
+    classDef gap fill:#f9c,stroke:#a06,color:#000
 ```
 
 ---
 
-## 10. Summary — what to trust
+## 10. What to trust
 
-**🟩 Solid and wired.** All 10 RHO phases. The score tensor and its provenance
-discipline (`rollout_count==0` is not a zero; `rollout_seq` must be the next
-slot). Persistent-pool retention of all N candidates. The two-quality-function
-separation. Entropy. Coreset DPP with a documented quality-only fallback. The
-SV-4 pairwise acceptance gate. Crash-filtered RHO evidence (SV-9). Runner-owned
-edit memory with a live retry budget (SV-6). Worker recycling, agent teardown,
-and bounded judge context.
+**Trust as measured.** The 10 RHO phases and their hook bindings; the genetic
+attempt loop; four-surface seeding, offering and delivery; pairwise champion
+ranking; soft retirement; the dedup band and its live calibration; proxy
+interception including CUGA-internal calls.
 
-**🟩 Wired and settled.** `select_champion` ranking. Both former defects are
-closed: SV-2 (`outcome` averaged over different task sets) and SV-3 (`coverage`
-scored as quality) are gone because ranking is now a pairwise comparison over shared
-cells, with acceptance gated separately by SV-4. The weighted aggregate is still
-computed and reported, but it decides nothing. This is what selects the harness
-**exported and carried into the next run**.
+**Do not trust without a live run.** Any claim about *behavioural gain*. No
+end-to-end correlation-captured run has been performed. Entropy has been observed
+reporting `3/3 cells unavailable = 100% fallback (floor_unmet=3)` on an offline
+loop, so it is honest but not yet known to clear its floors in practice.
 
-**🟨 Partially implemented.** Multi-surface harness editing (SV-8 — capability
-present, roster starves it). Mechanism analysis of candidates (SV-11 — needs an
-observation-budget decision). Judge trajectory distinctness (SV-7 — judge and
-grid exonerated; only upstream materialization unresolved).
+**Treat as unmeasured.** Which artifact surface a real unmocked model *prefers*.
+The arm that captured the roster was mocked, so the staged surface was dictated by
+the mock rule, never chosen by a model.
 
-**🟥 Not wired at all.** `core/merge.py` — **crossover does not run**, despite
-being an architecture decision in `AGENTS.md`. Also `pool.prune`,
-`SequentialGepaRunner.run`, two of the four champion objectives (SV-5), the
-`ScoreProvenance` severity/confidence weights (SV-1), and `X-AE-*` correlation
-headers at call sites.
+### Recommended reading order for a change
 
-### Recommended order
-
-1. **SV-8** multi-surface base seeding — unblocks SV-7's remaining branch and is
-   a precondition for meaningful proposals. *Needs a decision on what to seed.*
-2. **SV-11** observation budget — parent-only is cost-neutral. *Needs a decision.*
-3. **Emit `X-AE-*` headers**, then one bounded live proxy-captured RHO smoke to
-   settle SV-7 upstream materialization and the live roster claims.
-4. **SV-12** — the last offline item, and the one that needs live-shaped tasks: the
-   placeholder mechanism cluster id keeps candidate cells from overlapping, so the
-   entropy floor of 3 comparable candidates is never cleared. Not a consequence of
-   SV-10, which closed by routing faults from `build_issues` instead of the tensor.
-
-Closed since this list was written: SV-2, SV-3, SV-5, SV-8, SV-10 and SV-11.
-Selection semantics did change, and each change was made against an explicit
-recorded decision.
+1. This file, §1 and §8 — what runs, what does not.
+2. `SEVERE-OPEN-ISSUES.md` — the defects where the instrument itself is suspect.
+3. `selection-algorithms.md` — the formulas §6 references.
+4. `docs/design/issue-lifecycle.md` — clustering decisions D1–D4.
 
 ---
 
-## Appendix — durable grep anchors
+## 11. How to re-verify this map
 
-| Concept | Anchor |
-| --- | --- |
-| Mode → phase table | `grep -n "^PHASES" src/agent_evolve/core/rho/rounds.py` |
-| RHO round body | `grep -n "def run_round" src/agent_evolve/core/rho/rounds.py` |
-| Crashed-trace filter | `grep -n "def _answered\|ANSWERED_TRACE_STATUSES" src/agent_evolve/core/rho/rounds.py` |
-| Champion selection | `grep -n "def select_champion" src/agent_evolve/core/pool.py` |
-| SV-4 gate | `grep -n "experimental_candidate_promotion" src/agent_evolve/core/{pool,config}.py` |
-| Inert weights | `grep -rn "ScoreProvenance(" src/` |
-| Outcome / coverage | `grep -n "_champion_outcome\|_champion_coverage\|_observed_cells" src/agent_evolve/core/pool.py` |
-| Hardcoded objectives | `grep -n "stability = 1.0\|regression_risk = 0.0" src/agent_evolve/core/pool.py` |
-| Genetic lifecycle | `grep -n "def run_iteration\|def observe\|def build_issues\|def select_issues\|def select_parent\|def propose_edits\|def _validate" src/agent_evolve/core/orchestrator.py` |
-| Crossover deadness | `grep -rn "core\.merge" src/ tests/ scripts/` |
-| Symmetric judge | `grep -n "def compare_symmetric" src/agent_evolve/adapters/cuga_preference_judge.py` |
-| Judge context bounds | `grep -n "_MAX_PAYLOAD_CHARS\|_MAX_RENDERED_EVENTS" src/agent_evolve/adapters/cuga_preference_judge.py` |
-| Worker recycling | `grep -n "MAX_ROLLOUTS_PER_WORKER\|def _recycle" src/agent_evolve/benchmarks/cuga_process_pool.py` |
-| Agent teardown | `grep -n "aclose" src/agent_evolve/adapters/cuga_{workspace_agent,editor}.py` |
-| Export path | `grep -n "def export_pool\|def champion_version" src/agent_evolve/pipeline.py` |
+These are the checks that produced it. Re-run them after any structural change;
+each is cheap and none needs a model call.
+
+```bash
+# 1. Dead-code audit: definitions with zero callers in src/
+python3 - <<'PY'
+import ast
+from pathlib import Path
+calls, defs = {}, {}
+for p in Path('src').rglob('*.py'):
+    if '__pycache__' in str(p): continue
+    tree = ast.parse(p.read_text())
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defs.setdefault(n.name, []).append(f"{p}:{n.lineno}")
+        elif isinstance(n, ast.Call):
+            f = n.func
+            nm = f.attr if isinstance(f, ast.Attribute) else getattr(f, 'id', None)
+            if nm: calls.setdefault(nm, set()).add(str(p))
+for name in ('prune','add_anchor','cell_entropy','top_entropy_cells',
+             'entropy_weighted_with_freshness','run_iteration',
+             'entropy_unavailable_reason','correlation_scope'):
+    print(f"{name:34} defs={len(defs.get(name,[]))} src_callers={len(calls.get(name,()))}")
+PY
+# EXPECT: every one reports src_callers=0
+
+# 2. Core purity — must be 35 files, 0 forbidden imports (AST, not grep:
+#    substring matching gives false positives on docstring prose)
+python3 - <<'PY'
+import ast
+from pathlib import Path
+FORBIDDEN = ('cuga','litellm','openai','httpx','requests')
+bad, files = [], sorted(Path('src/agent_evolve/core').rglob('*.py'))
+for p in files:
+    for n in ast.walk(ast.parse(p.read_text())):
+        mods = ([a.name for a in n.names] if isinstance(n, ast.Import)
+                else [n.module] if isinstance(n, ast.ImportFrom) and n.module else [])
+        for m in mods:
+            if m.split('.')[0] in FORBIDDEN or m.startswith('agent_evolve.adapters'):
+                bad.append((str(p), m))
+print(f"core files={len(files)} forbidden={bad or 0}")
+PY
+
+# 3. merge.py really has no importer
+rg -l 'core\.merge|from agent_evolve\.core import merge' src/ || echo "UNWIRED confirmed"
+
+# 4. Full suite. -q suppresses the summary on this machine, so go via subprocess.
+python3 - <<'PY'
+import subprocess
+r = subprocess.run(["python3","-m","pytest","-p","no:warnings","--tb=line"],
+                   capture_output=True, text=True)
+print("EXIT:", r.returncode)
+print([l for l in r.stdout.splitlines() if "passed" in l][-1])
+PY
+```
+
+Two traps worth naming, both of which produced a wrong answer during this audit:
+
+- **`rg -r` means `--replace`,** not "recursive". It can modify files. Never use it
+  to search.
+- **Substring search over source is not an import check.** A scan for
+  `agent_evolve.adapters` flagged five `core/` files whose only matches were
+  docstring prose; the AST check in step 2 reports zero. Prefer the AST.

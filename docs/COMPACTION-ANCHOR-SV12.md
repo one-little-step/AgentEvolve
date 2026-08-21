@@ -1149,3 +1149,436 @@ Also **gitignored**, not merely untracked: `terminal_output/` (`.gitignore:13`)
 holds the two live measurement scripts and their logs. §6.0 re-runs them, and §15.3
 quotes their numbers, but `git` will never preserve them — if they are lost, the
 calibration must be re-measured from the recipe in the design doc §3.
+
+---
+
+## 18. Session of 2026-08-21 (second) — SV-12 closed, SV-7 narrowed to LOW
+
+Read this section first if you are resuming after the second compaction. Everything
+here is re-runnable; §18.6 gives the commands.
+
+### 18.1 The defect that would have made step 4 pointless
+
+I was about to widen the ambiguity band when a probe of the real production seam
+showed `registry.adjudicator is None` while `config.mechanism_dedup.enabled` was
+`True`. Cause:
+
+```python
+# pipeline.cluster_registry_for_config, BEFORE
+adjudicator = CugaMechanismAdjudicator(base_url=dedup.base_url, ...)
+#                                                ^^^^^^^^ field is `url`
+```
+
+`MechanismDedupConfig`'s fields are `url/model/api_key/enabled/band_low/band_high`;
+`hasattr(MechanismDedupConfig, "base_url")` is `False`. The broad `except Exception`
+below it caught the `AttributeError` and **degraded to cosine-only clustering**,
+writing one line to stderr that nobody reads in a long run.
+
+So the adjudicator had **never attached in production**, and the band is consulted
+*only* when an adjudicator exists. Every band value discussed before this was
+decoration. Now read behind an explicit `hasattr` guard that **raises** rather than
+degrades, so a future rename fails loudly.
+
+**Lesson for the next agent:** a broad `except` around a construction call converts
+a typo into a silent capability loss. When a feature "is configured but does
+nothing", check the *construction* path before the logic.
+
+### 18.2 Step 4 — the band, and four defaults not two
+
+Widened `[0.60, 0.85)` -> `[0.45, 0.75)`, chosen by measurement over 66 live pairs
+scored by **silent splits** (true paraphrase pairs decided against merging by cosine
+alone, with no model call):
+
+| band | adjudicated | silent splits | false-merge risk |
+| --- | --- | --- | --- |
+| `[0.60, 0.85)` was | 9 / 66 | **2** / 12 | 0 |
+| `[0.45, 0.75)` now | 16 / 66 | **0** / 12 | 0 |
+| `[0.40, 0.75)` | 35 / 66 | 0 / 12 | 0 |
+
+The anchor and design doc previously said "3 pairs below 0.60" and "~43/66
+adjudicated". Both were wrong; corrected to 2 and 16/66.
+
+**Four** hardcoded band pairs existed, not the two §16 once claimed. Now one
+definition in `core/clustering.py` (`DEFAULT_JOIN_THRESHOLD`, `DEFAULT_BAND_LOW`,
+`DEFAULT_BAND_HIGH`), re-exported by `core/config.py` and `pipeline.py`.
+
+**New invariant:** `band_high >= join_threshold`, **scoped to "an adjudicator is
+attached"**. Below it, `[band_high, join_threshold)` is neither ambiguous nor
+joining, so cosine decides it alone — measured stranding true pairs at `0.718`,
+`0.749`, `0.726`. My first unscoped version broke 7 existing tests; measuring all 7
+showed every one raises the threshold with *no* adjudicator, where the band is never
+read, so the unscoped raise was rejecting legitimate configs. **Scope an invariant
+to the condition that makes it real.**
+
+### 18.3 SV-12's last remainder: the fallback rate
+
+`EntropyAvailabilityReport` counts available/unavailable **cells** with a category
+tally (`no_analysis`, `no_registry`, `unassigned`, `floor_unmet`). Categories are
+recorded at the point of failure, never parsed back out of prose — a tally keyed by
+free text fragments the moment a message is reworded.
+
+`fallback_rate` is `None` for `0/0`, not `0.0`: zero would claim perfect
+availability for a run that measured nothing.
+
+Reaches **both** production surfaces: `SequentialGepaRunner.run` passes it into
+`GepaRunResult`, and `pipeline.run_iterations` records the payload per iteration.
+Two source-level guard tests assert this, because an unpopulated reporting field is
+the SV-10 inert-term defect repeated.
+
+**A defect of mine, caught by running the real loop rather than trusting 20 green
+unit tests.** The offline run printed `no_analysis=3` for three cells that *existed*
+— self-contradictory, since a cell only exists once a mechanism was assigned. I had
+consulted the per-task category dict for per-cell facts, and that dict is
+last-write-wins, so a later undiagnosed rollout relabelled an already-filed cell. An
+existing cell returning `None` can only be `floor_unmet` (`entropy.py:213-231`).
+
+Honest measured outcome: on the offline fake, `3/3 cells unavailable = 100% fallback
+(floor_unmet=3)`. Entropy **never** drove selection there — exactly the condition
+this report exists to expose.
+
+### 18.4 SV-7: the proxy was 95% done, and the last question was offline
+
+The user pointed out `docker/observability/` was purpose-built for this. It works —
+mitmproxy with hot-reloaded mock rules, CA trust, `Authorization` redaction. The gap
+was one-sided: **nothing in `src/` ever sent the `X-AE-*` headers**, so every
+capture ever taken was uncorrelated. A grep for `X-AE-` across `src/` returned
+nothing.
+
+Added `core/correlation.py`: a frozen `CorrelationContext` and a **`contextvars`**
+scope. Not a module global — `parallel_execution` is a supported gate and a global
+would let one worker's candidate id label another worker's calls, which is
+unrecoverable mislabelling. Absent facts are **omitted, not blanked**: an empty
+header value is indistinguishable from a real empty id.
+
+All four `_litellm_completion` wrappers now merge the headers into any
+caller-supplied `extra_headers` without mutating the caller's dict. An AST test
+enumerates the wrappers, so a fifth added later without correlation fails.
+
+**Then the remaining SV-7 question turned out to need no proxy at all.** The register
+had narrowed it to "were the two versions materialized to byte-identical harnesses
+upstream of the grid?" `CugaAdapter`'s artifact store is an in-memory mapping and
+`_harness_config` is a pure function of it, so this is directly decidable offline.
+Measured on the exact two-step production path (`orchestrator.py:1249` materialize
+child, `:1250` run): distinct digests, distinct child ids, no parent/child
+write-back, siblings independent.
+
+The aliasing defect was **injected** to prove the tests see it — exactly 2 failed,
+then `cuga_adapter.py` restored byte-identical. A converse test asserts identical
+artifacts *do* produce identical harnesses, so a no-op stays visible as a no-op and
+the distinctness test cannot pass merely because digests always differ.
+
+**SV-7 is LOW.** Both structural explanations are eliminated. What remains is not a
+defect: the edit genuinely changed no behaviour, which given SV-8 is *correct* judge
+behaviour.
+
+### 18.5 Cheap wins the next agent should know about
+
+- **Mock rules make live-path testing free.** Write `docker/observability/mocks/rules.json`,
+  save, no restart. A rule matched in the *request* hook never reaches upstream. This
+  is how the correlation capture was checked without spending a token: a mocked call
+  from a real `CugaMechanismAdjudicator` produced a capture record whose
+  `correlation` block held all five fields, with `X-AE-*` absent from the forwarded
+  request and `Authorization` shown as `<redacted>`. That covers header emission,
+  addon lift-and-strip, and redaction; it does **not** cover any upstream response
+  behaviour, since no upstream call happened. Restore `rules.example.json` content
+  when done.
+- **`terminal_output/` is gitignored** (`.gitignore:13`). Logs cited here are not
+  preserved by git.
+- **`pytest -q` suppresses the summary on this machine.** Run pytest through
+  `subprocess` and read `stdout`, or count collection separately.
+- **macOS: no `timeout` command.**
+- **Do not use `rg -r`** — in ripgrep `-r` is `--replace` and can corrupt files.
+
+### 18.6 Re-runnable checks for this section
+
+```bash
+# Suite. Expect 2106 collected, 2105 passed, 1 skipped, exit 0.
+python3 - <<'PY'
+import subprocess
+r=subprocess.run(["python3","-m","pytest","-p","no:warnings","--tb=line"],
+                 capture_output=True,text=True)
+print("EXIT:", r.returncode)
+print([l for l in r.stdout.splitlines() if 'passed' in l][-1])
+PY
+
+# §18.1 The adjudicator must actually attach. Expect CugaMechanismAdjudicator,
+# band [0.45, 0.75], and silent stderr.
+python3 - <<'PY'
+import sys, io, contextlib; sys.path.insert(0,'src')
+from dotenv import load_dotenv; load_dotenv('.env')
+from agent_evolve.core.config import resolve_profile
+from agent_evolve.core.clustering import LexicalEmbedder
+from agent_evolve import pipeline
+cfg = resolve_profile('research_sequential', seed=0)
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    reg = pipeline.cluster_registry_for_config(cfg, embedder=LexicalEmbedder(dim=768))
+print("adjudicator:", type(reg.adjudicator).__name__ if reg.adjudicator else None)
+print("band:", reg.band_low, reg.band_high, "join:", reg.join_threshold)
+print("stderr:", err.getvalue().strip() or "(silent)")
+PY
+
+# §18.2 One band definition, four consumers agreeing.
+python3 - <<'PY'
+import sys; sys.path.insert(0,'src')
+from agent_evolve.core import config as c
+from agent_evolve.core.clustering import (ClusterRegistry, LexicalEmbedder,
+    MechanismClusterer, DEFAULT_BAND_LOW, DEFAULT_BAND_HIGH)
+from agent_evolve import pipeline
+lows = {DEFAULT_BAND_LOW, c._DEFAULT_DEDUP_BAND_LOW, c.MechanismDedupConfig().band_low,
+        MechanismClusterer(task_id="t", embedder=LexicalEmbedder(dim=32)).band_low,
+        ClusterRegistry(embedder_factory=lambda: LexicalEmbedder(dim=32)).band_low,
+        pipeline._DEFAULT_CLUSTER_BAND_LOW}
+print("distinct band_low values across all sites:", lows, "-> expect {0.45}")
+PY
+
+# §18.3 The fallback report on a real offline run.
+# Expect: 3/3 cells unavailable = 100% fallback (floor_unmet=3)
+python3 -c "
+import sys; sys.path.insert(0,'src')
+from agent_evolve.pipeline import build_offline_stack
+s = build_offline_stack(seed=0); s.run_iterations(4)
+print(s.runner.entropy_availability().line())"
+
+# §18.4 Correlation headers exist and are emitted by all four wrappers.
+python3 -m pytest tests/test_correlation_context.py \
+  tests/test_correlation_headers_wired.py \
+  tests/test_sv7_materialization_distinctness.py -p no:warnings -q
+
+# Constraints. Expect no output from the first, and "35 files, 0 forbidden".
+git diff --numstat src/agent_evolve/core/entropy.py
+python3 - <<'PY'
+import ast, pathlib
+FORBID={"cuga","litellm","openai","httpx","requests","agent_evolve.adapters"}
+bad=[]; n=0
+for f in sorted(pathlib.Path("src/agent_evolve/core").rglob("*.py")):
+    n+=1
+    for node in ast.walk(ast.parse(f.read_text())):
+        mods=[a.name for a in node.names] if isinstance(node,ast.Import) else (
+             [node.module] if isinstance(node,ast.ImportFrom) and node.module else [])
+        for m in mods:
+            if any(m==x or m.startswith(x+".") for x in FORBID): bad.append((str(f),m))
+print(f"{n} files, {len(bad)} forbidden", bad)
+PY
+```
+
+---
+
+## 19. What is actually next
+
+SV-12 is closed and SV-7 is LOW. The register's remaining items, in the order their
+cost/value ratio suggests:
+
+| # | Item | Why it is next | Cost |
+| --- | --- | --- | --- |
+| 1 | **A live end-to-end run, correlation-captured** | Everything measured so far is offline or single-call. This is the first run whose captures can answer *"did entropy ever become available?"* and *"did the judge see two different trajectories?"* — both now instrumented and neither yet observed. It also tests the one thing the proxy README lists as unverified: whether CUGA-internal clients honour `HTTPS_PROXY`. | rollouts + model spend; needs user approval |
+| 2 | **SV-8 — every candidate edits only `instructions`** | This is now the *most* load-bearing open item, because it is the surviving explanation for SV-7's observation. If the editor cannot reach any other artifact, then "no behavioural change" is structural, not incidental. | offline investigation |
+| 3 | **Design doc Q2 — is `max_clusters_per_task=12` still right?** | Widening the band should *reduce* cluster count, so the cap may no longer bind. Cheap to measure once a live run exists. | free, needs run data |
+| 4 | **Design doc Q3 — persist the adjudicator verdict cache?** | Currently in-memory per instance, so every run re-pays for identical pairs. Needs invalidation keyed on the model id. | small |
+| 5 | **Cross-task mechanism pooling (D1, deferred)** | Would cut evidence cost roughly 4x on systemic faults, but needs order-independent ids: the counter-assigned `c0`/`c1` are arrival-order dependent and base-harness anchoring is itself defective (§9.3). A content-addressed identity scheme is a design task, not a patch. | design + implementation |
+
+**Do not start (5) as a patch.** It is the one item that needs a design decision
+first, and §9.3 records why the obvious approach does not work.
+
+The dead-read-API note below (§ following) still holds: three of six
+`EntropyTracker` read methods have zero callers.
+
+---
+
+## 20. Session of 2026-08-21 (third) — SV-8 answered at the LLM layer, pipeline map rewritten
+
+**Read §19 with this section as its correction.** §19 ranked SV-8 as open item 2 and
+described it as "offline investigation". That is now out of date: SV-8's proxy-gated
+question has been answered, and the answer required a *live* (mocked) editor run
+rather than offline reading. Item 1 (a live end-to-end run) is still open and is
+now the top of the queue.
+
+### 20.1 The headline result
+
+Everything below came from **one** real `CugaEditorAgent` -> real `CugaAgent`
+(cuga 0.2.20) invocation, run through `./docker/observability/proxy.sh run` with
+mock rules driving the turns, so the arm cost **nothing upstream**.
+
+**1. CUGA-internal LLM calls ARE intercepted.** Three `/chat/completions` flows to
+`ete-litellm.ai-models.vpc-int.res.ibm.com` were captured from that single editor
+invocation. This closes the question `docker/observability/README.md` had listed as
+unverified: CUGA's internal client honours `HTTPS_PROXY`. The editor's LLM layer is
+therefore observable **even though the editor deliberately goes through
+`CugaAgent`** rather than through our four LiteLLM wrappers — that routing is a
+design choice, not a defect, and it is why the proxy (not our wrappers) is the
+instrument for editor traffic.
+
+**2. All four surfaces really are offered, in bytes.** The turn-2 request body
+contains the literal `list_artifacts` return value:
+
+```text
+{"writable": ["instructions", "memory/generated-evolved",
+              "policies/generated-evolved", "skills/generated-evolved"],
+ "creatable_prefixes": ["skills/generated-", "memory/generated-",
+                        "policies/generated-"]}
+```
+
+So the 2026-08-20 multi-surface seeding fix holds on the live path, and "offered"
+is now established from what the model was actually *sent*.
+
+**3. A non-`instructions` edit survives the entire chain.** Verified offline
+against the real adapter: `apply_structured_edits` changed
+`skills/generated-evolved`'s `version_hash` and **only** that one (instructions,
+memory, policies all unchanged); `_harness_config` carried the text into the
+rollout payload's `skills` group verbatim; `materialize_harness` wrote
+`skills/generated-evolved/SKILL.md` with the edit's **first line promoted into the
+YAML `description:` field** — exactly the field `EDITOR_INSTRUCTIONS` says drives
+skill selection. A skills edit is not inert.
+
+### 20.2 The residual finding — a turn-ordering asymmetry
+
+Seeding and delivery are both ruled out. What survives as the explanation for the
+historical "only `instructions`" observation is **when** the roster arrives:
+
+| Available in turn 1 | `instructions` | `skills/…`, `policies/…`, `memory/…` |
+| --- | --- | --- |
+| Surface *kind* named in prompt prose | yes | yes |
+| A **writable concrete id** passable to `stage_replace` | **yes** — kind name and valid id are the same string | **no** — needs the slot name `generated-evolved`, absent from turn 1 |
+| Creatable prefix | n/a | **no** — absent from turn 1 |
+
+A model that stages before calling `list_artifacts` has exactly one surface it can
+name correctly. Every other surface costs one extra tool call first. Independently,
+`EDITOR_INSTRUCTIONS` itself calls `instructions` *"usually the highest leverage
+choice available"* — true, but prose and roster latency push the same way.
+
+**Deliberately NOT fixed.** Both remedies (naming concrete ids in the turn-1
+prompt, or rebalancing the surface-fit prose) change what the optimizer is told and
+would invalidate comparison against any previously measured run. Neither should be
+adopted on the strength of a **mocked** arm.
+
+### 20.3 What this arm does NOT establish — read before citing it
+
+**Surface preference is not measured, at all.** The staged surface was dictated by
+my mock rule. A mocked verdict must never be read as a model's choice. Also
+untested: `memory/` and `policies/` materialization specifically (only `skills/`
+was materialization-tested), and whether a rollout model actually *selects* the
+written skill at runtime.
+
+### 20.4 A NEW gap found while auditing: correlation is half-wired
+
+Found by AST call-graph, not by reading docs. There are **three** distinct routes
+to a model, with different observability:
+
+| Route | Sites | Emits `X-AE-*`? |
+| --- | --- | --- |
+| Direct LiteLLM wrapper | `cuga_analyzer.py:740`, `cuga_mechanism_adjudicator.py:87`, `cuga_rho_comprehender.py:389`, `cuga_rho_judge.py:499` | **yes** |
+| `run_workspace_agent` -> `CugaAgent` | `cuga_preference_judge.py:584`, `cuga_rho_optimizer.py:720`, via `cuga_workspace_agent.py:279` | no |
+| `CugaEditorAgent` -> `CugaAgent` | `cuga_editor.py:439` | no |
+
+**And `correlation_scope` (`core/correlation.py:103`) has ZERO callers in `src/`
+AND zero in `scripts/`** — only 12 in `tests/` plus 1 in my own probe. So the
+*emit* side is wired and the *set* side never fires: **in production every captured
+flow is unlabelled**, and editor/judge/optimizer traffic must be grouped by
+timestamp and body content rather than by label. Any earlier claim that
+correlation is "DONE" covers the emit half only. This is the single most useful
+thing to fix before the live end-to-end run, because that run's whole value is
+per-candidate attribution.
+
+### 20.5 `IMPLEMENTED-PIPELINE-MAP.md` rewritten — 578 -> 487 lines
+
+Rebuilt from an AST audit rather than edited, at
+`docs/architecture/IMPLEMENTED-PIPELINE-MAP.md`. 8 mermaid diagrams, every node
+annotated with `file:line`. New five-value legend that separates two things the old
+revision conflated: **LIVE / GATED / TEST-ONLY / DEAD / ABSENT** — a green suite
+proves code *runs*, never that it runs *in production*.
+
+Structural facts it now records, all AST-verified:
+
+- **The production runner is `SequentialGepaRunner`** (`orchestrator.py:1022`),
+  constructed at `pipeline.py:1140` and `:1333`. `Orchestrator.run_iteration`
+  (`orchestrator.py:510`) has **zero `src/` callers** — reading it to understand a
+  live run will mislead you. This trap was not flagged before.
+- **`core/merge.py`** — 393 lines, **zero importers anywhere in `src/`**. Crossover
+  genuinely unwired; `plan_merge` (`:267`), `compute_diff` (`:69`) unreachable.
+- **Parallel batch is TEST-ONLY.** `use_parallel_batch=True` exists only on
+  `RESEARCH_PARALLEL`/`FULL_ABLATION` (`orchestrator.py:170`/`:178`), which are
+  referenced **only by tests** (19 hits) and never by `scripts/`. So the branch at
+  `orchestrator.py:638` is dead on the live path, and `config.py _PROFILES`
+  independently lists `parallel_execution` as *deferred*.
+- **Five dead read APIs, each confirmed to have zero calling sites across all of
+  `src/`:** `pool.prune` (`pool.py:926`), `clustering.add_anchor` (`:304`),
+  `entropy.cell_entropy` (`:178`), `top_entropy_cells` (`:294`),
+  `entropy_weighted_with_freshness` (`:257`).
+- **`entropy_unavailable_reason`** (`orchestrator.py:1998`) has zero `src/` callers,
+  though `entropy_availability` (`:1867`) has two.
+- RHO is 10 phases in `_RHO_PHASES`; modes `rho` / `genetic` / `rho-genetic` are
+  data in `PHASES`, resolved by `phases_for` (`rounds.py:76`). All 17 `RhoHooks`
+  bound in one place: `build_rho_hooks` (`pipeline.py:1478`).
+
+Its §11 carries **re-runnable audit commands**, and all three were *executed as
+written*, not merely drafted: the dead-code block printed `src_callers=0` for all 8
+named symbols, the purity block printed `core files=35 forbidden=0`, and the merge
+block printed `UNWIRED confirmed`.
+
+### 20.6 Two false positives I generated and corrected — repeat neither
+
+1. **`'instructions' in body` is not evidence of roster delivery.** It matched
+   turn 1 on my first probe version, because `instructions` occurs throughout
+   `EDITOR_INSTRUCTIONS` *prose*. Only the three group ids carry an unguessable
+   slot name, so only they can evidence the roster. The probe now excludes
+   `instructions` from that check by design, with a comment saying why.
+2. **Substring search over source is not an import check.** A scan for
+   `agent_evolve.adapters` flagged five `core/` files; an AST scan shows **zero** —
+   every match was docstring prose (e.g. `core/evaluation.py:38`,
+   `core/rho/history.py:18`). Use the AST block in the map's §11.
+
+Also re-learned: `str(dict)` escapes newlines, so `SKILL in str(harness_config)`
+reported `False` for content that was in fact present. Compare dicts, not reprs.
+
+### 20.7 State at compaction
+
+```text
+HEAD            011aa8d   branch dev7
+committed       "Issuse Clustering SV12 , and SV7 close fix1"  (the SV-12/SV-7 work)
+UNCOMMITTED     7 modified files, including ALL of today's third-session work:
+                  docs/architecture/IMPLEMENTED-PIPELINE-MAP.md   (+855/-480 rewrite)
+                  docs/SEVERE-OPEN-ISSUES.md                      (+110)
+                  docs/COMPACTION-ANCHOR-SV12.md                  (this section)
+                  docker/observability/README.md                  (+9)
+                  .jspace/WORKSPACE.md, .cuga/knowledge/*.db-{shm,wal}
+suite           2105 passed, 1 skipped, 0 failed, exit 0
+mock rules      RESTORED to rules.example.json, zero enabled rules
+```
+
+**`terminal_output/` is gitignored (`.gitignore:13`), so the original SV-8 probe
+there is NOT protected by any commit.** It has therefore been copied to a
+trackable location — **`tools/probes/sv8_editor_surface_probe.py`** (239 lines,
+syntax- and import-verified from the new path; `REPO` resolves via `parents[2]`,
+which is the repo root from either location, so the copies are interchangeable).
+The original and its log remain at `terminal_output/sv8/` —
+`sv8_editor_surface_probe.py` and `02-mocked-editor-probe.log`. **Commit
+`tools/probes/` or the probe is lost on the next clean.**
+
+### 20.8 How to re-run the SV-8 arm
+
+```bash
+./docker/observability/proxy.sh up          # proxy 8082, UI 8083
+# edit docker/observability/mocks/rules.json to enable a driving rule;
+# rules are re-read on mtime change, NO restart needed.
+# Order matters: a terminate rule must precede the drive rule, or the agent
+# is handed the same Python block forever. Match the terminate rule on a
+# sentinel string that the drive rule's own code block emits.
+AE_SV8_MOCK=1 ./docker/observability/proxy.sh run -- \
+    python3 tools/probes/sv8_editor_surface_probe.py
+cp docker/observability/mocks/rules.example.json \
+   docker/observability/mocks/rules.json        # ALWAYS restore afterwards
+```
+
+### 20.9 Corrected next-job order (supersedes §19)
+
+| # | Item | Why | Cost |
+| --- | --- | --- | --- |
+| 1 | **Wire `correlation_scope` at the rollout/attempt/judge call sites** | §20.4. Cheap, offline, and it is the prerequisite that makes the live run's captures attributable per candidate. Doing the live run first wastes it. | small, offline |
+| 2 | **The live end-to-end run, correlation-captured** | Still unobserved. Answers "did entropy ever clear its floors?" and "did the judge see two different trajectories?" | rollouts + spend; needs approval |
+| 3 | **One unmocked editor invocation** | The only way to measure real surface *preference* (§20.3). One editor call, no rollouts. | tiny |
+| 4 | Design doc Q2 (`max_clusters_per_task=12` still binding?) and Q3 (persist adjudicator cache) | Cheap once run data exists | small |
+| 5 | Cross-task mechanism pooling | **Still do not start as a patch** — needs content-addressed identity; §9.3 records why anchoring fails | design |
+
+SV-8's own remaining work is narrow and named in
+`docs/SEVERE-OPEN-ISSUES.md`: the RHO optimizer's roster was never captured (only
+the genetic editor's), and surface preference is unmeasured.
