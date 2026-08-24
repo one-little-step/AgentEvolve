@@ -254,6 +254,20 @@ Historical, useful but Gaia-specific in its paths and runtime assumptions:
 - **A mocked arm never measures preference.** If a mock rule dictated the output,
   the result establishes capability, not choice. Label it as such.
 - **Prefer AST over grep** for any structural question about imports or callers.
+- **Learn and note as you go.** When you make a mistake, misread the user, or
+  discover a trap, record it in `.jspace/WORKSPACE.md` (Lessons section) **at the
+  moment it happens** — not at session end, when compaction or a laptop move can
+  erase it. State the mistake, the correction, and the trigger that should fire
+  next time. The ledger's Historical Ledger section exists for exactly this;
+  never rewrite or prune it — append.
+- **Preserve before replacing.** When updating any ledger, log or register file,
+  read it first and *append*; overwriting history destroys the evidence trail
+  past sessions (and post-compaction sessions) need to learn from. This rule
+  exists because a full ledger was once flushed instead of extended.
+- **After any temporary revert, prove restoration mechanically.** Announcing
+  "restored" is not restoring: grep for the revert markers (`if False`,
+  `REVERT`, disabled guards) before running anything else. A skipped restore
+  once rode through an entire green-looking verification run unnoticed.
 - **Do not start cross-task mechanism pooling as a patch.** It needs
   content-addressed identity; the obvious anchoring approach is recorded as
   defective.

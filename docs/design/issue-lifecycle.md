@@ -330,6 +330,288 @@ measured nothing. Measured on the offline fake: **3/3 cells unavailable, 100%
 fallback, `floor_unmet=3`** — entropy never drove selection there, which is
 precisely what the report exists to expose.
 
+### D5 — Two polarity-isolated judges, one shared cluster namespace, signed valence
+
+**PROPOSED 2026-08-21, not built.** Origin: `feedback/from_qwen/qf36.md` — today the
+analyzer is only ever shown failures, so the mechanism layer compares *bad* against
+*less bad* and never records that some candidate did the same task **well**. The
+consequence is concrete: a candidate can score `1.0` on every task and hold **zero**
+mechanism ids, so it is invisible to any mechanism-keyed lookup. Verified on the
+production runner:
+
+```text
+child: base-v0+att-i001-s0000
+issues for child : 0
+child task scores: {'task-a': 1.0, 'task-b': 1.0}
+```
+
+The cause is one line, `orchestrator.py:1401`:
+
+```python
+# Only answered failures are worth a model call.
+to_analyze = [... if outcome.trace is not None and score.scorable and not score.passed]
+```
+
+That is a property of the current wiring, **not** of successes. A second judge is
+what makes success describable.
+
+#### D5.1 — One shared cluster namespace, because measurement demands it
+
+A fault and its corresponding strength are **the same mechanism seen from two
+sides**, and the live 768-dim embedder places them together:
+
+| cosine | verdict at `join=0.75` | pair |
+| --- | --- | --- |
+| **0.963** | JOIN — same cluster | "skill does *not* verify checksums" vs "skill *verifies* checksums" |
+| **0.944** | JOIN — same cluster | "planner *fails to* retry" vs "planner *retries*" |
+| 0.331 | separate | two unrelated faults |
+
+An earlier draft of this decision proposed **separate** `fault:` / `strength:`
+namespaces to stop the collision. That was **wrong, and the measurement reversed
+it**: separation would put the parent's fault in one cluster and the solver's
+strength in another, destroying the very join the feature exists to make. The
+collision is the feature. One namespace also leaves the `max_clusters_per_task=12`
+cap (Q2) unchanged rather than doubling pressure on it.
+
+Note this makes the clusterer's polarity-blindness *load-bearing*: `_add`
+(`clustering.py:373`) takes **text only** — no score, no sign — so the same
+clusterer, band and adjudicator serve both judges with no new identity machinery.
+
+#### D5.2 — Sign is a separate field, never overloaded onto `severity`
+
+Polarity must **not** ride on the sign of `severity`. Two independent guards reject
+it outright, so this is not a stylistic preference:
+
+```text
+issues.py:85       if not (0.0 <= value <= 1.0): raise ValueError(...)
+blame.py:187       if value is not None and not (0.0 <= value <= 1.0): raise ValueError(...)
+
+Issue(severity=-0.8, ...) -> ValueError: severity must be in [0, 1], got -0.8
+```
+
+Widening those guards to `[-1, 1]` would be worse than the error it removes:
+`raw_issue_quality` computes `w_severity * issue.severity` (`issues.py:147`, inside
+the `146-152` return), so a negative severity would **subtract** from issue
+quality — a strength observation silently demoting the issue it is supposed to
+inform. That is the same shape as the `weighted_score`/`severity` inert-multiplier
+trap (SV-1/SV-5).
+
+**Decision:** magnitude and direction are separate fields. `severity` stays
+`[0, 1]` and keeps meaning *"how much did this matter"*; a new `valence` carries
+direction (`-1` strength, `+1` fault). Ranking is then `sort by (valence, severity)`
+with no formula change, which is exactly the ordered map the editor tool wants.
+
+#### D5.3 — Each judge sees exactly one polarity, enforced structurally
+
+**The user's constraint, and it is an architecture rule, not prompt guidance:** a
+judge must never be able to emit the polarity it was not commissioned for. Asking
+one model to hunt faults *and* notice strengths splits its attention across two
+objectives and degrades both — and it would let a single mislabelled verdict pollute
+the ranking with the wrong sign.
+
+| | Judge 1 — negativity (live today) | Judge 2 — positivity (unbuilt) |
+| --- | --- | --- |
+| input | failing traces only | scorable traces of any score — complementarity is *relative per mechanism*, so capture applies no quality gate (decided 2026-08-23) |
+| emits | `valence = +1` | `valence = -1` |
+| may emit the other sign? | **no — rejected at construction** | **no — rejected at construction** |
+
+Enforcement belongs at the **type boundary**, not in the prompt: whatever the model
+returns, the adapter constructs a finding whose `valence` is fixed by *which judge
+built it*, and a mismatch raises rather than being coerced. `CausalFinding` is
+already `frozen=True` with a `@model_validator` (`blame.py:167,183`) that rejects
+malformed findings — the same seam takes a valence check, so polarity isolation
+holds by construction the way `status="observed"` completeness already does.
+
+Prompt-level scoping (show Judge 1 only failures) is still right, but it is defence
+in depth. The prompt is advice; the validator is the guarantee.
+
+#### D5.4 — What this unlocks, and the honest fallback
+
+The editor tool becomes: *parent's fault → its cluster → who else is in that cluster
+→ with what valence and magnitude*. Ranked descending, one structure returns
+
+1. **strongest solvers first** (`valence=-1`, high magnitude) — read their artifacts
+   via the existing `read_parent_artifact` (`cuga_editor_tools.py:218`);
+2. then weaker solvers;
+3. then, when no strength exists yet, **the least-bad failures** — today's only
+   available evidence.
+
+The user's point about (3) is the strongest part of the design: the tool degrades
+gracefully instead of returning an empty list, so "no complementary parent exists"
+is never confused with "nothing has been measured". That distinction is the same one
+D4 enforces for entropy availability.
+
+#### D5.5 — Prerequisites
+
+1. **A cross-attempt trace store.** Judge 2 needs a trace for the same
+   task from *another* candidate — and since complementarity is comparative, the
+   store must hold failures too: a 0.4 may be the best any candidate has done on a
+   mechanism, and D5.4 degrades to least-bad failures. Store every *scorable*
+   rollout; unscorable stays excluded (SV-9). `_last_validation_traces` is reset
+   every attempt
+   (`orchestrator.py:2258`), so no such store exists. This is a build item, and
+   voluntariness does not excuse it: if the editor calls the tool, the evidence must
+   be there.
+   **BUILT 2026-08-23, in-memory only:** `_trace_store` keyed
+   `(candidate_id, task_id)`, fed at both rollout routes (`validate`,
+   `build_issues` observation); read API `SequentialGepaRunner.traces_for`.
+   Deliberately NOT persisted — raw traces never reach storage
+   (`_persist_attempt` invariant) and the sanitizer's 2000-char truncation
+   would return them silently amputated; a trace codec is its own future step.
+   Tests: `tests/test_trace_store.py` (5, incl. pinning the no-persistence
+   boundary and both capture routes proven load-bearing by separate reverts).
+2. **SV-14 first.** ~~Offspring currently file no mechanism evidence at commit~~
+   (**DONE 2026-08-23** — `docs/SEVERE-OPEN-ISSUES.md` SV-14 is closed: offspring
+   provenance and entropy filing now describe the child). The ordering constraint
+   this item imposed is satisfied; the chain starts at TS2.
+
+**Deliberately NOT a prerequisite: the DPP quality formula.** qf36 sketches
+`+ 0.1·task_solvability + 0.2·expected_improvement` added to `quality`. That is
+**out of scope for D5 by decision.** D5 delivers *evidence* — a signed, ranked,
+mechanism-keyed index the editor may query voluntarily. It does not change
+`raw_issue_quality`, does not touch DPP selection, and therefore does not disturb
+the 5-weights-summing-to-1.0 invariant (`issues.py:134-137`).
+
+The reasoning is the user's, and it is the stronger design: **the editor agent
+decides how to weigh a strength against a fault.** A judge-supplied
+`expected_improvement` folded into `quality` would hard-code that judgement into a
+selection formula, at a fixed weight nobody has calibrated, before either judge has
+been validated live. Leaving it as evidence keeps the weighing where the context is,
+and keeps a second uncalibrated instrument out of the one arithmetic path that ranks
+work items.
+
+This also means **D5 cannot regress selection**: an unbuilt or outage-degraded
+Judge 2 makes the tool return less, never makes DPP rank differently. That property
+is worth more than the bonus terms would have been, and it is what lets D5 be built
+before the live run rather than after. Should a future decision want solvability or
+`expected_improvement` inside `quality`, it is a **separate decision** with its own
+weight-vector migration — not a rider on this one.
+
+**Staging.** Task solvability is free today: `mean_score_per_task()` already exists
+per candidate and needs no judge and no mechanism id (measured: `base` 0.0/0.0 vs
+child 1.0/1.0). It answers *"is this task solvable"* but not *"by what lever"*.
+Judge 2 is what supplies the lever, and it is the only thing that can put a
+mechanism id on the success side. So solvability is not a substitute for Judge 2 —
+it is the cheap first half of the same idea.
+
+**Not established.** No live run has exercised any of this; Judge 2 does not exist;
+the cosine figures above are three synthetic pairs through the real embedder, not
+real analyzer wording (see §9); and adding a second judge before the first is
+validated live means two uncalibrated instruments feeding one selection rule.
+
+#### D5.6 — FUTURE DIRECTIVE: what to build, where, and why it matters
+
+**Status: directive for a future session. Nothing here is implemented. Do not treat
+any box as existing code unless the map below marks it LIVE.**
+
+##### Why this matters at all
+
+Today the loop can only ask *"who failed this least badly?"* — so when one candidate
+hits a fault that two others have already solved by a different route, the evidence
+that the fault is **fixable** exists in the pool and is never read. The editor is
+handed a diagnosis and no worked example. D5 makes the survivor readable: the same
+mechanism cluster holds both the fault and the fix, and the editor may ask *"who is
+good at this, and what does their artifact say?"*
+
+The payoff is not a better score formula. It is that **crossover becomes evidence-
+driven** — `read_parent_artifact` already exists (`cuga_editor_tools.py:218`) and is
+currently offered with no signal about *which* parent is worth reading.
+
+##### Target flow
+
+```mermaid
+flowchart TB
+    subgraph NOW["LIVE today — failure side only"]
+        RG["rollout_group<br/><i>orchestrator.py:1358</i>"]
+        GATE["phase 3 gate: only FAILING rollouts<br/><i>orchestrator.py:1401</i>"]
+        J1["JUDGE 1 · negativity<br/><i>adapters/cuga_analyzer.py</i>"]
+        CF["CausalFinding · severity 0-1<br/><i>core/blame.py:147</i>"]
+        CLU["MechanismClusterer._add(text)<br/>polarity-BLIND, text only<br/><i>core/clustering.py:373</i>"]
+        RG --> GATE --> J1 --> CF --> CLU
+    end
+
+    subgraph NEW["TO BUILD — success side"]
+        TS["cross-attempt TRACE STORE<br/>ALL scorable traces, keyed task+candidate<br/><b>BUILT 2026-08-23 (in-memory)</b>"]
+        J2["JUDGE 2 · positivity<br/>reads a stored trace (any score)<br/><b>absent</b>"]
+        CF2["CausalFinding + valence=-1<br/>severity stays 0-1 = magnitude<br/><b>field absent</b>"]
+        TS --> J2 --> CF2 --> CLU
+    end
+
+    CLU --> IDX["SIGNED MECHANISM INDEX<br/>cluster_id -> ordered by (valence, severity)<br/><b>BUILT 2026-08-24</b>"]
+    IDX --> TOOL["editor tool · VOLUNTARY<br/>'who else is in my fault's cluster?'<br/><b>absent</b>"]
+    TOOL --> RPA["read_parent_artifact<br/><i>cuga_editor_tools.py:218</i> · LIVE"]
+
+    ENT["EntropyTracker · H(t,m)<br/><i>core/entropy.py</i> · LIVE"]
+    CLU -.->|"valence=+1 ONLY<br/>strengths must NOT enter"| ENT
+    DPP["raw_issue_quality / DPP<br/><i>core/issues.py:112</i> · LIVE"]
+    ENT --> DPP
+    IDX -..->|"NO EDGE BY DECISION<br/>D5 cannot regress selection"| DPP
+
+    style NOW fill:#d4f4d4
+    style NEW fill:#ffe0e0
+    style IDX fill:#fff4cc
+    style TOOL fill:#fff4cc
+    style RPA fill:#d4f4d4
+    style ENT fill:#d4f4d4
+    style DPP fill:#d4f4d4
+```
+
+The dotted `IDX -..-> DPP` non-edge is the load-bearing part of the diagram: it is
+the guarantee that a broken or absent Judge 2 can never change how work items rank.
+
+##### Module / file map
+
+| # | Change | File | Status |
+| --- | --- | --- | --- |
+| 1 | `valence: int` field (`-1` strength, `+1` fault), `severity` unchanged as magnitude (**BUILT 2026-08-23**, `StrictInt` — lax coercion let `"+1"` become a polarity) | `core/blame.py:147` `CausalFinding` | **done** |
+| 2 | Reject a valence the judge was not commissioned for, in the existing `@model_validator` (**BUILT 2026-08-23**; plus a receive-site refusal in the orchestrator's parallel path that records a `polarity violation` failure rather than flipping) | `core/blame.py:183`, `core/orchestrator.py` `_analyze` parallel branch | **done** |
+| 3 | Propagate valence to the selection unit (Q6: likely both layers) (**BUILT 2026-08-23**, propagation pinned by test; non-vacuity shown per revert) | `core/issues.py:52` `Issue` | **done** |
+| 4 | Positivity judge, mirroring Judge 1's adapter shape (**BUILT 2026-08-24**: `adapters/cuga_positivity_judge.py`, reuses cuga_analyzer grounding wholesale; polarity code-stamped; LIVE-VERIFIED against the real endpoint - 3 strengths incl. one honest self-downgrade to uncertain) | `adapters/cuga_positivity_judge.py` | **done** |
+| 5 | Protocol for it, so `core/` never imports the adapter (**BUILT 2026-08-23**: `PositivityJudge` + `FakePositivityJudge` in `core/analyzer.py`) | `core/analyzer.py:66` pattern | **done** |
+| 6 | Analyze *passing* rollouts too — the gate that currently forbids it (**BUILT 2026-08-23**, core side: opt-in via `positivity_judge=None` default; strengths ride `ObservedRollout.strengths`; wrong-polarity batches refused+recorded) | `core/orchestrator.py` `rollout_group` | **done (core)** |
+| 7 | Cross-attempt scorable-trace store (**BUILT 2026-08-23**, in-memory: `_trace_store` / `traces_for`; survives the per-attempt reset) | `core/orchestrator.py` | **done** |
+| 8 | Signed index: `cluster_id -> [(valence, severity, candidate_id, artifact_ids)]` (**BUILT 2026-08-24**: `core/mechanism_index.py` + `SequentialGepaRunner.signed_mechanism_index`; ranking = solvers by severity DESC then faults ASC; shared-namespace join proven by test) | `core/mechanism_index.py` | **done** |
+| 9 | Voluntary editor tool over the index | `adapters/cuga_editor_tools.py:83` | **new tool** |
+| 10 | Clusterer, band, adjudicator, `read_parent_artifact` | `core/clustering.py`, `cuga_editor_tools.py:218` | **reused unchanged** |
+
+Row 10 is the reason this is affordable: `_add` takes **text only**
+(`clustering.py:373`), so both polarities share one clusterer, one band, one
+adjudicator. No parallel identity machinery.
+
+##### Invariants a future session must not break
+
+1. **One namespace, sign as a field.** Measured `0.963` / `0.944` cosine between a
+   fault and its own fix (D5.1). Splitting them into `fault:` / `strength:`
+   namespaces destroys the join the feature exists to make.
+2. **Never overload `severity`'s sign.** Guards at `issues.py:85` and
+   `blame.py:187` reject it, and `w_severity * issue.severity` (`issues.py:147`)
+   would make a strength *subtract* from the quality of the issue it informs.
+3. **Polarity isolation is structural, not prompt-level** (D5.3). The prompt is
+   advice; the validator is the guarantee.
+4. **Strengths never enter `EntropyTracker`** (Q7). `H(t,m)` means disagreement
+   among failures; a mixed cell silently redefines it.
+5. **Evidence only — no selection edge** (D5.5). The editor weighs it, not the
+   arithmetic.
+6. **Degrade to the least-bad, never to empty** (D5.4). An empty list is
+   indistinguishable from "nothing measured" — the failure mode D4 exists to prevent.
+
+##### Order of work
+
+```mermaid
+flowchart LR
+    S14["fix SV-14<br/>offspring file mechanism evidence"] --> TS2["trace store<br/>retain ALL scorable traces<br/>(no quality gate at capture)"]
+    TS2 --> VAL["valence field<br/>+ validator isolation<br/><b>BUILT 2026-08-23</b>"]
+    VAL --> J2B["Judge 2 adapter<br/>+ open the phase-3 gate<br/><b>core BUILT 2026-08-23;<br/>CUGA adapter pending</b>"]
+    J2B --> IDX2["signed index"]
+    IDX2 --> TL["voluntary editor tool"]
+    style S14 fill:#d4f4d4
+```
+
+SV-14 genuinely came first: while offspring filed no mechanism evidence at commit,
+the failure side of the index was starved, and a success side layered on a starved
+failure side measures nothing. **Done 2026-08-23** — SV-14 is closed (see
+`docs/SEVERE-OPEN-ISSUES.md`); the chain now starts at TS2.
+
 ---
 
 ## 7. Open questions
@@ -341,6 +623,9 @@ precisely what the report exists to expose.
 | Q3 | Should the adjudicator verdict cache persist across runs? | Currently in-memory per instance. Persisting cuts cost but needs invalidation when the model changes. |
 | Q4 | Cross-task pooling (deferred D1) — worth it later? | Would cut evidence cost ~4x on systemic faults, but needs order-independent ids. |
 | Q5 | Do RHO and the genetic loop share a process? | Not verified. Bears on whether RHO's discarded evidence could ever feed the genetic tracker. |
+| Q6 | ~~Where does `valence` live — on `CausalFinding`, on `Issue`, or both?~~ | **RESOLVED 2026-08-23: both.** Field added to each layer with its own membership guard, and the finding→issue propagation is pinned by `tests/test_valence_polarity.py`. |
+| Q7 | ~~Does a strength observation belong in the entropy tracker at all?~~ | **RESOLVED by D5.5's scope decision.** No. D5 is evidence-only and does not touch selection, so strengths are **not** filed into `EntropyTracker` — mixing `valence=-1` scores into a cell would silently redefine `H(t,m)` from "disagreement among failures" to variance over a mixed population. The signed index is a **separate structure** (see D5.6). |
+| Q8 | Is one judge call per stored trace affordable at coreset scale? (D5.5) | Judge 2 costs one call per issue per analyzed trace; with capture ungated, *which* stored traces get analyzed becomes an index-time policy (per-cluster top-k, recency). qf36 proposes caching per `(candidate, task)`; the cache key and its invalidation are undesigned. |
 
 ---
 
@@ -371,3 +656,10 @@ inherits a false premise.
 - **Cross-task identity is unsolved**, deliberately deferred, not designed here.
 - `cell_entropy`, `top_entropy_cells`, and `entropy_weighted_with_freshness` on
   `EntropyTracker` still have **zero callers** — dead read API.
+- **D5 is entirely unbuilt.** No positivity judge exists, no `valence` field exists,
+  no cross-attempt trace store exists, and no editor tool queries a mechanism
+  cluster for its members. The three cosine figures supporting D5.1 (`0.963`,
+  `0.944`, `0.331`) come from the **real** live 768-dim embedder but on **synthetic**
+  phrasings — same caveat as §3's calibration set. Q7 in particular is resolved by
+  scope (D5 never touches selection); nothing here establishes any live behaviour
+  for D5 because none of it runs yet.

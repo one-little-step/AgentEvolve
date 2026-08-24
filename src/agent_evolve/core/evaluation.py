@@ -49,7 +49,7 @@ from agent_evolve.benchmarks.base import (
     UnknownGraderError,
 )
 from agent_evolve.core.analyzer import contract_score
-from agent_evolve.core.blame import CausalAnalysis
+from agent_evolve.core.blame import CausalAnalysis, CausalFinding
 from agent_evolve.core.contracts import (
     EvolutionTask,
     ExecutionTrace,
@@ -250,6 +250,12 @@ class ObservedRollout:
     score: RolloutScore | None
     analysis: CausalAnalysis | None = None
     error: str = ""
+    #: D5/J2B: strengths found in a SUCCESSFUL rollout by the positivity
+    # judge (only populated when one is configured). Findings, not analyses:
+    # only ``CausalFinding`` carries polarity, and strength evidence must
+    # never reach the fault-only consumers of ``analysis`` (provenance,
+    # entropy -- Q7). Empty by default and when the gate is off.
+    strengths: tuple[CausalFinding, ...] = ()
 
     @property
     def scorable(self) -> bool:

@@ -9,7 +9,6 @@ from __future__ import annotations
 import pytest
 
 from agent_evolve.core.contracts import EvolutionCandidate
-from agent_evolve.core.blame import empty_analysis
 from agent_evolve.core.editor import FocusedValidationReport
 from agent_evolve.core.pool import PersistentPool, ScoreProvenance
 
@@ -134,7 +133,6 @@ def test_ancestors_accumulate_across_generations_without_loss() -> None:
         runner.adapter.materialize_candidate(first.candidate.version, "att-gen2"),
         "att-gen2",
         FocusedValidationReport(origin=(), worked=(), regression=()),
-        empty_analysis(),
         extra_parent_ids=("donor-2",),
     )
     ancestors = set(second.candidate.ancestor_ids)

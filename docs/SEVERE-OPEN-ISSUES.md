@@ -1,8 +1,12 @@
 # SEVERE OPEN ISSUES — measurement-instrument defects
 
 **Status: gated per item, not as a block.** SV-2, SV-3, SV-4, SV-5, SV-6, SV-8,
-SV-9, SV-10, SV-11, SV-12 and SV-13 are **CLOSED**. SV-1 is **RECLASSIFIED** — the
-documented defect does not exist and the real one is milder.
+SV-9, SV-10, SV-11, SV-12, SV-13 and SV-14 are **CLOSED** (SV-14 on 2026-08-23).
+SV-1 is **RECLASSIFIED** — the documented defect does not exist and the real one is
+milder. SV-14 was opened after SV-12 closed; it is a mechanism *behind* SV-12's
+symptom, so SV-12's closure covered the keying defect it names and not this one —
+which is now fixed and verified offline (see its item for what that verification
+covered and excluded).
 
 **SV-7 is NARROWED to LOW** (was MEDIUM). Both of its structural explanations are
 now eliminated by offline tests: the judge slots and rollout grid were exonerated
@@ -30,6 +34,16 @@ aggregated into `GepaRunResult` and the per-iteration audit record. Cross-task
 mechanism identity is **deferred by design decision**, not left open — see
 `docs/design/issue-lifecycle.md` D1: variance is computed *within* one task across
 candidates, so task-local identity is sufficient for the objective.
+
+**SV-14 CLOSED 2026-08-23** (opened 2026-08-21). At open: an accepted offspring
+joined the pool
+carrying **its parent's diagnosis, never its own**. `commit_to_pool` is handed the
+`analysis` built from the *parent's* rollout, and `validate` — which does invoke
+the analyzer on the child's failing probes, and pays for it — discards every
+result. Consequences: offspring provenance is mislabelled, and because
+`_record_entropy_evidence` is reachable only from `build_issues`, a new candidate
+files **no entropy evidence at all** until some later attempt happens to select it
+as parent. This is a live contributor to SV-12's floors never clearing.
 
 The whole champion-math chain closed on 2026-08-20: ranking is now a pairwise
 comparison over the cells two candidates share, so the weighted aggregate is a
@@ -98,6 +112,7 @@ deltas.
 | **SV-8** | **CLOSED 2026-08-20** — the base harness offered only `instructions`, so an editor could not have edited another surface even when the evidence pointed there. Empty `skills`/`memory`/`policies` slots are now seeded, and the creation prefixes widened to match. Authored content is never overwritten. | `tests/test_multi_surface_seeding.py`. |
 | **SV-11** | **CLOSED 2026-08-20** — `build_issues` hardcoded `pool.base` for the rollout, the write set, the inventory *and* the score attribution, so base absorbed every re-observation (measured: base 12 rollouts, every candidate 2). It now observes `select_parent()` at unchanged rollout cost. Two register claims were corrected in the process: the named site `:541` is dead code with zero callers, and `run_attempt` already analyzed the selected parent. | `tests/test_parent_observation.py` — behavioural: which version the adapter rolls out, and which entry's cells receive the scores. |
 | **SV-13** | **CLOSED 2026-08-20** (architecture decision, not a defect) — soft generational retirement. When the symmetric pairwise judge prefers an accepted offspring over its parent, the parent is excluded from parent sampling, the Pareto frontier and champion selection, while every score cell, lineage link and preference record is **kept**. Judge outage, a tie, an unavailable verdict or an incomplete trace pair all leave the parent alive; the live pool is never emptied. Costs `2k` judge calls and **zero** rollouts, because both trace sets already exist at commit time. | `tests/test_generational_retirement.py`, `tests/test_retirement_decision.py`, `tests/test_retirement_wiring.py`. See `AGENTS.md` for the rationale. |
+| **SV-14** | **CLOSED 2026-08-23** - provenance now comes per task from the child's own validation-time analyses, with explicit absence (`blame_confidence=None`) where none exists; the paid-for child analyses are retained instead of discarded; diagnosed offspring file mechanism-keyed entropy evidence at commit. Non-vacuity proven by three separate reverts. | Reproduced offline on the production `SequentialGepaRunner` in both directions: pre-fix an all-failing child **produced 2 analyses and retained 0**; post-fix all four behavioural tests went red → green → revert-verified. |
 
 Suite after SV-10: **1961 collected, 0 failed** (1952 plus 8 SV-10 tests and 1 new
 B1 sibling-lineage test). Logs in `terminal_output/sv10/`.
@@ -132,6 +147,10 @@ flowchart TB
         R3["<b>SV-10</b> CLOSED: parent faults routed to the editor<br/>ParentContext.issues, zero new rollouts<br/><i>editor.py, orchestrator.py, cuga_editor_tools.py</i>"]
     end
 
+    subgraph DONE4["CLOSED 2026-08-23 — offspring evidence"]
+        R4["<b>SV-14</b> CLOSED: offspring carry their OWN diagnosis<br/>per-task provenance, explicit absence otherwise;<br/>child analyses retained + entropy filed at commit<br/><i>orchestrator.py validate/commit_to_pool, pool.py</i>"]
+    end
+
     subgraph OFFLINE["OPEN — offline-fixable, no proxy needed"]
         R2["<b>SV-12</b> entropy floors never cleared<br/>DPP degrades to quality ranking"]
     end
@@ -144,6 +163,7 @@ flowchart TB
 
     B --> C --> E
     R3 -.->|"per-parent evidence now exists;<br/>SV-12's placeholder cluster id remains"| R2
+    R4 -.->|"was: offspring filed no entropy evidence,<br/>starving the comparable-candidate floor;<br/>fixed 2026-08-23 — availability re-measure still owed"| R2
     P --> G
     P --> V
 
@@ -157,6 +177,7 @@ flowchart TB
     style R3 fill:#d4f4d4
     style G fill:#fff4cc
     style V fill:#fff4cc
+    style R4 fill:#d4f4d4
     style P fill:#d6eaff
 ```
 
@@ -200,6 +221,24 @@ SV-11 is now independent of SV-1.
 
 SV-8 still depends on SV-6, which is now satisfied: an editor with no history
 could not be expected to explore new surfaces, and it now has history.
+
+**SV-14 goes before any further SV-12 work, added 2026-08-21.** SV-12 is recorded
+as closed for the defect it names — the mechanism *keying* — and that closure
+stands. But its observable symptom, `floor_unmet`, has a second cause: offspring
+file no entropy evidence at commit time, because the only route into
+`_record_entropy_evidence` runs through `build_issues`, which observes the selected
+parent. Any attempt to raise entropy availability by tuning floors, thresholds or
+cluster caps before SV-14 is fixed would be tuning against a starved input, and the
+same class of wasted work the SV-2/SV-3 ordering already demonstrated. Fix the
+evidence path first, then re-measure availability, then decide whether the floors
+need anything.
+
+Done 2026-08-23: the evidence path is fixed (see SV-14's item). The re-measure of
+availability on a multi-attempt loop, and any floor decision after it, remain open.
+
+Note SV-14 is **independent of SV-7**. SV-7 asks whether the judge received two
+different trajectories; SV-14 concerns what is recorded about a candidate after the
+judge has run. Neither blocks the other.
 
 ---
 
@@ -1635,6 +1674,192 @@ read.
 
 ---
 
+## SV-14 — an offspring joins the pool carrying its parent's diagnosis
+
+**Severity: HIGH. Opened 2026-08-21. Two defects with one root, both silent.
+CLOSED 2026-08-23** — fixed per the fix direction below; verification coverage and
+its limits are recorded at the test-plan paragraph.
+
+Found while answering a direct question: *after an offspring is validated, does it
+go through the analyzer again to gather its own issues before joining the pool?*
+It does not. Reading `SequentialGepaRunner.run_attempt`
+(`orchestrator.py:2383`) end to end, the accept path is:
+
+```text
+build_issues(tasks)              L2414   analyzer runs on the PARENT
+  analysis = parent_rollout.analysis     L2474
+propose_edits(...)               L2489   editor gets the PARENT's diagnosis
+apply_structured_edits(...)      L2507
+validate(workspace, ...)         L2509   child rolled out + scored
+decide_acceptance(...)           L2510
+commit_to_pool(..., analysis)    L2521   the SAME parent `analysis` object
+```
+
+### Defect 1 — offspring provenance is attributed to the parent's analysis
+
+`commit_to_pool` (`orchestrator.py:2310`) takes `analysis: CausalAnalysis` and
+writes two fields from it into **every** score cell of the new candidate:
+
+```python
+analyzer_model_id=analysis.analyzer_model_id,           # orchestrator.py:2352
+blame_confidence=min(1.0, analysis.blame_graph.total_blame()),  # :2357
+```
+
+That `analysis` describes the **parent's** failure on the **origin task only**. It
+is stamped onto the child's cells for the origin task *and* every regression task.
+So `blame_confidence` on an offspring cell is not a statement about that
+offspring's behaviour on that task — it is a copy of one parent measurement,
+replicated across the row. Anything that later reads provenance to ask *"how
+confident was the diagnosis behind this candidate's score?"* gets an answer about a
+different candidate and, for regression cells, a different task.
+
+This is not caught by the SV-1 exemption. SV-1 established that
+`ScoreProvenance.severity` is never written and `weighted_score() == mean`.
+`blame_confidence` and `analyzer_model_id` *are* written, on both pool-write paths.
+
+### Defect 2 — the child's own analyses are produced, paid for, and thrown away
+
+`validate` (`orchestrator.py:2222`) calls `rollout_group` (L2244), and
+`rollout_group` (`orchestrator.py:1358`) analyzes as its documented phase 3:
+
+```python
+# Only answered failures are worth a model call.        orchestrator.py:1401
+to_analyze = [(o, s) for o, s in scored
+              if o.trace is not None and s.scorable and not s.passed]
+analyses = self._analyze(to_analyze)                  # orchestrator.py:1407
+```
+
+`validate` then keeps `rollout.trace` (into `_last_validation_traces`, L2263, for
+SV-13 retirement) and `rollout.score` — and never touches `rollout.analysis`. The
+string `analysis` occurs **zero times** in the body of `validate`.
+
+**Reproduced on the production runner, offline.** Forcing a child whose probes all
+fail:
+
+```text
+=== validate() on an all-failing child ===
+  probes recorded            : 2
+  child analyses PRODUCED    : 2      <- paid model calls
+  child analyses RETAINED    : 0
+  ValidationResult fields: ['kind', 'task_id', 'score', 'trace_id',
+                            'passed', 'mechanism_cluster_id']
+  -> no field can carry a CausalAnalysis
+```
+
+`ValidationResult` (`core/editor.py:247`) has no field able to hold one, so the
+discard is structural rather than an omitted assignment. Cost is up to one
+analyzer call per failing probe per attempt, and the probe set is origin plus every
+regression task — i.e. the whole coreset.
+
+Note the default offline fake harness **cannot** show this: its child passes every
+probe, so `to_analyze` is empty and the measured discard is `0`. The forced-failure
+scorer above is what makes the waste observable. Any future test must force a
+failing probe or it will pass vacuously.
+
+### Why this is a measurement-instrument defect, not a cost bug
+
+`_record_entropy_evidence` (`orchestrator.py:1760`) is reachable from exactly one
+place. Verified by AST caller search inside the class:
+
+```text
+_record_entropy_evidence  <- _record_rollout_score (L1710)
+_record_rollout_score     <- build_issues (L1619)
+```
+
+`build_issues` observes only `select_parent()`. Therefore **an accepted offspring
+files no entropy evidence when it is committed.** Its mechanism-keyed cells stay
+empty until some later attempt happens to draw it as parent — and `select_parent`
+only returns candidates holding winning-cell evidence, which is itself partly a
+function of having been observed.
+
+That is the same shape as the SV-11 defect described in `build_issues`' own
+docstring (`orchestrator.py:1633-1641`): evidence concentrating on whoever happens
+to be the observation subject. SV-11 moved the subject from base to the selected
+parent; it did not make commit-time offspring evidence exist. So SV-12's
+`floor_unmet` — needing ≥3 comparable candidates per cell — has a second live
+cause that survived SV-12's closure. **SV-12 closed the keying defect it named;
+this is a starvation defect it did not.**
+
+### What is *not* claimed
+
+- **Not** established as the sole cause of SV-12's `floor_unmet=3`. It is one
+  mechanism; the offline harness's post-attempt-1 perfection is another.
+- **Not** established that re-analyzing the child is the right fix. Reusing the
+  parent's analysis for provenance may be a deliberate simplification — the code
+  carries no comment either way, which is itself the problem.
+- **No** behavioural gain or loss is measured. Nothing here has run live.
+- Only the genetic path (`SequentialGepaRunner`) was traced.
+  `core/rho/rounds.py` contains no `analyze`/`analysis` reference at all, so the
+  RHO path routes diagnosis differently and is **not** covered by this item.
+
+### Fix direction, in dependency order
+
+1. **Stop discarding first — it is nearly free.** Give the child's analyses
+   somewhere to go out of `validate`. That means either a field on
+   `ValidationResult` or a `_last_validation_analyses` map alongside
+   `_last_validation_traces` (L2258), which is the cheaper and more local of the
+   two and mirrors an existing pattern.
+   **DONE 2026-08-23:** both a `_last_validation_analyses` map (task → analysis,
+   present only where the diagnose gate produced one) and a
+   `_last_validation_rollouts` tuple (scorable child rollouts, for entropy
+   filing), reset per call; `ValidationResult` left untouched.
+2. **Then correct provenance.** `commit_to_pool` should write per-task provenance
+   from the child's own analysis where one exists, and record *absence* explicitly
+   where none does — a passing probe legitimately has no diagnosis, and inventing
+   `blame_confidence=0.0` for it would repeat the SV-12 lesson that a blank is
+   indistinguishable from a measurement. Prefer omission over a stand-in.
+   **DONE 2026-08-23:** per-task lookup from the retained rollouts; absence =
+   empty analyzer id + `blame_confidence=None`; `ScoreProvenance.blame_confidence`
+   widened to `float | None` with its guard updated. The parent-analysis
+   parameter was **removed** from `commit_to_pool`, so the stamp-in cannot be
+   silently reintroduced by a future caller.
+3. **Then file offspring entropy evidence at commit.** Route the retained child
+   analyses through `_record_entropy_evidence`. Note this changes *which*
+   candidates clear the comparable floor, so it must be measured against SV-12's
+   `EntropyAvailabilityReport` before and after, and the pool's constant key must
+   stay constant — the two key policies are separate for the reason recorded in
+   `AGENTS.md` and `orchestrator.py:1034-1060`.
+   **DONE 2026-08-23:** every scorable validation rollout is filed at commit;
+   pool key untouched. Coverage limit: unit/direct-commit level only — the
+   multi-attempt availability delta has **not** been measured yet.
+4. **Only then** consider whether the editor should also receive the child's own
+   post-edit faults on a retry. That is a scope question, not part of this defect.
+
+**Proxy need:** none. Every claim above is offline-provable, and one half is
+already reproduced. The proxy would only confirm the wasted calls are real HTTP
+traffic — which is worth a glance during the live run, not a gate.
+
+**Test plan, before implementation** (per `AGENTS.md`): assert the *fate* of the
+child analysis behaviourally, not by call count alone — a spy that counts analyzer
+invocations passes whether or not the result is retained. Force a failing probe,
+then assert the child's own analysis reaches the child's provenance and the entropy
+tracker. Prove non-vacuity by reverting each half separately.
+
+**Executed 2026-08-23** — `tests/test_sv14_offspring_provenance.py`, 4 tests, all
+red before the fix, green after:
+
+- retention revert (analyses + rollouts not stored) kills
+  `test_validate_retains_the_childs_own_analyses` **only**;
+- stand-in revert (`"parent-standin"` / `1.0` on undiagnosed cells — defect 1
+  reborn) kills all three provenance tests;
+- filing revert kills the entropy-filing test **only**.
+
+Also pinned: `decide_acceptance` requires every probe to pass, so an accepted
+child legitimately carries no diagnosis today — the end-to-end fate test asserts
+explicit absence on its committed cells, which is what guards against any future
+silent stamp-in rather than against the historical code shape.
+
+Follow-up noted, deliberately out of scope here: `_record_rollout_score` still
+writes `""`/`0.0` when a parent observation has no analysis — the same
+blank-vs-absent question on the parent observation path, untouched by this fix.
+
+Full-suite context: 2098 passed / 9 failed / 3 skipped on the Windows machine,
+the 9 being pre-existing platform defects (`.sh` worker stubs under
+`cuga_process_pool`, POSIX-path assertions) in modules that never touch the
+changed surface; none reference the modified symbols.
+
+---
+
 ## What the proxy must capture to close these
 
 **Status 2026-08-19 — the proxy is BUILT.** See `docker/observability/` (mitmproxy
@@ -1687,6 +1912,11 @@ alongside it:
   so a quality-only selection is indistinguishable from a diversity-driven one.
 - **SV-11's fix** (as opposed to its verification) — rolling out and analyzing the
   selected parent is a scheduling and budget change, not an observability one.
+- **SV-14** — RESOLVED OFFLINE 2026-08-23, exactly as predicted here: both halves
+  were deterministic code defects provable by executing the real runner; the proxy
+  was never needed. See the item for coverage and limits.
+
+(Two items remain in this list after SV-14's resolution.)
 
 Done 2026-08-20: reporting the comparable-cell count behind every champion decision
 (the SV-2/SV-3 instrumentation item) is now `ChampionReport.comparable_cells`.
@@ -1711,6 +1941,13 @@ editor receives each parent's diagnosed faults. Note this makes *targeting*
 possible; directed **crossover** remains unavailable because `core/merge.py` has
 no production caller.
 
+No longer applicable, as of 2026-08-23:
+
+- offspring score cells carrying their **parent's** `blame_confidence` and
+  `analyzer_model_id`, and offspring filing no entropy evidence at commit
+  (**SV-14**) — provenance is now per task from the child's own diagnoses or
+  explicitly absent, and diagnosed offspring file mechanism evidence at commit.
+
 No longer applicable, as of 2026-08-20:
 
 - champion selection preferring a **worse** candidate (SV-2, SV-3, SV-4) — ranking
@@ -1720,7 +1957,11 @@ No longer applicable, as of 2026-08-20:
   manifest no longer overstates the method;
 - the RHO optimizer operating with **no history and no parents** (SV-8);
 - **only the base ever being analyzed** (SV-11) — the selected parent is now the
-  observation subject.
+  observation subject. Read this narrowly: it fixed *which* candidate is the
+  observation subject, and did **not** make an offspring analyzed as its own
+  subject when it is committed. See SV-14 — whose fix (2026-08-23) has since made
+  the commit-time recording describe the child, though an offspring is still not
+  *re-analyzed* as a fresh observation subject at commit.
 
 No longer applicable, as of 2026-08-19:
 
@@ -1739,3 +1980,10 @@ not population-based evolution, and no crossover runs at all
 Any reported delta must state which of these were still open when it was measured.
 For runs after 2026-08-19, SV-1 (as a selection bias), SV-6 and SV-9 were closed;
 everything else in this file was open.
+
+**For runs after 2026-08-23: SV-14 is closed.** Runs measured 2026-08-21 through
+2026-08-22 sit under open SV-14; earlier runs sit under whatever else this file
+listed as open at their date. Every offspring provenance figure and every
+entropy-availability figure recorded before 2026-08-23 was produced under open
+SV-14 — no live run has happened, so the figures in question are offline ones, but
+the same read-with-care rule applies to them.

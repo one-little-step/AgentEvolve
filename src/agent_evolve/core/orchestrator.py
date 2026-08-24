@@ -31,6 +31,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 from agent_evolve.core.analyzer import (
     AnalyzerJudge,
     FakeAnalyzerJudge,
+    PositivityJudge,
     ReportAnalyzerJudge,
     as_legacy_analyzer,
     contract_score,
@@ -55,8 +56,7 @@ from agent_evolve.core.clustering import (
     ClusterRegistry,
     LexicalEmbedder,
     MechanismClusterer,
-    MechanismEmbedder,
-)
+    MechanismEmbedder,)
 from agent_evolve.core.config import BudgetLimits, BudgetUsage, ResolvedConfig
 from agent_evolve.core.contracts import (
     ArtifactEdit,
@@ -109,6 +109,7 @@ from agent_evolve.core.issues import (
     IssueSelectionReport as TargetIssueSelectionReport,
     build_issue as build_target_issue,
 )
+from agent_evolve.core.mechanism_index import IndexEntry, SignedMechanismIndex
 from agent_evolve.core.memory import (
     AttemptStatus,
     EditAttempt,
@@ -1113,6 +1114,50 @@ class SequentialGepaRunner:
     _last_observation_traces: dict[str, ExecutionTrace] = field(
         default_factory=dict, repr=False
     )
+    #: SV-14: the child's own diagnoses from the last ``validate``, keyed by
+    #: task id (present only where the diagnose gate produced one). These
+    #: analyses were already paid for by ``rollout_group``'s phase 3; without
+    #: this map they were discarded, and ``commit_to_pool`` stamped the
+    #: *parent's* analysis onto every offspring cell instead.
+    _last_validation_analyses: dict[str, CausalAnalysis] = field(
+        default_factory=dict, repr=False
+    )
+    #: SV-14: every scorable child rollout from the last ``validate``, retained
+    #: so an accepted commit can file the offspring's mechanism evidence via
+    #: ``_record_entropy_evidence`` -- the only route that function had ran
+    #: through ``build_issues``, i.e. through whoever was observed as parent.
+    _last_validation_rollouts: tuple[ObservedRollout, ...] = field(
+        default=(), repr=False
+    )
+    #: TS2 (D5 prerequisite): the cross-attempt trace store. Every *scorable*
+    #: rollout of any score is appended under ``(candidate_id, task_id)`` --
+    #: no quality gate at capture, because complementarity is relative per
+    #: mechanism: a 0.4 may be the best any candidate has done on a task, and
+    #: the editor tool degrades to least-bad failures, which requires failure
+    #: traces here. Unscorable rollouts stay excluded (SV-9). This survives
+    #: the per-attempt resets of ``_last_validation_traces`` and
+    #: ``_last_observation_traces``; it dies with the runner, deliberately:
+    #: raw traces never reach storage (``_persist_attempt`` invariant), and
+    #: the storage sanitizer's 2000-char truncation would return them
+    #: silently amputated.
+    _trace_store: dict[tuple[str, str], list[ObservedRollout]] = field(
+        default_factory=dict, repr=False
+    )
+    #: D5/J2B: the positivity judge (Judge 2). ``None`` -- the default --
+    #: keeps the runner byte-identical to the pre-D5 behaviour and costs
+    #: nothing; when configured, the phase-3 gate ALSO analyzes *passing
+    #: scorable* rollouts (+1 model call each, opt-in spend) and their
+    #: strength findings ride ``ObservedRollout.strengths`` into the TS2
+    #: store for the future signed index.
+    positivity_judge: PositivityJudge | None = None
+    #: How many success analyses the configured judge has been asked for.
+    _positivity_calls: int = field(default=0, repr=False)
+    #: Refused batches: (trace_id, reason). A positivity judge returning any
+    #: non-(-1) finding has its WHOLE batch refused here -- refuse, never
+    #: flip, so a mis-wired adapter surfaces instead of poisoning the index.
+    _positivity_failures: list[tuple[str, str]] = field(
+        default_factory=list, repr=False
+    )
     #: SV-10: the parent ``build_issues`` observed, and every fault it diagnosed
     #: for that parent. ``run_attempt`` reuses both instead of drawing a second,
     #: independent parent and discarding all but the one worked issue.
@@ -1406,10 +1451,49 @@ class SequentialGepaRunner:
         ]
         analyses = self._analyze(to_analyze)
 
+        # D5/J2B: with a positivity judge configured, the gate ALSO opens for
+        # answered SUCCESSES -- strengths are evidence for the editor index.
+        # Off by default (positivity_judge=None): this loop never runs.
+        strengths_by_rollout: dict[tuple[str, int], tuple[CausalFinding, ...]] = {}
+        if self.positivity_judge is not None:
+            to_posit = [
+                (outcome, score)
+                for outcome, score in scored
+                if outcome.trace is not None and score.scorable and score.passed
+            ]
+            for outcome, _score in to_posit:
+                assert outcome.trace is not None
+                self._positivity_calls += 1
+                findings = self.positivity_judge.analyze_success(
+                    outcome.task, outcome.trace
+                )
+                bad = [
+                    f
+                    for f in findings
+                    if getattr(f, "valence", -1) != -1
+                ]
+                if bad:
+                    reason = (
+                        "polarity violation: the positivity judge returned "
+                        f"{len(bad)} non-strength finding(s) for trace "
+                        f"{outcome.trace.trace_id!r}; Judge 2 may only emit "
+                        "strengths -- batch refused, not flipped"
+                    )
+                    self._positivity_failures.append(
+                        (outcome.trace.trace_id, reason)
+                    )
+                    continue
+                strengths_by_rollout[
+                    (outcome.task.task_id, id(outcome))
+                ] = tuple(findings)
+
         observed: list[ObservedRollout] = []
         for outcome, score in scored:
             analysis, error = analyses.get(
                 (outcome.task.task_id, id(outcome)), (None, "")
+            )
+            strengths = strengths_by_rollout.get(
+                (outcome.task.task_id, id(outcome)), ()
             )
             observed.append(
                 ObservedRollout(
@@ -1418,6 +1502,7 @@ class SequentialGepaRunner:
                     score=score,
                     analysis=analysis,
                     error=outcome.error or error,
+                    strengths=strengths,
                 )
             )
         return tuple(observed)
@@ -1482,8 +1567,29 @@ class SequentialGepaRunner:
                 )
                 out[key] = (None, error)
                 continue
+            finding = findings[0]
+            # D5.3 wall: this receive site belongs to Judge 1, whose only
+            # legal polarity is the fault (+1). A strength here means a
+            # mis-wired adapter; it is refused and recorded, never flipped
+            # -- a silent flip would hide the wiring defect.
+            if getattr(finding, "valence", 1) != 1:
+                error = (
+                    "polarity violation: the failure analyzer produced a "
+                    f"valence={getattr(finding, 'valence', 1)} finding "
+                    f"({finding.verdict_id!r}); Judge 1 may only emit faults"
+                )
+                self._analysis_failures.append(
+                    AnalysisOutcome(
+                        report=analysis_outcome.report,
+                        findings=(),
+                        error=error,
+                        ok=False,
+                    )
+                )
+                out[key] = (None, error)
+                continue
             analysis = analysis_from_finding(
-                findings[0],
+                finding,
                 score=score.score,
                 analyzer_model_id=str(
                     getattr(factory, "analyzer_model_id", "") or ""
@@ -1576,6 +1682,9 @@ class SequentialGepaRunner:
                 candidate_id=candidate_id,
                 task_id=task.task_id,
                 trace_id=trace_id,
+                # D5.3: this seam converts Judge 1 analyses, so the polarity
+                # is stamped in code -- faults only.
+                valence=1,
                 status="insufficient_evidence",
                 mechanism_description=analysis.mechanism,
                 mechanism_cluster_id=self.mechanism_cluster_id,
@@ -1600,6 +1709,9 @@ class SequentialGepaRunner:
             candidate_id=candidate_id,
             task_id=task.task_id,
             trace_id=trace_id,
+            # D5.3: this seam converts Judge 1 analyses, so the polarity is
+            # stamped in code -- faults only.
+            valence=1,
             status="observed",
             mechanism_description=analysis.mechanism,
             mechanism_cluster_id=self.mechanism_cluster_id,
@@ -1670,6 +1782,8 @@ class SequentialGepaRunner:
                 continue
             self._last_observation_traces[rollout.task.task_id] = rollout.trace
             self._record_rollout_score(parent.candidate_id, rollout)
+            # TS2: the parent's observations are evidence too, pass or fail.
+            self._record_stored_trace(parent.candidate_id, rollout)
             if rollout.score.passed:
                 continue
             analysis = rollout.analysis
@@ -1756,6 +1870,115 @@ class SequentialGepaRunner:
         # base rollouts precede phase-6 diagnosis), so no retroactive re-filing
         # is needed. The pool write above deliberately keeps the constant key.
         self._record_entropy_evidence(candidate_id, rollout)
+
+    # ------------------------------------------------------------------ #
+    # TS2: cross-attempt trace store
+    # ------------------------------------------------------------------ #
+    def _record_stored_trace(
+        self, candidate_id: str, rollout: ObservedRollout
+    ) -> None:
+        """Append one scorable rollout to the cross-attempt store.
+
+        Callers have already filtered unscorable rollouts; this re-checks
+        rather than trusting that, because a crashed rollout in the store
+        would hand Judge 2 an outage to diagnose as if it were behaviour.
+        """
+        if rollout.trace is None or rollout.score is None or not rollout.scorable:
+            return
+        key = (candidate_id, rollout.task.task_id)
+        self._trace_store.setdefault(key, []).append(rollout)
+
+    def traces_for(
+        self, candidate_id: str, task_id: str
+    ) -> tuple[ObservedRollout, ...]:
+        """Every stored scorable rollout for one candidate on one task.
+
+        Read API for the future positivity judge and signed index (D5.6).
+        Returns them in observation order; empty when nothing was stored.
+        """
+        return tuple(self._trace_store.get((candidate_id, task_id), ()))
+
+    def signed_mechanism_index(self) -> SignedMechanismIndex:
+        """IDX2: build the ranked complementary-parenthood index.
+
+        Walks the TS2 cross-attempt store and files every diagnosed member:
+
+        * strengths (``valence=-1``) from passing rollouts, clustered via
+          ``assign_finding`` -- the SAME namespace faults use (D5.1);
+        * faults (``valence=+1``) from failing rollouts' analyses, clustered
+          via ``assign``.
+
+        Honesty: unscorable rollouts, undiagnosed failures, and clusterer
+        refusals contribute no entry -- an empty cluster is never padded.
+        Raises when no cluster registry is configured rather than returning
+        a silently empty index.
+        """
+        registry = self.cluster_registry
+        if registry is None:
+            raise ValueError(
+                "no cluster registry configured: mechanism indexing requires "
+                "an embedder-backed clusterer (pass embedder=/configure one)"
+            )
+        index = SignedMechanismIndex()
+        for (candidate_id, task_id), rollouts in self._trace_store.items():
+            clusterer = registry.clusterer_for(task_id)
+            for rollout in rollouts:
+                if (
+                    rollout.trace is None
+                    or rollout.score is None
+                    or not rollout.scorable
+                ):
+                    continue
+                # Strengths first: solvers are the reason this index exists.
+                for finding in rollout.strengths:
+                    assignment = clusterer.assign(finding)
+                    if not assignment.cluster_id:
+                        continue
+                    index.add(
+                        IndexEntry(
+                            valence=-1,
+                            severity=float(finding.severity or 0.0),
+                            candidate_id=candidate_id,
+                            task_id=task_id,
+                            cluster_id=f"{task_id}:{assignment.cluster_id}",
+                            artifact_ids=tuple(
+                                sorted(
+                                    {
+                                        a
+                                        for n in finding.blame_graph.nodes
+                                        for a in n.artifacts
+                                    }
+                                )
+                            ),
+                            trace_id=rollout.trace.trace_id,
+                        )
+                    )
+                analysis = rollout.analysis
+                if analysis is None:
+                    continue
+                assignment = clusterer.assign(analysis)
+                if not assignment.cluster_id:
+                    continue
+                index.add(
+                    IndexEntry(
+                        valence=1,
+                        severity=float(analysis.severity),
+                        candidate_id=candidate_id,
+                        task_id=task_id,
+                        cluster_id=f"{task_id}:{assignment.cluster_id}",
+                        artifact_ids=tuple(
+                            sorted(
+                                {
+                                    a
+                                    for n in analysis.blame_graph.nodes
+                                    for a in n.artifacts
+                                }
+                            )
+                        ),
+                        trace_id=rollout.trace.trace_id,
+                    )
+                )
+        return index
 
     def _record_entropy_evidence(
         self, candidate_id: str, rollout: ObservedRollout
@@ -2256,11 +2479,21 @@ class SequentialGepaRunner:
         # retirement cost judge calls only, and a judge call is far cheaper than
         # a rollout.
         self._last_validation_traces = {}
+        # SV-14: same retention pattern as the traces above, for the child's
+        # own analyses and its scorable rollouts. Reset per call so a later
+        # commit can never see a previous attempt's diagnoses.
+        self._last_validation_analyses = {}
+        validation_rollouts: list[ObservedRollout] = []
         for probe, rollout in zip(probes, observed, strict=True):
             if rollout.trace is None or rollout.score is None or not rollout.scorable:
                 self._unscorable_probes += 1
                 continue
             self._last_validation_traces[probe.task.task_id] = rollout.trace
+            if rollout.analysis is not None:
+                self._last_validation_analyses[probe.task.task_id] = rollout.analysis
+            validation_rollouts.append(rollout)
+            # TS2: cross-attempt retention, no quality gate (see field docs).
+            self._record_stored_trace(workspace.version, rollout)
             outcome = ValidationResult(
                 kind=probe.kind,
                 task_id=probe.task.task_id,
@@ -2273,6 +2506,7 @@ class SequentialGepaRunner:
                 regression.append(outcome)
             else:
                 origin.append(outcome)
+        self._last_validation_rollouts = tuple(validation_rollouts)
         return FocusedValidationReport(
             origin=tuple(origin), worked=(), regression=tuple(regression)
         )
@@ -2303,7 +2537,6 @@ class SequentialGepaRunner:
             workspace,
             attempt_id,
             _Report(origin=(), worked=(), regression=()),
-            empty_analysis(),
             extra_parent_ids=extra_parent_ids,
         )
 
@@ -2313,7 +2546,7 @@ class SequentialGepaRunner:
         workspace: CandidateWorkspace,
         attempt_id: str,
         report: FocusedValidationReport,
-        analysis: CausalAnalysis,
+        validation_rollouts: Sequence[ObservedRollout] = (),
         extra_parent_ids: Sequence[str] = (),
     ) -> PoolEntry:
         """Publish an accepted candidate with its post-edit score evidence.
@@ -2321,6 +2554,19 @@ class SequentialGepaRunner:
         ``extra_parent_ids`` carries donor parents the editor actually read.
         They come from tool-execution evidence, never from editor narration, so
         lineage cannot claim a donor the editor merely had access to.
+
+        SV-14: provenance is per task and describes **the child**. Where
+        ``validation_rollouts`` carries a diagnosis for a result's task, that
+        diagnosis supplies ``analyzer_model_id`` and ``blame_confidence``;
+        where it does not -- a passing probe legitimately has none -- absence
+        is recorded explicitly (empty analyzer id, ``blame_confidence=None``).
+        The pre-SV-14 behaviour copied one parent analysis across every cell of
+        the new candidate, attributing the parent's diagnosis to the child,
+        regression tasks included. The diagnosed rollouts are also filed into
+        the mechanism-keyed entropy tracker under the child, so an accepted
+        offspring no longer stays invisible to cross-candidate variance until
+        some later attempt happens to observe it. The pool's score-tensor key
+        stays constant; only the tracker keys by mechanism.
         """
         parent_ids = tuple(
             sorted({parent_entry.candidate_id, *extra_parent_ids})
@@ -2339,8 +2585,14 @@ class SequentialGepaRunner:
             attempt_ids=(attempt_id,),
         )
         entry = self.pool.add_candidate(candidate, origin_attempt_ids=(attempt_id,))
+        analyses_by_task = {
+            ro.task.task_id: ro.analysis
+            for ro in validation_rollouts
+            if ro.scorable and ro.analysis is not None
+        }
         for result in report.all_results:
             cell = entry.cell(result.task_id, self.mechanism_cluster_id)
+            child_analysis = analyses_by_task.get(result.task_id)
             self.pool.record_score(
                 entry.candidate_id,
                 result.score,
@@ -2349,16 +2601,32 @@ class SequentialGepaRunner:
                     mechanism_cluster_id=self.mechanism_cluster_id,
                     trace_id=result.trace_id,
                     rollout_seq=cell.rollout_count,
-                    analyzer_model_id=analysis.analyzer_model_id,
+                    # SV-14: the child's own diagnosis on this task, or
+                    # explicit absence. Never another candidate's analysis.
+                    analyzer_model_id=(
+                        child_analysis.analyzer_model_id
+                        if child_analysis is not None
+                        else ""
+                    ),
                     # The grader that produced this score, not the analyzer's
                     # judge: the validation results came from ``validate``, which
                     # measures with ``resolved_scorer``.
                     judge_model_id=self.grader_name,
-                    blame_confidence=min(1.0, analysis.blame_graph.total_blame()),
+                    blame_confidence=(
+                        min(1.0, child_analysis.blame_graph.total_blame())
+                        if child_analysis is not None
+                        else None
+                    ),
                     blame_stability=1.0,
                     artifact_versions=dict(candidate.artifact_hashes),
                 ),
             )
+        # SV-14 step 3: file the offspring's mechanism evidence at commit.
+        # ``_record_entropy_evidence`` skips honestly when a rollout carries no
+        # usable mechanism (no diagnosis, unassigned cluster), so passing every
+        # scorable rollout records exactly what exists -- nothing invented.
+        for rollout in validation_rollouts:
+            self._record_entropy_evidence(entry.candidate_id, rollout)
         return entry
 
     def measure(
@@ -2518,12 +2786,15 @@ class SequentialGepaRunner:
         retirement_reason = ""
         if decision.accepted:
             self._budget.accepted_edits += 1
+            # SV-14: the child commits with its own validation-time diagnoses
+            # (and files its own entropy evidence); the parent's ``analysis``
+            # stays out of the offspring's provenance.
             committed = self.commit_to_pool(
                 parent,
                 workspace,
                 attempt_id,
                 validation,
-                analysis,
+                validation_rollouts=self._last_validation_rollouts,
                 extra_parent_ids=observed_parents,
             )
             result_candidate_id = committed.candidate_id

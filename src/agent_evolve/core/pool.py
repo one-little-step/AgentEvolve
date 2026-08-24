@@ -59,7 +59,13 @@ class ScoreProvenance:
     rollout_seq: int  # which rollout this was (0-indexed within the cell)
     analyzer_model_id: str
     judge_model_id: str
-    blame_confidence: float
+    #: ``None`` means *no diagnosis exists* for this measurement -- e.g. the
+    #: probe passed, so the diagnose gate legitimately produced nothing. This
+    #: is explicit absence (the same distinction ``EntropyAvailabilityReport``
+    #: draws): it must never be replaced by ``0.0``, which would read as a
+    #: measured zero and make an undiagnosed score look like a confidently
+    #: diagnosed one.
+    blame_confidence: float | None
     blame_stability: float
     severity: float = 1.0
     confidence: float = 1.0
@@ -74,8 +80,10 @@ class ScoreProvenance:
             raise ValueError("trace_id is required")
         if self.rollout_seq < 0:
             raise ValueError("rollout_seq must be >= 0")
-        if not (0.0 <= self.blame_confidence <= 1.0):
-            raise ValueError("blame_confidence must be in [0, 1]")
+        if self.blame_confidence is not None and not (
+            0.0 <= self.blame_confidence <= 1.0
+        ):
+            raise ValueError("blame_confidence must be in [0, 1] or None")
         if not (0.0 <= self.blame_stability <= 1.0):
             raise ValueError("blame_stability must be in [0, 1]")
         if not (0.0 <= self.severity <= 1.0):

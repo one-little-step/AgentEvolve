@@ -86,6 +86,82 @@ class ReportAnalyzerJudge(Protocol):
     def analyze(self, report: RolloutGroupReport) -> tuple[CausalFinding, ...]: ...
 
 
+class PositivityJudge(Protocol):
+    """D5/J2B: maps a SUCCESSFUL (task, trace) to strength findings.
+
+    The mirror of :class:`AnalyzerJudge`: Judge 1 diagnoses failures and may
+    only emit ``valence=+1`` findings; a positivity judge diagnoses successes
+    and may only emit ``valence=-1``. Polarity is stamped by code at the
+    runner's boundary -- an implementation returning any other sign has its
+    whole batch refused and recorded, never flipped.
+
+    ``core/`` never imports an adapter; the CUGA implementation lives in
+    ``agent_evolve.adapters`` behind exactly this protocol.
+    """
+
+    analyzer_model_id: str
+
+    def analyze_success(
+        self,
+        task: EvolutionTask,
+        trace: ExecutionTrace,
+    ) -> tuple[CausalFinding, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class FakePositivityJudge:
+    """Deterministic offline positivity judge.
+
+    Mirrors :class:`FakeAnalyzerJudge`'s role for successes: one observed
+    strength finding per passing rollout, attributing the trace's actors.
+    Deliberately simple -- the interesting behaviour (gate wiring, polarity
+    refusal, storage) is pinned in the runner tests.
+    """
+
+    analyzer_model_id: str = "fake-positivity"
+
+    def analyze_success(
+        self,
+        task: EvolutionTask,
+        trace: ExecutionTrace,
+    ) -> tuple[CausalFinding, ...]:
+        actor_list = sorted({e.actor_id for e in trace.events if e.actor_id})
+        if not actor_list:
+            actor_list = ["agent"]
+        # Observed findings must cite trace-backed evidence: prefer the
+        # events' own ids; an event-less trace cites its trace id, which is
+        # still a genuine pointer into stored evidence.
+        evidence = tuple(
+            e.event_id for e in trace.events if getattr(e, "event_id", "")
+        ) or (trace.trace_id,)
+        nodes = tuple(
+            BlameNode(actor_id=a, blame=1.0 / len(actor_list), artifacts=())
+            for a in actor_list
+        )
+        finding = CausalFinding(
+            verdict_id=f"strength-{trace.trace_id}",
+            candidate_id=trace.candidate_id,
+            task_id=task.task_id,
+            trace_id=trace.trace_id,
+            valence=-1,
+            status="observed",
+            mechanism_description=(
+                f"contract satisfied on task {task.task_id} by "
+                + ", ".join(actor_list)
+            ),
+            # Provisional identity: real per-task clusters are assigned when
+            # the signed index (IDX2) builds; the observed-status contract
+            # requires a non-empty id already.
+            mechanism_cluster_id=f"strength:{task.task_id}",
+            severity=0.8,
+            confidence=0.9,
+            blame_graph=BlameGraph(nodes=nodes),
+            evidence_refs=evidence,
+            rationale="fake positivity judge: success attributed to actors",
+        )
+        return (finding,)
+
+
 
 # ---------------------------------------------------------------------- #
 # Contract scoring

@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Literal, Mapping, Sequence
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 
 def _check_unit_interval(name: str, value: float) -> float:
@@ -170,6 +170,15 @@ class CausalFinding(BaseModel):
     candidate_id: str = Field(min_length=1)
     task_id: str = Field(min_length=1)
     trace_id: str = Field(min_length=1)
+    #: D5.2/VAL: the finding's polarity. ``+1`` fault (Judge 1's only output),
+    #: ``-1`` strength (Judge 2's only output). Direction is NEVER encoded in
+    #: the sign of ``severity`` -- magnitude stays fractional [0, 1] for both
+    #: polarities, because severity feeds issue-quality arithmetic where a
+    #: negative would silently turn a strength into a penalty. The model
+    #: never chooses this field: code stamps it at each judge's boundary.
+    #: ``StrictInt`` because lax coercion would let "+1" (a string) become a
+    #: polarity -- the sign is set by code, not parsed from anyone's prose.
+    valence: StrictInt = 1
     status: Literal["observed", "uncertain", "insufficient_evidence", "malformed"]
     mechanism_description: str | None = None
     mechanism_cluster_id: str | None = None
@@ -182,6 +191,10 @@ class CausalFinding(BaseModel):
 
     @model_validator(mode="after")
     def _validate(self) -> "CausalFinding":
+        if self.valence not in (1, -1):
+            raise ValueError(
+                f"valence must be +1 (fault) or -1 (strength), got {self.valence!r}"
+            )
         for name in ("severity", "confidence"):
             value = getattr(self, name)
             if value is not None and not (0.0 <= value <= 1.0):

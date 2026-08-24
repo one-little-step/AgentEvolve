@@ -69,6 +69,10 @@ class Issue:
     embedding: tuple[float, ...]
     writable_artifact_ids: tuple[str, ...]
     evidence_refs: tuple[str, ...]
+    #: D5.2/VAL: polarity carried from the finding this issue was built from
+    #: (+1 fault, -1 strength). Lives on Issue as well as CausalFinding so the
+    #: future editor-facing index can rank without re-reading findings (Q6).
+    valence: int = 1
     lineage: str = ""
     entropy_tier: str = "recombination_target"
 
@@ -77,6 +81,10 @@ class Issue:
             raise ValueError("issue_id is required")
         if not self.task_id:
             raise ValueError("task_id is required")
+        if self.valence not in (1, -1):
+            raise ValueError(
+                f"valence must be +1 (fault) or -1 (strength), got {self.valence!r}"
+            )
         object.__setattr__(self, "embedding", tuple(self.embedding))
         object.__setattr__(self, "writable_artifact_ids", tuple(self.writable_artifact_ids))
         object.__setattr__(self, "evidence_refs", tuple(self.evidence_refs))
@@ -204,6 +212,7 @@ def build_issue(
         embedding=tuple(embedding),
         writable_artifact_ids=write_set,
         evidence_refs=tuple(getattr(finding, "evidence_refs", ()) or ()),
+        valence=int(getattr(finding, "valence", 1)),
         lineage=lineage,
         entropy_tier=entropy_tier,
     )
