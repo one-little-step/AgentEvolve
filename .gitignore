@@ -56,3 +56,4 @@ docker/observability/captures/
 # Local mock rules are per-experiment scratch state, not shared config. The
 # committed example lives in mocks/rules.example.json.
 docker/observability/mocks/rules.json
+AgentEvolve.json
