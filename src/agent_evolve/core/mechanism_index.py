@@ -88,4 +88,66 @@ class SignedMechanismIndex:
         return len(self._members)
 
 
-__all__ = ["IndexEntry", "SignedMechanismIndex"]
+def complementary_parent_payload(
+    *,
+    index: SignedMechanismIndex,
+    registry,  # ClusterRegistry -- typed loosely to avoid a cycle
+    task_id: str,
+    analysis,  # CausalAnalysis | None -- the CURRENT failure being edited
+    limit: int | None = 5,
+) -> dict:
+    """The editor-facing answer to *"who else struggled/solved my fault?"*.
+
+    Resolves the current failure's mechanism cluster through the SAME
+    clusterer the index was built with, then returns the ranked membership.
+    Structured statuses instead of exceptions:
+
+    * ``"ok"`` -- at least one solver exists;
+    * ``"solvers_absent"`` -- cluster known, nobody solved it; least-bad
+      faults follow (D5.4's degrade path);
+    * ``"unclustered"`` -- no analysis, or the clusterer refused;
+    * ``"empty"`` -- cluster exists in principle but the index holds nothing.
+
+    ``members`` is ALWAYS present (possibly empty): the consumer formats a
+    tool result and must never branch on a missing key.
+    """
+    if analysis is None:
+        return {
+            "status": "unclustered",
+            "reason": "the current failure has no diagnosed mechanism",
+            "members": [],
+        }
+    assignment = registry.clusterer_for(task_id).assign(analysis)
+    if not assignment.cluster_id:
+        return {
+            "status": "unclustered",
+            "reason": (
+                "the clusterer did not assign this mechanism to any cluster"
+            ),
+            "members": [],
+        }
+    cluster_id = f"{task_id}:{assignment.cluster_id}"
+    members = index.members_for(task_id, cluster_id, limit=limit)
+    payload_members = [
+        {
+            "role": "solver" if m.valence == -1 else "least_bad_failure",
+            "severity": m.severity,
+            "candidate_id": m.candidate_id,
+            "artifact_ids": list(m.artifact_ids),
+            "trace_id": m.trace_id,
+        }
+        for m in members
+    ]
+    has_solver = any(m["role"] == "solver" for m in payload_members)
+    return {
+        "status": "ok" if has_solver else "solvers_absent",
+        "cluster_id": cluster_id,
+        "members": payload_members,
+    }
+
+
+__all__ = [
+    "IndexEntry",
+    "SignedMechanismIndex",
+    "complementary_parent_payload",
+]

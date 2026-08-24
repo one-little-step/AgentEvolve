@@ -571,7 +571,7 @@ the guarantee that a broken or absent Judge 2 can never change how work items ra
 | 6 | Analyze *passing* rollouts too — the gate that currently forbids it (**BUILT 2026-08-23**, core side: opt-in via `positivity_judge=None` default; strengths ride `ObservedRollout.strengths`; wrong-polarity batches refused+recorded) | `core/orchestrator.py` `rollout_group` | **done (core)** |
 | 7 | Cross-attempt scorable-trace store (**BUILT 2026-08-23**, in-memory: `_trace_store` / `traces_for`; survives the per-attempt reset) | `core/orchestrator.py` | **done** |
 | 8 | Signed index: `cluster_id -> [(valence, severity, candidate_id, artifact_ids)]` (**BUILT 2026-08-24**: `core/mechanism_index.py` + `SequentialGepaRunner.signed_mechanism_index`; ranking = solvers by severity DESC then faults ASC; shared-namespace join proven by test) | `core/mechanism_index.py` | **done** |
-| 9 | Voluntary editor tool over the index | `adapters/cuga_editor_tools.py:83` | **new tool** |
+| 9 | Voluntary editor tool over the index (**BUILT 2026-08-24**: `list_complementary_parents` in the parents cluster; unavailable-by-default, never raises into the agent; attach via `cuga_editor.attach_complement_provider` at the composition root) | `adapters/cuga_editor_tools.py:83` | **done** |
 | 10 | Clusterer, band, adjudicator, `read_parent_artifact` | `core/clustering.py`, `cuga_editor_tools.py:218` | **reused unchanged** |
 
 Row 10 is the reason this is affordable: `_add` takes **text only**
@@ -656,10 +656,14 @@ inherits a false premise.
 - **Cross-task identity is unsolved**, deliberately deferred, not designed here.
 - `cell_entropy`, `top_entropy_cells`, and `entropy_weighted_with_freshness` on
   `EntropyTracker` still have **zero callers** — dead read API.
-- **D5 is entirely unbuilt.** No positivity judge exists, no `valence` field exists,
-  no cross-attempt trace store exists, and no editor tool queries a mechanism
-  cluster for its members. The three cosine figures supporting D5.1 (`0.963`,
-  `0.944`, `0.331`) come from the **real** live 768-dim embedder but on **synthetic**
-  phrasings — same caveat as §3's calibration set. Q7 in particular is resolved by
-  scope (D5 never touches selection); nothing here establishes any live behaviour
-  for D5 because none of it runs yet.
+- **D5 is BUILT end-to-end (2026-08-24), offline-proven, not yet live.** The
+  chain SV-14 → TS2 → VAL → J2B → IDX2 → TL all exist and are unit-tested
+  (`tests/test_sv14_offspring_provenance.py`, `test_trace_store.py`,
+  `test_valence_polarity.py`, `test_positivity_judge.py`,
+  `test_cuga_positivity_judge.py`, `test_signed_index.py`,
+  `test_editor_complement_tool.py`). One LIVE model call has run through the
+  positivity adapter (3 strengths, one honest self-downgrade). Still true from
+  the original caveat: the D5.1 cosine figures came from synthetic phrasings,
+  and NOTHING here establishes live *behavioural* gain — no full attempt with
+  Judge 2 attached has run, and the composition root does not yet attach
+  `attach_complement_provider` (one line, documented on the function).

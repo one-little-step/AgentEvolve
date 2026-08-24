@@ -237,6 +237,12 @@ class CugaEditorAgent:
     #: tool-call ledger and the terminal outcome. Off by default so a
     #: measurement run writes nothing.
     log_sink: RunLogSink | None = None
+    #: D5/TL: optional factory producing the complementary-parent payload
+    #: provider for one request. The composition root attaches it after
+    #: construction (``attach_complement_provider``), closing over the runner:
+    #: the index must be rebuilt from live TS2 state per attempt. ``None``
+    #: leaves the tool reporting itself unavailable -- zero cost, zero risk.
+    complement_provider_factory: Callable[[EditorRequest], Callable[[], dict]] | None = None
 
     def propose_edit(self, request: EditorRequest) -> EditorResponse:
         ctx = self._build_context(request)
@@ -392,6 +398,11 @@ class CugaEditorAgent:
             request=request,
             adapter=self.adapter,
             memory=self.memory,
+            complement_provider=(
+                self.complement_provider_factory(request)
+                if self.complement_provider_factory is not None
+                else None
+            ),
         )
 
     @staticmethod
@@ -464,3 +475,18 @@ class CugaEditorAgent:
         finally:
             del agent
             gc.collect()
+
+
+def attach_complement_provider(
+    agent: CugaEditorAgent,
+    provider_factory: Callable[[EditorRequest], Callable[[], dict]],
+) -> None:
+    """D5/TL: give this editor the voluntary ``list_complementary_parents`` tool.
+
+    Call once from the composition root, after both runner and editor exist.
+    The factory receives each ``EditorRequest``; the INNER callable runs per
+    tool invocation, so every attempt reads the live TS2 store rather than a
+    stale snapshot. Unattached, the tool reports itself unavailable and costs
+    nothing.
+    """
+    agent.complement_provider_factory = provider_factory

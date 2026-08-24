@@ -42,6 +42,7 @@ TOOL_APP_NAMES: dict[str, str] = {
     # parents
     "list_parents": "parents",
     "read_parent_artifact": "parents",
+    "list_complementary_parents": "parents",
     # rollout
     "list_rollout_tools": "rollout",
     # submit
@@ -64,6 +65,13 @@ class EditorToolContext:
     request: EditorRequest
     adapter: object
     memory: EditMemory
+    #: D5/TL: optional zero-arg provider returning the complementary-parent
+    #: payload (``core.mechanism_index.complementary_parent_payload``). The
+    #: composition root attaches it once the runner exists; ``None`` means
+    #: the tool reports itself unavailable rather than raising.
+    complement_provider: Callable[[], dict] | None = field(
+        default=None, repr=False
+    )
     _plan: dict | None = field(default=None, repr=False)
 
 
@@ -235,6 +243,24 @@ def build_tool_callables(ctx: EditorToolContext) -> dict[str, Callable[..., str]
             content=contents[artifact_id],
         )
 
+    def list_complementary_parents() -> str:
+        """D5/TL (VOLUNTARY): ranked cross-candidate evidence for THIS failure's mechanism.
+
+        Solvers of the same mechanism first, then least-bad failures. Use it
+        to transplant what worked elsewhere before inventing a fix; pair each
+        candidate_id with read_parent_artifact to inspect its actual content.
+        """
+        if ctx.complement_provider is None:
+            return _ok(
+                status="unavailable",
+                reason="no positivity index is configured for this run",
+                members=[],
+            )
+        try:
+            return _ok(**ctx.complement_provider())
+        except Exception as exc:  # noqa: BLE001 - never raise into the agent
+            return _err(f"list_complementary_parents failed: {exc}")
+
     # ---------------------------------------------------------- rollout
     def list_rollout_tools() -> str:
         """List the tools the failing rollout agent has, with signature and purpose.
@@ -294,6 +320,7 @@ def build_tool_callables(ctx: EditorToolContext) -> dict[str, Callable[..., str]
         "get_attempt_outcome": get_attempt_outcome,
         "list_parents": list_parents,
         "read_parent_artifact": read_parent_artifact,
+        "list_complementary_parents": list_complementary_parents,
         "list_rollout_tools": list_rollout_tools,
         "submit_edit_plan": submit_edit_plan,
     }
