@@ -42,6 +42,16 @@ DOTENV_PATH = PROJECT_ROOT / ".env"
 DEFAULT_SKILLS_ROOT = PROJECT_ROOT / ".cuga" / "skills"
 DEFAULT_WORKSPACE_ROOT = PROJECT_ROOT / "data" / "workspaces"
 
+# Packaged CUGA per-agent model profile (?08 token-budget audit). The shipped
+# settings.openai.toml caps agent.action at 400 max_tokens, which starves a
+# reasoning model silently (reasoning consumes the budget before content).
+# Absolute path on purpose: cuga's config loader does join(MODELS_DIR, value),
+# and an absolute value routes here instead of into site-packages.
+_PACKAGED_MODEL_SETTINGS = Path(__file__).with_name("settings.agentevolve.toml")
+PACKAGED_MODEL_SETTINGS_PATH: Path | None = (
+    _PACKAGED_MODEL_SETTINGS if _PACKAGED_MODEL_SETTINGS.is_file() else None
+)
+
 DEFAULT_SPECIAL_INSTRUCTIONS = (
     "You are an autonomous agent. Solve the user's task carefully and accurately. "
     "Use the available tools when they are useful. Do not claim to have performed "
@@ -449,7 +459,15 @@ class RuntimeSettings:
 
     def configure_cuga_environment(self) -> None:
         """Map the project's model settings onto CUGA's documented OpenAI mode."""
-        os.environ["AGENT_SETTING_CONFIG"] = os.getenv("AGENT_SETTING_CONFIG", "settings.openai.toml")
+        # ?08: default to the packaged profile (action agent at 16000 tokens,
+        # not the shipped 400 that silently starves a reasoning model). An
+        # explicit AGENT_SETTING_CONFIG always wins.
+        default_profile = (
+            str(_PACKAGED_MODEL_SETTINGS)
+            if _PACKAGED_MODEL_SETTINGS.is_file()
+            else "settings.openai.toml"
+        )
+        os.environ["AGENT_SETTING_CONFIG"] = os.getenv("AGENT_SETTING_CONFIG") or default_profile
         # CUGA's OpenAI integration adds its own ``openai/`` platform prefix.
         model_name = self.model.removeprefix("openai/")
         os.environ["MODEL_NAME"] = model_name

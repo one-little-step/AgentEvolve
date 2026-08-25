@@ -18,6 +18,7 @@ from agent_evolve.cuga_wrapper import (
     GraphEventCollector,
     InMemoryRuntime,
     MockHarnessRuntime,
+    PACKAGED_MODEL_SETTINGS_PATH,
     RecordedEnvironmentReplayError,
     RuntimeSettings,
     ToolObservationRecorder,
@@ -80,7 +81,7 @@ def test_runtime_settings_configures_cuga_openai_compatibility_environment(monke
 
     settings.configure_cuga_environment()
 
-    assert __import__("os").environ["AGENT_SETTING_CONFIG"] == "settings.openai.toml"
+    assert __import__("os").environ["AGENT_SETTING_CONFIG"] == str(PACKAGED_MODEL_SETTINGS_PATH)
     assert __import__("os").environ["MODEL_NAME"] == "azure/test-model"
     assert __import__("os").environ["OPENAI_BASE_URL"] == "https://gateway.example/v1"
     assert __import__("os").environ["OPENAI_API_KEY"] == "secret"

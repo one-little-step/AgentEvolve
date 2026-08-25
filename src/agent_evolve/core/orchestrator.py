@@ -58,6 +58,10 @@ from agent_evolve.core.clustering import (
     MechanismClusterer,
     MechanismEmbedder,)
 from agent_evolve.core.config import BudgetLimits, BudgetUsage, ResolvedConfig
+from agent_evolve.core.correlation import (
+    CorrelationContext,
+    correlation_scope,
+)
 from agent_evolve.core.contracts import (
     ArtifactEdit,
     CandidateWorkspace,
@@ -921,6 +925,9 @@ class _EntropyUnavailableCategories:
     NO_REGISTRY: str = "no_registry"
     #: The clusterer refused to assign, e.g. the cluster cap with no near match.
     UNASSIGNED: str = "unassigned"
+    #: Every positivity strength on a passing rollout was refused by the
+    #: clusterer, so the candidate's success cannot be keyed to a mechanism.
+    STRENGTHS_REFUSED: str = "strengths_refused"
     #: A cell exists but has too few comparable candidates or rollouts. Needs
     #: more evidence, not a code fix.
     FLOOR_UNMET: str = "floor_unmet"
@@ -1461,12 +1468,19 @@ class SequentialGepaRunner:
                 for outcome, score in scored
                 if outcome.trace is not None and score.scorable and score.passed
             ]
-            for outcome, _score in to_posit:
+            for pos_index, (outcome, _score) in enumerate(to_posit):
                 assert outcome.trace is not None
                 self._positivity_calls += 1
-                findings = self.positivity_judge.analyze_success(
-                    outcome.task, outcome.trace
-                )
+                # ?03: label these calls as Judge-2 spend on this rollout.
+                with correlation_scope(
+                    candidate=outcome.trace.candidate_id,
+                    task=outcome.task.task_id,
+                    rollout=pos_index,
+                    phase="positivity",
+                ):
+                    findings = self.positivity_judge.analyze_success(
+                        outcome.task, outcome.trace
+                    )
                 bad = [
                     f
                     for f in findings
@@ -1525,9 +1539,17 @@ class SequentialGepaRunner:
         out: dict[tuple[str, int], tuple[CausalAnalysis | None, str]] = {}
         if self.analyzer_workers == 1:
             analyzer = self.resolved_analyzer
-            for outcome, score in items:
+            for analyze_index, (outcome, score) in enumerate(items):
                 assert outcome.trace is not None  # filtered by the caller
-                analysis = analyzer.analyze(outcome.task, outcome.trace)
+                # ?03: label this diagnosis with its rollout identity so the
+                # proxy can tie the model call to (candidate, task, rollout).
+                with correlation_scope(
+                    candidate=outcome.trace.candidate_id,
+                    task=outcome.task.task_id,
+                    rollout=analyze_index,
+                    phase="diagnose",
+                ):
+                    analysis = analyzer.analyze(outcome.task, outcome.trace)
                 self._observed_mechanisms.append(analysis.mechanism)
                 out[(outcome.task.task_id, id(outcome))] = (analysis, "")
             return out
@@ -1538,10 +1560,21 @@ class SequentialGepaRunner:
             rollout_group_report(outcome.task, outcome.trace)  # type: ignore[arg-type]
             for outcome, _ in items
         )
+        # ?03: labels travel INTO the workers -- pool threads do not inherit
+        # the submitting thread's context, so each report carries its own.
+        labels = tuple(
+            CorrelationContext(
+                candidate=outcome.trace.candidate_id if outcome.trace else None,
+                task=outcome.task.task_id,
+                rollout=analyze_index,
+                phase="diagnose",
+            )
+            for analyze_index, (outcome, _) in enumerate(items)
+        )
         runner = ParallelAnalysisRunner(
             analyzer_factory=factory, max_workers=self.analyzer_workers
         )
-        outcomes = runner.run(reports)
+        outcomes = runner.run(reports, labels=labels)
         for (rollout, score), analysis_outcome in zip(items, outcomes, strict=True):
             key = (rollout.task.task_id, id(rollout))
             if not analysis_outcome.ok:
@@ -2003,55 +2036,61 @@ class SequentialGepaRunner:
         score = rollout.score
         if score is None or not score.scorable:
             return
-        cluster_id = self._entropy_cluster_id(rollout)
-        if not cluster_id:
+        cluster_ids = self._entropy_cluster_ids(rollout)
+        if not cluster_ids:
             return
-        self.entropy.record_score(
-            task_id=rollout.task.task_id,
-            mechanism_cluster_id=cluster_id,
-            candidate_id=candidate_id,
-            score=score.score,
-        )
-        # Promote to comparable only once this candidate clears the per-candidate
-        # rollout floor in this cell. ``entropy()`` ignores non-comparable
-        # candidates entirely, so promoting eagerly would let a single rollout
-        # contribute to a variance the spec says it cannot support.
-        #
-        # The count is kept here rather than read back from the tracker because
-        # ``EntropyTracker`` exposes no per-candidate rollout count publicly and
-        # is under a no-change constraint; reaching into ``_cells`` would couple
-        # this to its private layout.
-        seen_key = (rollout.task.task_id, cluster_id, candidate_id)
-        self._entropy_rollout_counts[seen_key] = (
-            self._entropy_rollout_counts.get(seen_key, 0) + 1
-        )
-        if (
-            self._entropy_rollout_counts[seen_key]
-            >= self.entropy.min_rollouts_per_candidate
-        ):
-            self.entropy.mark_comparable(
+        for cluster_id in cluster_ids:
+            self.entropy.record_score(
                 task_id=rollout.task.task_id,
                 mechanism_cluster_id=cluster_id,
                 candidate_id=candidate_id,
+                score=score.score,
             )
+            # Promote to comparable only once this candidate clears the
+            # per-candidate rollout floor in this cell. ``entropy()`` ignores
+            # non-comparable candidates entirely, so promoting eagerly would let
+            # a single rollout contribute to a variance the spec says it cannot
+            # support.
+            #
+            # The count is kept here rather than read back from the tracker
+            # because ``EntropyTracker`` exposes no per-candidate rollout count
+            # publicly and is under a no-change constraint; reaching into
+            # ``_cells`` would couple this to its private layout.
+            seen_key = (rollout.task.task_id, cluster_id, candidate_id)
+            self._entropy_rollout_counts[seen_key] = (
+                self._entropy_rollout_counts.get(seen_key, 0) + 1
+            )
+            if (
+                self._entropy_rollout_counts[seen_key]
+                >= self.entropy.min_rollouts_per_candidate
+            ):
+                self.entropy.mark_comparable(
+                    task_id=rollout.task.task_id,
+                    mechanism_cluster_id=cluster_id,
+                    candidate_id=candidate_id,
+                )
 
-    def _entropy_cluster_id(self, rollout: ObservedRollout) -> str:
-        """The tracker's mechanism key for this rollout, or ``""`` if none.
+    def _entropy_cluster_ids(self, rollout: ObservedRollout) -> tuple[str, ...]:
+        """Mechanism keys for this rollout -- one per cluster actually assigned.
 
-        ``""`` is returned for every case where a mechanism cannot be
-        established, and the reason is retained in
-        ``_last_entropy_unavailable_reasons`` so the fallback is reportable
-        rather than silent.
+        A diagnosed failure keys one cell through ``assign(analysis)``, exactly
+        as before. A passing rollout carries no analysis; since ?13 its
+        positivity strengths key the cells they were actually assigned to, so
+        an accepted child's measured quality is visible to cross-candidate
+        variance on every mechanism it demonstrably solved. Refused assignments
+        contribute nothing -- filing them would put unrelated faults in one
+        cell -- and are reported rather than silently dropped.
         """
         task_id = rollout.task.task_id
         analysis = rollout.analysis
-        if analysis is None:
+        strengths = rollout.strengths
+        if analysis is None and not strengths:
             self._note_entropy_unavailable(
                 task_id,
                 "no analysis: the rollout was scored but not diagnosed",
                 ENTROPY_UNAVAILABLE_CATEGORIES.NO_ANALYSIS,
             )
-            return ""
+            return ()
         registry = self.cluster_registry
         if registry is None:
             self._note_entropy_unavailable(
@@ -2059,19 +2098,40 @@ class SequentialGepaRunner:
                 "no cluster registry configured on this runner",
                 ENTROPY_UNAVAILABLE_CATEGORIES.NO_REGISTRY,
             )
-            return ""
-        assignment = registry.clusterer_for(task_id).assign(analysis)
-        if not assignment.cluster_id:
+            return ()
+        clusterer = registry.clusterer_for(task_id)
+        if analysis is not None:
+            assignment = clusterer.assign(analysis)
+            if not assignment.cluster_id:
+                self._note_entropy_unavailable(
+                    task_id,
+                    assignment.unassigned_reason
+                    or "the clusterer did not assign a mechanism",
+                    ENTROPY_UNAVAILABLE_CATEGORIES.UNASSIGNED,
+                )
+                return ()
+            # Namespaced by task so two tasks' ``c0`` are never confused.
+            return (f"{task_id}:{assignment.cluster_id}",)
+        ids: list[str] = []
+        for strength in strengths:
+            assignment = clusterer.assign_finding(strength)
+            if assignment.cluster_id and assignment.cluster_id not in ids:
+                ids.append(assignment.cluster_id)
+        if not ids:
             self._note_entropy_unavailable(
                 task_id,
-                assignment.unassigned_reason
-                or "the clusterer did not assign a mechanism",
-                ENTROPY_UNAVAILABLE_CATEGORIES.UNASSIGNED,
+                "every strength assignment was refused by the clusterer",
+                ENTROPY_UNAVAILABLE_CATEGORIES.STRENGTHS_REFUSED,
             )
-            return ""
+            return ()
         # Namespaced by task so two tasks' ``c0`` are never confused. Cells stay
         # indexed per task, which is what the (task, mechanism) key means.
-        return f"{task_id}:{assignment.cluster_id}"
+        return tuple(f"{task_id}:{cid}" for cid in ids)
+
+    def _entropy_cluster_id(self, rollout: ObservedRollout) -> str:
+        """Single-key form of :meth:`_entropy_cluster_ids` (``""`` when none)."""
+        ids = self._entropy_cluster_ids(rollout)
+        return ids[0] if ids else ""
 
     def _note_entropy_unavailable(
         self, task_id: str, reason: str, category: str | None = None

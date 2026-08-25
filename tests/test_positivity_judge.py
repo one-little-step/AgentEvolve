@@ -160,8 +160,6 @@ def test_gate_open_analyzes_passing_rollouts_into_stored_strengths() -> None:
 def test_failing_rollouts_do_not_reach_the_positivity_judge() -> None:
     """The positivity judge is for SUCCESSES; failures belong to Judge 1."""
     adapter = FakeAdapter()  # default artifacts lack the token -> failures
-    runner = _runner()
-    # rebuild with failing base but judge attached
     pool = PersistentPool(min_comparable_rollouts=1)
     pool.add_base(
         EvolutionCandidate(
@@ -179,7 +177,7 @@ def test_failing_rollouts_do_not_reach_the_positivity_judge() -> None:
         analyzer_judge=FakeAnalyzerJudge(),
         editor=FakeEditor(),
         embedder=LexicalEmbedder(dim=32),
-        positivity_judge=cast(Any, FakePositivityJudge()),
+        positivity_judge=FakePositivityJudge(),
         config=resolve_profile("research_sequential", seed=0),
         mechanism_cluster_id=_CLUSTER,
         seed=0,
@@ -190,6 +188,34 @@ def test_failing_rollouts_do_not_reach_the_positivity_judge() -> None:
     assert observed[0].score is not None and not observed[0].score.passed
     assert observed[0].strengths == ()
     assert runner2._positivity_calls == 0
+
+
+# ---------------------------------------------------------------------- #
+# Shared helpers for cross-file tests (correlation wiring)
+# ---------------------------------------------------------------------- #
+class FakePositivityJudgeProbe:
+    """Records the ambient correlation visible at judgment time.
+
+    Composition, not inheritance: ``FakePositivityJudge`` is a frozen
+    slots dataclass, so subclasses cannot add attributes.
+    """
+
+    analyzer_model_id = FakePositivityJudge.analyzer_model_id
+
+    def __init__(self, sink: list) -> None:
+        self.sink = sink
+        self._inner = FakePositivityJudge()
+
+    def analyze_success(self, task, trace):  # type: ignore[no-untyped-def]
+        from agent_evolve.core.correlation import current_correlation
+
+        self.sink.append((task.task_id, current_correlation()))
+        return self._inner.analyze_success(task, trace)
+
+
+def passing_runner(positivity_judge) -> SequentialGepaRunner:  # type: ignore[no-untyped-def]
+    """The passing-base harness whose validate() opens the gate."""
+    return _runner(positivity_judge=positivity_judge)
 
 
 # ---------------------------------------------------------------------- #

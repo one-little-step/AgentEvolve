@@ -392,17 +392,45 @@ def test_live_stack_factory_shares_one_edit_memory() -> None:
         ):
             kwargs = {k.arg: k.value for k in node.keywords}
             runner_memory = kwargs.get("edit_memory")
-            editor_call = kwargs.get("editor")
             assert isinstance(runner_memory, ast.Name), (
                 "build_live_stack must pass edit_memory to the runner"
             )
-            assert isinstance(editor_call, ast.Call)
-            editor_kwargs = {k.arg: k.value for k in editor_call.keywords}
-            editor_memory = editor_kwargs.get("memory")
-            assert isinstance(editor_memory, ast.Name), (
-                "the editor's memory must be a shared variable, not a fresh "
-                "EditMemory() literal"
-            )
-            shared.append(editor_memory.id == runner_memory.id)
+            editor_arg = kwargs.get("editor")
+            if isinstance(editor_arg, ast.Call):
+                # Inline construction: the memory kwarg must be a shared variable.
+                editor_kwargs = {k.arg: k.value for k in editor_arg.keywords}
+                editor_memory = editor_kwargs.get("memory")
+                assert isinstance(editor_memory, ast.Name), (
+                    "the editor's memory must be a shared variable, not a fresh "
+                    "EditMemory() literal"
+                )
+                shared.append(editor_memory.id == runner_memory.id)
+            else:
+                # Hoisted construction (?12): find the editor variable's
+                # assignment and enforce the same shared-memory invariant there.
+                assert isinstance(editor_arg, ast.Name), (
+                    "editor must be an inline CugaEditorAgent(...) call or a "
+                    "variable assigned from one"
+                )
+                assignments = [
+                    n
+                    for n in ast.walk(tree)
+                    if isinstance(n, ast.Assign)
+                    and getattr(n.targets[0], "id", "") == editor_arg.id
+                ]
+                assert len(assignments) == 1, (
+                    f"expected exactly one assignment for {editor_arg.id}"
+                )
+                ctor = assignments[0].value
+                assert isinstance(ctor, ast.Call), (
+                    "the hoisted editor must be constructed, not aliased"
+                )
+                ctor_kwargs = {k.arg: k.value for k in ctor.keywords}
+                editor_memory = ctor_kwargs.get("memory")
+                assert isinstance(editor_memory, ast.Name), (
+                    "the hoisted editor's memory must be a shared variable, "
+                    "not a fresh EditMemory() literal"
+                )
+                shared.append(editor_memory.id == runner_memory.id)
 
     assert shared == [True]

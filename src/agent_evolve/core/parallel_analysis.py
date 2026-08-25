@@ -33,6 +33,7 @@ This module is agent-neutral and imports no agent implementation.
 """
 from __future__ import annotations
 
+import dataclasses
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -40,6 +41,7 @@ from typing import Callable, Protocol, Sequence
 
 from agent_evolve.core.analysis import RolloutGroupReport
 from agent_evolve.core.blame import CausalFinding
+from agent_evolve.core.correlation import CorrelationContext, correlation_scope
 
 
 class _Analyzer(Protocol):
@@ -93,43 +95,67 @@ class ParallelAnalysisRunner:
     # Execution
     # ------------------------------------------------------------------ #
     def run(
-        self, reports: Sequence[RolloutGroupReport]
+        self,
+        reports: Sequence[RolloutGroupReport],
+        labels: Sequence["CorrelationContext"] | None = None,
     ) -> tuple[AnalysisOutcome, ...]:
         """Analyze every report, returning outcomes in input order.
+
+        ``labels`` optionally carries one :class:`~agent_evolve.core.correlation.
+        CorrelationContext` per report; each worker thread opens its label as a
+        correlation scope around its analyzer call. This is how ``X-AE-*``
+        headers survive the thread boundary -- pool threads do NOT inherit the
+        submitting thread's context. A length mismatch raises rather than
+        silently mislabeling.
 
         Never raises for a per-item analyzer failure; see :class:`AnalysisOutcome`.
         """
         if not reports:
             return ()
+        if labels is not None and len(labels) != len(reports):
+            raise ValueError(
+                f"labels ({len(labels)}) must align with reports "
+                f"({len(reports)}); mislabeling is worse than none"
+            )
 
         if self.max_workers == 1:
             analyzer_holder: list[_Analyzer] = []
             return tuple(
-                self._analyze_one(report, analyzer_holder) for report in reports
+                self._analyze_one(
+                    report, analyzer_holder,
+                    label=labels[i] if labels is not None else None,
+                )
+                for i, report in enumerate(reports)
             )
 
         # One analyzer per worker thread, built lazily on first use by that
         # thread and reused for every item it handles.
         local = threading.local()
 
-        def work(report: RolloutGroupReport) -> AnalysisOutcome:
+        def work(item_index_report: tuple[int, RolloutGroupReport]) -> AnalysisOutcome:
+            index, report = item_index_report
             holder = getattr(local, "holder", None)
             if holder is None:
                 holder = []
                 local.holder = holder
-            return self._analyze_one(report, holder)
+            return self._analyze_one(
+                report, holder,
+                label=labels[index] if labels is not None else None,
+            )
 
         workers = min(self.max_workers, len(reports))
+        indexed = tuple(enumerate(reports))
         with ThreadPoolExecutor(
             max_workers=workers, thread_name_prefix="analyzer"
         ) as pool:
             # executor.map preserves input order regardless of completion order.
-            return tuple(pool.map(work, reports))
+            return tuple(pool.map(work, indexed))
 
     def _analyze_one(
         self,
         report: RolloutGroupReport,
         holder: list[_Analyzer],
+        label: "CorrelationContext | None" = None,
     ) -> AnalysisOutcome:
         """Analyze one report, converting any failure into a recorded outcome.
 
@@ -138,10 +164,19 @@ class ParallelAnalysisRunner:
         report a missing-configuration error, not abort the batch.
         """
         try:
+            scope_ctx = (
+                correlation_scope(**dataclasses.asdict(label))
+                if label is not None
+                else None
+            )
             if not holder:
                 holder.append(self.analyzer_factory())
             analyzer = holder[0]
-            findings = tuple(analyzer.analyze(report))
+            if scope_ctx is not None:
+                with scope_ctx:
+                    findings = tuple(analyzer.analyze(report))
+            else:
+                findings = tuple(analyzer.analyze(report))
         except Exception as exc:  # noqa: BLE001 - failures are returned as data
             return AnalysisOutcome(
                 report=report,

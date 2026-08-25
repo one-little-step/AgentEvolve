@@ -7,11 +7,16 @@ call. The addon lifts ``X-AE-*`` request headers into the capture record and
 receives internal experiment identifiers
 (``docker/observability/addons/correlate.py:139-152``).
 
-This module is the missing half. The capture side has been working and verified;
-nothing in ``src/`` ever *sent* the headers, so every capture to date has been
-uncorrelated -- which is exactly why the questions in ``docs/SEVERE-OPEN-ISSUES.md``
-(SV-7 above all: "are the two judge slots receiving identical trajectories?")
-could not be answered from a capture.
+This module is the label side. The capture side has been working and verified.
+As of 2026-08-24 (?03) the production call sites OPEN scopes: every fault
+diagnosis opens ``phase="diagnose"`` (legacy sequential AND the parallel
+fan-out, whose labels travel into worker threads via
+``ParallelAnalysisRunner.run(labels=...)`` because pool threads do not inherit
+the submitting thread's context), and every Judge-2 success analysis opens
+``phase="positivity"``. The dedup adjudicator inherits ambient scope during
+clustering. Still unlabelled by design: adapter routes that bypass the LiteLLM
+wrappers entirely (`run_workspace_agent`, `CugaEditorAgent`) and the RHO path's
+two adapters.
 
 **Why ambient rather than an explicit parameter.** The four
 ``_litellm_completion`` wrappers sit at the bottom of long call chains, while the

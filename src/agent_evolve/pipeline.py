@@ -57,6 +57,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
 from agent_evolve.adapters.cuga_adapter import CugaAdapter
+from agent_evolve.adapters.cuga_editor import attach_complement_provider
+from agent_evolve.core.mechanism_index import complementary_parent_payload
 from agent_evolve.benchmarks.base import Benchmark, BenchmarkTask
 from agent_evolve.benchmarks.cuga_executor import (
     DEFAULT_TRACE_ROOT,
@@ -104,6 +106,7 @@ from agent_evolve.core.run_logging import (
 from agent_evolve.core.storage import StorageBackend
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from agent_evolve.adapters.cuga_editor import CugaEditorAgent
     from agent_evolve.core.resolution import FinalResolution
     from agent_evolve.core.rho.history import HistoryLoadReport
     from agent_evolve.core.rho.rounds import RhoHooks
@@ -1196,6 +1199,25 @@ def _tasks_from_benchmark(
     )
 
 
+def wire_editor_complements(runner: SequentialGepaRunner, editor: CugaEditorAgent) -> None:
+    """D5/TL (?12): give the live editor the complementary-parents tool.
+
+    The factory stays lazy twice over: building the per-request provider reads
+    nothing, and calling that provider walks the runner's signed mechanism
+    index at call time -- so every editor turn sees the pool as it is RIGHT
+    THEN, never a snapshot frozen at composition.
+    """
+    attach_complement_provider(
+        editor,
+        lambda request: lambda: complementary_parent_payload(
+            index=runner.signed_mechanism_index(),
+            registry=runner.cluster_registry,
+            task_id=request.task.task_id,
+            analysis=request.analysis,
+        ),
+    )
+
+
 def build_live_stack(
     *,
     benchmark: Benchmark,
@@ -1330,15 +1352,16 @@ def build_live_stack(
     edit_memory = EditMemory(storage=storage)
     _mech_embedder = embedder_for_config(config)
     _mech_registry = cluster_registry_for_config(config, embedder=_mech_embedder)
+    editor_agent = CugaEditorAgent(
+        adapter=adapter, memory=edit_memory, log_sink=sinks["editor"]
+    )
     runner = SequentialGepaRunner(
         adapter=adapter,
         pool=pool,
         # The report-based analyzer is adapted by the runner's own shim; the
         # static mismatch here is the whole reason the shim exists.
         analyzer_judge=analyzer_factory(),  # type: ignore[arg-type]
-        editor=CugaEditorAgent(
-            adapter=adapter, memory=edit_memory, log_sink=sinks["editor"]
-        ),
+        editor=editor_agent,
         # SV-12: the embedder and the mechanism registry the CONFIG declares,
         # not a hardcoded 32-dim lexical hash. The registry keys the entropy
         # tracker's cells; mechanism_cluster_id below stays constant because the
@@ -1368,6 +1391,8 @@ def build_live_stack(
             else _default_preference_judge()
         ),
     )
+    # ?12: the editor's complementary-parents tool reads live pool evidence.
+    wire_editor_complements(runner, editor_agent)
     return EvolutionStack(
         runner=runner,
         adapter=adapter,

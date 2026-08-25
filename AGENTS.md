@@ -199,13 +199,16 @@ would capture our calls while silently missing CUGA-internal ones.
 - Captures redact `Authorization`, and `X-AE-*` headers are lifted into the
   capture record then **stripped before the request goes upstream**, so no vendor
   ever receives internal experiment identifiers.
-- **Correlation is half-wired.** The *emit* side is live in four LiteLLM wrappers.
-  But `correlation_scope` (`core/correlation.py:103`) has **zero callers in
-  `src/` and `scripts/`**, so in production the context is never set, headers
-  render empty, and **every capture is currently unlabelled**. Two adapter routes
-  (`run_workspace_agent` and `CugaEditorAgent`) bypass the wrappers entirely by
-  design and can never carry headers; group their traffic by timestamp and body.
-  Wiring the set side is the prerequisite for the live run being worth its cost.
+- **Correlation is wired as of 2026-08-24 (?03).** The emit side lives in the
+  LiteLLM wrappers, and production call sites now OPEN scopes: every fault
+  diagnosis (`phase="diagnose"` — legacy sequential AND parallel fan-out,
+  where labels travel into worker threads because pool threads do not inherit
+  context) and every Judge-2 success analysis (`phase="positivity"`). The dedup
+  adjudicator inherits ambient scope during clustering. Still unlabelled BY
+  DESIGN: `run_workspace_agent` and `CugaEditorAgent` bypass the wrappers
+  entirely (group their traffic by timestamp and body), and the RHO path's two
+  adapters are unwired follow-ups. `run=` stays omitted until a run-level
+  identifier exists.
 
 ## Required Reading Order
 

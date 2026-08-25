@@ -1,0 +1,66 @@
+# AgentEvolve's CUGA per-agent model settings, selected by the wrapper's
+# RuntimeSettings.configure_cuga_environment() when AGENT_SETTING_CONFIG is
+# unset. Modeled on cuga's shipped settings.openai.toml (the wrapper configures
+# CUGA's documented OpenAI mode) with ONE deliberate divergence:
+#
+#   agent.action.model.max_tokens = 16000, not 400.
+#
+# The shipped profile caps the action agent at 400 tokens. Our endpoint serves
+# a reasoning model that burns completion tokens on reasoning before emitting
+# content; measured worst case for a single rich call on this project is 4281
+# completion tokens (?08 audit, live probe). A 400-token budget starves the
+# tool-calling loop silently -- empty answers, no error. Every other agent
+# keeps the shipped 16000. If you tune these values, stay >= 8000 (~2x the
+# measured worst case); tests/test_token_budget_audit.py pins that floor.
+#
+# Explicit user override wins: set AGENT_SETTING_CONFIG to any other profile.
+
+[agent.task_decomposition.model]
+platform = "openai"
+temperature = 0.1
+max_tokens = 16000
+
+[agent.planner.model]
+platform = "openai"
+temperature = 0.1
+max_tokens = 16000
+
+[agent.chat.model]
+platform = "openai"
+temperature = 0.1
+max_tokens = 16000
+
+[agent.shortlister.model]
+platform = "openai"
+temperature = 0.1
+max_tokens = 16000
+
+[agent.plan_controller.model]
+platform = "openai"
+temperature = 0.1
+max_tokens = 16000
+
+[agent.final_answer.model]
+platform = "openai"
+temperature = 0.1
+max_tokens = 16000
+
+[agent.code.model]
+platform = "openai"
+temperature = 0.1
+max_tokens = 16000
+
+[agent.code_planner.model]
+platform = "openai"
+temperature = 0.1
+max_tokens = 16000
+
+[agent.qa.model]
+platform = "openai"
+temperature = 0.1
+max_tokens = 16000
+
+[agent.action.model]
+platform = "openai"
+temperature = 0.1
+max_tokens = 16000
