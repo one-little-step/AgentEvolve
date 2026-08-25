@@ -1541,17 +1541,28 @@ def build_graph_callback_handler(collector: GraphEventCollector) -> object:
 
         def on_tool_start(self, serialized=None, input_str=None, **kwargs) -> None:  # noqa: ANN001
             name = serialized.get("name") if isinstance(serialized, Mapping) else None
+            # ?14 Phase 1: persist the invocation verbatim so replay can tape
+            # it. LangChain passes structured ``inputs``; older call sites may
+            # only provide the string form.
+            inputs = kwargs.get("inputs")
+            args_source = inputs if inputs is not None else input_str
             collector.record(
                 "graph_tool_start",
-                {"tool_name": str(name) if name else None},
+                {
+                    "tool_name": str(name) if name else None,
+                    "args_ref": collector.store_payload(args_source),
+                },
                 run_id=kwargs.get("run_id"),
                 parent_run_id=kwargs.get("parent_run_id"),
             )
 
         def on_tool_end(self, output=None, **kwargs) -> None:  # noqa: ANN001
+            # ?14 Phase 1: the raw result is the tape for non-deterministic
+            # tools during prefix replay (design R3); dropping it made every
+            # trace unreplayable across anything externally coupled.
             collector.record(
                 "graph_tool_end",
-                {},
+                {"output_ref": collector.store_payload(output)},
                 run_id=kwargs.get("run_id"),
                 parent_run_id=kwargs.get("parent_run_id"),
             )
@@ -1565,6 +1576,24 @@ def build_graph_callback_handler(collector: GraphEventCollector) -> object:
             )
 
     return _GraphCallbackHandler()
+
+
+def _collector_tool_observations_captured(
+    collector: "GraphEventCollector | None",
+) -> bool:
+    """Whether graph-layer capture persisted at least one tool RESULT blob.
+
+    Start events alone do not count: without the recorded output a replay
+    cannot tape a non-deterministic tool, which is the entire point (?14).
+    """
+    if collector is None:
+        return False
+    # In-memory events are FLAT; payload nesting appears only at
+    # serialization time.
+    return any(
+        event.get("kind") == "graph_tool_end" and event.get("output_ref")
+        for event in collector.events
+    )
 
 
 def _final_state_snapshot(agent: object, run_config: Mapping[str, object]) -> StateSnapshot | None:
@@ -2203,11 +2232,14 @@ class CugaSdkRuntime:
             # model never called a tool is not a tracing failure and must not be
             # reported as one, so absence stays "unavailable" rather than
             # "runtime_failure" (which would imply we lost real evidence).
+            # ?14: graph-layer results count even when the SDK post-hoc
+            # recorder has nothing -- either surface taping a tool is enough.
             "tool_observations": (
                 FacilityCapability(status="disabled_by_config")
                 if not config.capture_tool_observations
                 else FacilityCapability(status="captured")
-                if recorder is not None and recorder.observations
+                if (recorder is not None and recorder.observations)
+                or _collector_tool_observations_captured(collector)
                 else FacilityCapability(
                     status="unavailable_no_sdk_surface",
                     reason="no tool calls reported by this run",

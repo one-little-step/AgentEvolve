@@ -46,10 +46,16 @@ not there, say so rather than assuming.
 - Add tests before implementation changes. Keep current implementation, research
   hypothesis, and target architecture clearly distinct — this file's own
   structure below is the model for that separation.
-- Capture long test/smoke/verification runs with
+  - Capture long test/smoke/verification runs with
   `2>&1 | tee terminal_output/<topic>/<name>.log`. **Be aware `terminal_output/`
   is gitignored (`.gitignore:13`)**, so anything there is unprotected by a commit;
   copy artefacts worth keeping somewhere tracked (see `tools/probes/`).
+- **Runnable entrypoints live in `scripts/`** — check there FIRST and follow its
+  naming grammar (`run_*`, `verify_*`, `diagnose_*`, `probe_*`) before creating
+  any new driver. LIVE/paid drivers belong in `scripts/` (with a cost guard);
+  `tools/probes/` is for offline assertion gauntlets only. A live driver was
+  once written into `tools/probes/` beside 39 established scripts and had to be
+  relocated — check the existing home before inventing a new one.
 
 ### Environment traps that have each cost real time
 

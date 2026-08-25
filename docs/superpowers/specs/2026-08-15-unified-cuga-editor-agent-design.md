@@ -45,17 +45,17 @@ DAG back to the analyzer. The editor is the remaining inert component.
 
 ## 3. Approved decisions
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| Editor substrate | CUGA agent, multi-turn | A single LLM call handling evidence reading, history, mutation and combination degrades under attention load. |
-| Mutation / crossover | One unified call, no mode flag | Maximum flexibility; the agent picks its own strategy, nudged toward balance by prompting. |
-| Crossover authority | Free-form | Deliberate deviation from `merge-resolution.md`; the agent may propose any artifact content rather than resolving a scoped conflict. |
-| Isolation | Same process, explicit trace detachment | Simpler than subprocess isolation; residual risk accepted and guarded by test. |
-| Evidence scope | Blame + artifacts + history + task `input_text` | Excludes `expected_contract` and `final_output`. |
-| Trace payloads | Event metadata + `tool_call` payloads | Tool observations are environment evidence; guarded by the contamination check in §8. |
-| Edit extraction | Terminal submit tool | Bets on tool-body execution (proven live) rather than model narration (proven unreliable). |
-| Artifact creation | Allowed, namespaced and capped | Adding a missing skill is a high-value mutation; bounded to stay auditable. |
-| Parent set | Primary sample + K−1 Pareto donors, K=3 | Bounds prompt growth to a constant as the pool grows. |
+| Decision             | Choice                                          | Rationale                                                                                                                            |
+| -------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Editor substrate     | CUGA agent, multi-turn                          | A single LLM call handling evidence reading, history, mutation and combination degrades under attention load.                        |
+| Mutation / crossover | One unified call, no mode flag                  | Maximum flexibility; the agent picks its own strategy, nudged toward balance by prompting.                                           |
+| Crossover authority  | Free-form                                       | Deliberate deviation from `merge-resolution.md`; the agent may propose any artifact content rather than resolving a scoped conflict. |
+| Isolation            | Same process, explicit trace detachment         | Simpler than subprocess isolation; residual risk accepted and guarded by test.                                                       |
+| Evidence scope       | Blame + artifacts + history + task `input_text` | Excludes `expected_contract` and `final_output`.                                                                                     |
+| Trace payloads       | Event metadata + `tool_call` payloads           | Tool observations are environment evidence; guarded by the contamination check in §8.                                                |
+| Edit extraction      | Terminal submit tool                            | Bets on tool-body execution (proven live) rather than model narration (proven unreliable).                                           |
+| Artifact creation    | Allowed, namespaced and capped                  | Adding a missing skill is a high-value mutation; bounded to stay auditable.                                                          |
+| Parent set           | Primary sample + K−1 Pareto donors, K=3         | Bounds prompt growth to a constant as the pool grows.                                                                                |
 
 ## 4. Architecture
 
@@ -91,12 +91,12 @@ existing pattern in `src/agent_evolve/cuga_wrapper/tools.py`.
 
 ### `app_name="evidence"` — read the failure, no writes
 
-| Tool | Returns |
-|---|---|
-| `get_mechanism()` | mechanism description, severity |
-| `list_blamed_actors()` | actor ids, blame weights, attributed artifacts |
-| `get_task_input()` | the task's `input_text` only |
-| `list_trace_actors()` | distinct actor ids in the trace |
+| Tool                                          | Returns                                                                                                         |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `get_mechanism()`                             | mechanism description, severity                                                                                 |
+| `list_blamed_actors()`                        | actor ids, blame weights, attributed artifacts                                                                  |
+| `get_task_input()`                            | the task's `input_text` only                                                                                    |
+| `list_trace_actors()`                         | distinct actor ids in the trace                                                                                 |
 | `read_trace_events(kind=, actor_id=, limit=)` | filtered event window: `event_id`, `kind`, `actor_id`, `parent_event_id`, `sequence`, plus `tool_call` payloads |
 
 `*_ref` payload values are stripped and never dereferenced. Content-addressed
@@ -105,14 +105,14 @@ decision recorded in the Phase 8 handoff.
 
 ### `app_name="harness"` — read and write artifacts
 
-| Tool | Behavior |
-|---|---|
-| `list_artifacts()` | write-set ids and kinds; separately, readable-but-not-writable ids |
-| `read_artifact(artifact_id)` | current content |
-| `stage_replace(artifact_id, content)` | stages a replacement; authorization checked immediately |
-| `stage_create(artifact_id, content)` | stages a new artifact; namespace prefix and per-attempt cap enforced immediately |
-| `list_staged()` | the edits staged so far |
-| `unstage(artifact_id)` | discards one staged edit |
+| Tool                                  | Behavior                                                                         |
+| ------------------------------------- | -------------------------------------------------------------------------------- |
+| `list_artifacts()`                    | write-set ids and kinds; separately, readable-but-not-writable ids               |
+| `read_artifact(artifact_id)`          | current content                                                                  |
+| `stage_replace(artifact_id, content)` | stages a replacement; authorization checked immediately                          |
+| `stage_create(artifact_id, content)`  | stages a new artifact; namespace prefix and per-attempt cap enforced immediately |
+| `list_staged()`                       | the edits staged so far                                                          |
+| `unstage(artifact_id)`                | discards one staged edit                                                         |
 
 Writes are **staged incrementally, then finalized once**. Each staging call
 validates authorization on the spot, so the agent gets per-artifact feedback
@@ -121,11 +121,11 @@ state is wrapper-side and discarded if the agent never finalizes.
 
 #### Creation namespace and caps
 
-| Rule | Value |
-|---|---|
-| Permitted id pattern | `skills/generated-<name>` |
-| Per-attempt cap | 2 new artifacts |
-| Pool-wide cap | 10 generated artifacts, configurable |
+| Rule                 | Value                                |
+| -------------------- | ------------------------------------ |
+| Permitted id pattern | `skills/generated-<name>`            |
+| Per-attempt cap      | 2 new artifacts                      |
+| Pool-wide cap        | 10 generated artifacts, configurable |
 
 The prefix is **CUGA-group-first by necessity, not style**. `_harness_slot`
 (`cuga_adapter.py:122-138`) accepts only `instructions` or a
@@ -144,20 +144,20 @@ a rejection with the current count, not an exception.
 
 ### `app_name="history"` — learn from past attempts
 
-| Tool | Behavior |
-|---|---|
-| `search_edit_history(limit<=5)` | sanitized `MemoryRecord`s for this issue via `EditMemory.retrieve` |
-| `get_attempt_outcome(attempt_id)` | worked / failed / regression, with reason |
+| Tool                              | Behavior                                                           |
+| --------------------------------- | ------------------------------------------------------------------ |
+| `search_edit_history(limit<=5)`   | sanitized `MemoryRecord`s for this issue via `EditMemory.retrieve` |
+| `get_attempt_outcome(attempt_id)` | worked / failed / regression, with reason                          |
 
 Retrieval is bounded, consistent with `memory.py`'s existing contract. Records
 are reference-based and already sanitized; no raw payloads are exposed.
 
 ### `app_name="parents"` — the combination surface
 
-| Tool | Behavior |
-|---|---|
-| `list_parents()` | primary parent id plus donor ids, with per-task score summary |
-| `read_parent_artifact(parent_id, artifact_id)` | that parent's artifact content |
+| Tool                                           | Behavior                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------- |
+| `list_parents()`                               | primary parent id plus donor ids, with per-task score summary |
+| `read_parent_artifact(parent_id, artifact_id)` | that parent's artifact content                                |
 
 `read_parent_artifact` records which parents were actually read. That record —
 not the agent's prose — is the provenance source for `parent_ids` (§9).
@@ -207,12 +207,12 @@ violated regardless of what the agent decides to do:
 
 **Skills (loaded on demand)** — procedural playbooks for distinct strategies:
 
-| Skill | Teaches |
-|---|---|
-| `refine-artifact` | reading blame, locating the responsible artifact, making a minimal targeted change |
-| `combine-parents` | comparing donor artifacts against the primary, transplanting a capability without discarding working content |
-| `create-artifact` | recognizing that no artifact covers the failure mode, and authoring a new one within namespace rules |
-| `learn-from-history` | interpreting worked/failed/regression records; not repeating a strategy that regressed |
+| Skill                | Teaches                                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `refine-artifact`    | reading blame, locating the responsible artifact, making a minimal targeted change                           |
+| `combine-parents`    | comparing donor artifacts against the primary, transplanting a capability without discarding working content |
+| `create-artifact`    | recognizing that no artifact covers the failure mode, and authoring a new one within namespace rules         |
+| `learn-from-history` | interpreting worked/failed/regression records; not repeating a strategy that regressed                       |
 
 **Balance nudge.** Since mutation and combination share one call with no mode
 flag, the instructions state both are available and that the choice should
@@ -303,13 +303,13 @@ joins them sorted, so retry-budget scoping needs no change.
 
 ## 10. Outcome taxonomy
 
-| Outcome | Meaning | Classification |
-|---|---|---|
-| finalized, valid | staged set captured, authorization passed | normal path |
-| staging rejected | a `stage_*` call refused the write | agent may correct in-run; if it finalizes nothing, falls through to the rows below |
-| `submit_edit_plan` never called | agent produced prose, or staged without finalizing | **`no_tool_call`** |
-| explicit decline | `submit_edit_plan` called with nothing staged, plus a rationale | `no_op` |
-| agent raised | CUGA execution error | `unavailable` |
+| Outcome                         | Meaning                                                         | Classification                                                                     |
+| ------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| finalized, valid                | staged set captured, authorization passed                       | normal path                                                                        |
+| staging rejected                | a `stage_*` call refused the write                              | agent may correct in-run; if it finalizes nothing, falls through to the rows below |
+| `submit_edit_plan` never called | agent produced prose, or staged without finalizing              | **`no_tool_call`**                                                                 |
+| explicit decline                | `submit_edit_plan` called with nothing staged, plus a rationale | `no_op`                                                                            |
+| agent raised                    | CUGA execution error                                            | `unavailable`                                                                      |
 
 `no_tool_call` must remain distinct from `no_op`. Collapsing them would let
 "the agent did not engage" masquerade as "the agent judged no edit warranted" —
@@ -438,15 +438,15 @@ backstop for total spend.
 actions and 6 claims marked unverified. Every unverified claim was checked
 against the code and confirmed:
 
-| Claim | Evidence |
-|---|---|
-| `lineage_of` accepts multiple parents | `editor.py:490-491` joins sorted; `record_attempt:499` already threads `parent_versions` |
-| `commit_to_pool` hardcodes one parent | `orchestrator.py:1221` `parent_ids=(parent_entry.candidate_id,)` |
+| Claim                                       | Evidence                                                                                              |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `lineage_of` accepts multiple parents       | `editor.py:490-491` joins sorted; `record_attempt:499` already threads `parent_versions`              |
+| `commit_to_pool` hardcodes one parent       | `orchestrator.py:1221` `parent_ids=(parent_entry.candidate_id,)`                                      |
 | `merge.py:335` never compares left to right | bare `else:` after three `changed` tests; `left_contents[aid] == right_contents[aid]` never evaluated |
-| `merge.py:250` sums raw blame | `total += n.blame`, no severity/confidence factor |
-| `plan_merge:305` drops absent artifacts | `continue` on `aid not in base_contents` |
-| `plan_merge` has zero production callers | 15 references, all in `tests/test_merge.py` |
-| `editor_calls` counted but uncapped | `config.py:49` is the only occurrence of the name in the module |
+| `merge.py:250` sums raw blame               | `total += n.blame`, no severity/confidence factor                                                     |
+| `plan_merge:305` drops absent artifacts     | `continue` on `aid not in base_contents`                                                              |
+| `plan_merge` has zero production callers    | 15 references, all in `tests/test_merge.py`                                                           |
+| `editor_calls` counted but uncapped         | `config.py:49` is the only occurrence of the name in the module                                       |
 
 Resolutions:
 
