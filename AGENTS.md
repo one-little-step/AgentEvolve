@@ -17,11 +17,16 @@ installed package to answer questions about CUGA. What remains forbidden is
 *inventing* an API: check `.venv/.../cuga/` or the SDK docs, and if a surface is
 not there, say so rather than assuming.
 
-> **Open discrepancy, unresolved.** `pyproject.toml:12` declares `cuga>=0.3.1`,
-> but the installed version is `0.2.20` — **below its own declared floor**. Nobody
-> has established which is correct. Do not "fix" this by editing the pin or by
-> upgrading: the whole suite and every measurement to date ran against 0.2.20, so
-> either change invalidates existing evidence. Raise it and let the user decide.
+> **Discrepancy RESOLVED 2026-08-26 (?04).** The venv was upgraded at some
+> point after this note was written: `importlib.metadata` now reports
+> `cuga 0.3.1` (dist-info confirms), matching the pyproject floor. All
+> replay-arc evidence (Phases 2–6, crown, real-editor run, retry hardening;
+> suite baseline 2200) ran against **0.3.1**. The pin is tightened to
+> `cuga>=0.3.1,<0.4` so untested upgrades cannot arrive silently. Earlier
+> entries below that cite `0.2.20` describe the *previous* environment and
+> are preserved as history; line-number citations for cuga internals were
+> re-verified against 0.3.1 where this arc relied on them (models.py factory,
+> graph.py branches, sdk surfaces).
 
 ## Non-Negotiable Boundaries
 

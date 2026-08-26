@@ -475,6 +475,14 @@ class RuntimeSettings:
             os.environ["OPENAI_BASE_URL"] = self.base_url
         if self.api_key:
             os.environ["OPENAI_API_KEY"] = self.api_key
+        # ?17 Layer 1: bake patient retries into every CUGA-internal model
+        # construction. Best-effort: env config must never fail a run.
+        try:
+            from agent_evolve.cuga_wrapper.retry_policy import install_retry_policy
+
+            install_retry_policy()
+        except Exception:  # noqa: BLE001 - hardening must never be load-bearing for setup
+            pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -1079,6 +1087,13 @@ def _litellm_completion(**request: object) -> object:
     """Perform the live single-call completion. Imported lazily to keep tests offline."""
     import litellm
 
+    # ?17 Layer 2: our roles ride litellm's retry machinery with the same
+    # patience as the CUGA-internal layer. Callers may override explicitly.
+    from agent_evolve.cuga_wrapper.retry_policy import resolve_max_retries
+
+    retries = resolve_max_retries()
+    if retries and "num_retries" not in request:
+        request["num_retries"] = retries
     return litellm.completion(**request)
 
 

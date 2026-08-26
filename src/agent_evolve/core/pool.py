@@ -57,7 +57,11 @@ class ScoreProvenance:
     mechanism_cluster_id: str
     trace_id: str
     rollout_seq: int  # which rollout this was (0-indexed within the cell)
-    analyzer_model_id: str
+    #: ``None`` means *no diagnosis exists* for this measurement -- same
+    #: explicit-absence contract as ``blame_confidence`` below. Every passing
+    #: rollout is legitimately undiagnosed; ``""`` would read as an unnamed
+    #: analyzer on a diagnosed score.
+    analyzer_model_id: str | None
     judge_model_id: str
     #: ``None`` means *no diagnosis exists* for this measurement -- e.g. the
     #: probe passed, so the diagnose gate legitimately produced nothing. This

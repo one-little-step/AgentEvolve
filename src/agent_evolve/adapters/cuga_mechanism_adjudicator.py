@@ -92,6 +92,11 @@ def _litellm_completion(**request: object) -> object:
             **request,
             "extra_headers": {**supplied, **correlation},
         }
+    from agent_evolve.cuga_wrapper.retry_policy import resolve_max_retries as _ae_rr
+
+    _ae_retries = _ae_rr()
+    if _ae_retries and "num_retries" not in request:
+        request["num_retries"] = _ae_retries
     return litellm.completion(**request)
 
 

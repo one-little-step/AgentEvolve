@@ -1883,7 +1883,7 @@ class SequentialGepaRunner:
                 trace_id=rollout.trace.trace_id,
                 rollout_seq=cell.rollout_count,
                 analyzer_model_id=(
-                    analysis.analyzer_model_id if analysis is not None else ""
+                    analysis.analyzer_model_id if analysis is not None else None
                 ),
                 # The grader that produced this number, recorded as the judge:
                 # a score whose grader is unnamed cannot be compared later.
@@ -1891,7 +1891,7 @@ class SequentialGepaRunner:
                 blame_confidence=(
                     min(1.0, analysis.blame_graph.total_blame())
                     if analysis is not None
-                    else 0.0
+                    else None
                 ),
                 blame_stability=1.0,
                 artifact_versions=dict(entry.candidate.artifact_hashes),
