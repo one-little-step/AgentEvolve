@@ -214,6 +214,24 @@ NOT name a surface or prescribe a remedy in the mechanism -- choosing the fix is
 the editor's job. Your obligation is that the mechanism be concrete enough for
 that choice to be possible.
 
+SURFACE ABSENCE IS EVIDENCE (S4-9)
+----------------------------------
+Each trace carries a "surface_activity" summary: which artifact ids were
+actually loaded per surface (skills / policies / memory), derived from
+load_skill-shaped tool calls. An EMPTY member is a measured fact, not missing
+data: it means that surface was never exercised on the run. If you pay someone
+to guide you and he never shows up, the absence of guidance is itself part of
+the cause -- a mechanism may reasonably say the agent acted with nothing loaded
+to steer it. When an empty surface materially contributed to the failure,
+record that verdict in the finding's "absent_surfaces" field, using the exact
+surface names above (e.g. ["skills"]). Constraints, so absence stays honest:
+- name a surface only when its surface_activity member is empty (or its loads
+  demonstrably did not influence the run);
+- do NOT use absent_surfaces when the failure is fully explained by what WAS
+  loaded;
+- absence is one input to blame, not a substitute for the mechanism: the
+  mechanism sentence still says what happened and what followed.
+
 Answer with a single JSON object and nothing else. Schema:
 
 {
@@ -666,6 +684,14 @@ class CugaTrajectoryAnalyzer:
         # set implies an empty edge set.
         graph = BlameGraph(nodes=nodes, edges=edges)
 
+        # S4-9: absence claims are grounded like everything else -- a surface
+        # survives only when the trace's surface_activity summary corroborates
+        # it (the surface was measurably never exercised). A model claim of
+        # absence for a surface that WAS loaded is dropped with a note, not
+        # silently honored.
+        absent_surfaces, absence_notes = _grounded_absent_surfaces(raw, (evidence,))
+        notes.extend(absence_notes)
+
         full_rationale = _join_rationale(rationale, notes) or (
             "analyzer produced a finding with no model rationale"
         )
@@ -684,6 +710,7 @@ class CugaTrajectoryAnalyzer:
             confidence=confidence,
             blame_graph=graph,
             evidence_refs=evidence_refs,
+            absent_surfaces=absent_surfaces,
             rationale=full_rationale,
             counterfactual_notes=_string_tuple(raw.get("counterfactual_notes")),
         )
@@ -889,6 +916,58 @@ def _events(evidence: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
     if not isinstance(events, (list, tuple)):
         return ()
     return tuple(e for e in events if isinstance(e, Mapping))
+
+
+def _grounded_absent_surfaces(
+    raw: Mapping[str, object],
+    evidence: Sequence[Mapping[str, object]],
+) -> tuple[tuple[str, ...], list[str]]:
+    """S4-9: keep only absence claims the trace's surface_activity corroborates.
+
+    A claimed surface survives when that trace's ``surface_activity`` member is
+    empty (measured: never exercised). Claims for surfaces that WERE exercised
+    are dropped with a note rather than silently honored, and unknown surface
+    names are dropped so model invention cannot widen the vocabulary.
+    """
+    notes: list[str] = []
+    claimed = _string_tuple(raw.get("absent_surfaces"))
+    if not claimed:
+        return (), notes
+
+    # One trace per report here, but the report is a sequence: corroborate
+    # against the FIRST trace's summary (findings are per-trace).
+    measured: dict[str, list[str]] = {}
+    for entry in evidence:
+        activity = entry.get("surface_activity")
+        if isinstance(activity, Mapping):
+            measured = {
+                str(k): [str(i) for i in v] if isinstance(v, (list, tuple)) else []
+                for k, v in activity.items()
+                if not str(k).startswith("_")
+            }
+            break
+
+    kept: list[str] = []
+    dropped_used: list[str] = []
+    dropped_unknown: list[str] = []
+    for surface in claimed:
+        if surface not in measured:
+            dropped_unknown.append(surface)
+        elif measured[surface]:
+            dropped_used.append(surface)
+        else:
+            kept.append(surface)
+    if dropped_used:
+        notes.append(
+            "dropped absent_surfaces claims for surfaces the trace shows WERE "
+            f"exercised: {', '.join(sorted(set(dropped_used)))}"
+        )
+    if dropped_unknown:
+        notes.append(
+            "dropped absent_surfaces claims for unknown surface names: "
+            f"{', '.join(sorted(set(dropped_unknown)))}"
+        )
+    return tuple(dict.fromkeys(kept)), notes
 
 
 def _grounded_blame_graph(

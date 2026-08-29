@@ -1729,8 +1729,13 @@ class SequentialGepaRunner:
                 status="insufficient_evidence",
                 mechanism_description=analysis.mechanism,
                 mechanism_cluster_id=self.mechanism_cluster_id,
+                # S4-9: the analysis's judged severity survives an absence
+                # verdict, so an absence-derived issue ranks on the analyzer's
+                # impact judgement rather than silently at zero.
+                severity=analysis.severity,
                 blame_graph=BlameGraph(nodes=()),
                 evidence_refs=(),
+                absent_surfaces=tuple(getattr(analysis, "absent_surfaces", ()) or ()),
                 rationale=(
                     "no blamed actor in the analysis; artifact attribution is "
                     f"un-evidenced for task {task.task_id}"
@@ -1760,6 +1765,7 @@ class SequentialGepaRunner:
             confidence=_DEFAULT_ISSUE_CONFIDENCE,
             blame_graph=BlameGraph(nodes=nodes),
             evidence_refs=write_set,
+            absent_surfaces=tuple(getattr(analysis, "absent_surfaces", ()) or ()),
             rationale=(
                 "attributed the adapter-declared writable set for the "
                 f"highest-blame actor on task {task.task_id}"
@@ -1841,7 +1847,12 @@ class SequentialGepaRunner:
                 verdict_id=f"{rollout.task.task_id}:{self.mechanism_cluster_id}",
                 writable_artifact_ids=write_set,
             )
-            if finding.status == "insufficient_evidence":
+            if finding.status == "insufficient_evidence" and not finding.absent_surfaces:
+                # S4-9: an absence-bearing finding is not an evidence vacuum --
+                # the trace measured that a surface was never exercised, and
+                # build_issue can still turn that into an editable work item.
+                # Only a bare abstention (no blame, no measured absence) is
+                # skipped here.
                 continue
             issue = build_target_issue(
                 finding,

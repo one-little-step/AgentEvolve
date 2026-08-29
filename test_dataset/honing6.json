@@ -1,0 +1,60 @@
+{
+  "dataset_name": "Complex Multi-Capability Evaluation Set",
+  "description": "6 hard problems probing math/computation, multi-step logical reasoning, live web search, and agentic tool use (code execution, multi-hop lookups). Each problem specifies required capabilities and grading notes since some answers are time-sensitive.",
+  "problems": [
+    {
+      "id": 1,
+      "title": "Constrained Divisibility Count",
+      "category": "math / number theory / combinatorics",
+      "capabilities_required": ["arithmetic reasoning", "code execution for exact verification"],
+      "difficulty": "hard",
+      "problem": "Let S be the set of integers n with 1 \u2264 n \u2264 1,000,000 such that n is NOT divisible by any of 2, 3, 5, or 7. Among these n, count how many satisfy the additional condition that n+1 IS divisible by at least two distinct primes from the set {2, 3, 5, 7}. Report the exact count, and show the inclusion-exclusion reasoning you used before verifying computationally.",
+      "grading_notes": "Has one exact numeric answer. The model should ideally derive an inclusion-exclusion approach analytically, then confirm with a brute-force or sieve computation via code execution. Flag answers that skip verification entirely or that only guess."
+    },
+    {
+      "id": 2,
+      "title": "The Six Scholars Scheduling Puzzle",
+      "category": "complex logical reasoning / constraint satisfaction",
+      "capabilities_required": ["deductive reasoning", "systematic case elimination (optionally code-assisted CSP solving)"],
+      "difficulty": "hard",
+      "problem": "Six scholars \u2014 Anya, Boris, Chidi, Dara, Elsa, and Farid \u2014 each present a paper on exactly one day, Monday through Saturday, one scholar per day, no repeats. Clues: (1) Anya presents exactly two days before Dara. (2) Chidi does not present on Monday, Wednesday, or Saturday. (3) The scholar presenting on Friday works on the same topic as Boris but is not Boris. (4) Elsa presents immediately after Farid. (5) Dara does not present on the last day. (6) Exactly one scholar presents between Boris's day and Chidi's day (in either order). (7) Farid does not present on Monday. Determine the unique day assignment for all six scholars, and prove uniqueness by showing why every other branch fails.",
+      "grading_notes": "Unique solution exists by construction. Grade both the final assignment and whether the model correctly demonstrates why competing branches are eliminated (not just asserts the answer)."
+    },
+    {
+      "id": 3,
+      "title": "Nobel Lineage Chase",
+      "category": "multi-hop web search / research synthesis",
+      "capabilities_required": ["live web search", "multi-hop entity linking", "fact verification"],
+      "difficulty": "hard",
+      "problem": "Identify the winner(s) of the most recent Nobel Prize in Physics as of today. Pick one laureate from that year. Find who supervised that laureate's PhD (their doctoral advisor). Then find at least one OTHER Nobel laureate (any prize category, any year) who was supervised by that same advisor. Report: the recent laureate, the shared advisor, the other laureate found, and the years each won their Nobel Prize, with sources.",
+      "grading_notes": "Time-sensitive \u2014 correct answer depends on the search date. Grade on whether the model actually searches rather than relying on stale training knowledge, correctly chains advisor \u2192 other student, and cites verifiable sources rather than fabricating an advisor relationship."
+    },
+    {
+      "id": 4,
+      "title": "Optimal Substring Reconstruction Under Budget",
+      "category": "algorithmic reasoning / tool-assisted coding",
+      "capabilities_required": ["dynamic programming", "code execution", "complexity analysis"],
+      "difficulty": "hard",
+      "problem": "You are given two strings A (length 8,000) and B (length 8,000) generated as pseudo-random lowercase sequences from a fixed seed (seed=42, using each language's standard PRNG choosing among 'a'-'e' only). Write and execute code to: (a) compute the true edit distance (insertions, deletions, substitutions each cost 1) between A and B, (b) report the actual runtime and peak memory approach used, (c) then find the minimum edit distance achievable if you are additionally allowed exactly one 'transposition of two adjacent characters' operation at cost 1 anywhere in A before running standard edit distance \u2014 determine whether this ever helps for this A,B pair, and prove your answer with the executed results.",
+      "grading_notes": "Requires actually running code, not just describing an algorithm. Check that memory/runtime discussion reflects the real O(n*m) DP tradeoffs, and that part (c) is tested empirically (e.g., trying candidate transpositions) rather than asserted without evidence."
+    },
+    {
+      "id": 5,
+      "title": "Currency Arbitrage Check",
+      "category": "search + applied math + verification",
+      "capabilities_required": ["live web search for current FX rates", "arithmetic/percentage computation", "code execution for verification"],
+      "difficulty": "medium-hard",
+      "problem": "Look up current spot exchange rates for USD/EUR, EUR/JPY, and JPY/USD. Using these three rates and assuming a 0.1% transaction fee is charged on every conversion (three conversions total for a full triangular loop starting and ending in USD), determine whether a triangular arbitrage opportunity exists right now. Compute the net percentage gain or loss for a $10,000 starting position after all three conversions and fees, showing your formula and the executed calculation.",
+      "grading_notes": "Time-sensitive; there is almost certainly no real arbitrage (efficient markets), so the model should correctly conclude a small net loss/negligible gain, not hallucinate a profitable opportunity. Check it pulls live rates rather than remembered ones, and that the fee compounding math is applied correctly across all three legs."
+    },
+    {
+      "id": 6,
+      "title": "Skyscraper Chain Reasoning",
+      "category": "multi-hop search + math + architectural research",
+      "capabilities_required": ["live web search", "multi-hop lookup", "unit conversion / arithmetic"],
+      "difficulty": "hard",
+      "problem": "Find the tallest building topped out or completed in 2025 anywhere in the world, and its height in meters. Using 138.8 meters as the height of the Great Pyramid of Giza, compute how many complete Great Pyramids could be stacked to reach that building's height (round down to the nearest whole number). Then identify the architecture firm responsible for the building's design, find a different building by that same firm completed before 2020, and report the height difference in meters between the two buildings.",
+      "grading_notes": "Time-sensitive and requires real search rather than training-data recall (esp. for 'completed in 2025'). Verify the pyramid-stacking arithmetic is computed correctly and that the second building/firm attribution is real and checked, not fabricated."
+    }
+  ]
+}

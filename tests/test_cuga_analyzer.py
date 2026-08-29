@@ -57,12 +57,10 @@ def _trace(
     candidate_id: str = "cand-1",
     task_id: str = "task-1",
     status: str = "failure",
+    events: tuple[TraceEvent, ...] | None = None,
 ) -> ExecutionTrace:
-    return ExecutionTrace(
-        trace_id=trace_id,
-        candidate_id=candidate_id,
-        task_id=task_id,
-        events=(
+    if events is None:
+        events = (
             TraceEvent(
                 event_id="e1",
                 kind="tool_call",
@@ -77,7 +75,12 @@ def _trace(
                 parent_event_id="e1",
                 payload={"tool": "search_flights", "origin": "Denver"},
             ),
-        ),
+        )
+    return ExecutionTrace(
+        trace_id=trace_id,
+        candidate_id=candidate_id,
+        task_id=task_id,
+        events=events,
         final_output="a flight to Boston",
         status=status,
     )
@@ -434,6 +437,74 @@ def test_causal_link_to_an_ungrounded_actor_is_dropped():
     assert f.status == "observed"
     assert f.blame_graph.edges == ()
     assert "dropped 1 causal link" in f.rationale
+
+
+# ---------------------------------------------------------------------- #
+# S4-9: grounded absence
+# ---------------------------------------------------------------------- #
+def test_absence_claim_survives_when_surface_activity_is_empty():
+    """skills measurably unloaded -> the model's absence claim is kept."""
+    payload = _observed_payload(absent_surfaces=["skills"])
+    f = _analyzer(payload).analyze(_report())[0]
+
+    assert f.status == "observed"
+    assert f.absent_surfaces == ("skills",)
+
+
+def test_absence_claim_for_an_exercised_surface_is_dropped():
+    """The fixture trace has no load_skill calls, so 'memory' is genuinely
+    absent; claiming 'skills' absent when a load happened must be dropped."""
+    loaded = _trace(
+        events=(
+            TraceEvent(
+                event_id="e1",
+                kind="tool_call",
+                actor_id="planner",
+                parent_event_id=None,
+                payload={
+                    "tool_call": {
+                        "name": "load_skill",
+                        "arguments": {"name": "flight-booking"},
+                    }
+                },
+            ),
+        ),
+    )
+    payload = _observed_payload(absent_surfaces=["skills", "memory"])
+    f = _analyzer(payload).analyze(_report(loaded))[0]
+
+    assert f.status == "observed"
+    assert f.absent_surfaces == ("memory",)
+    assert "WERE exercised" in f.rationale
+
+
+def test_absence_claim_for_an_unknown_surface_is_dropped():
+    payload = _observed_payload(absent_surfaces=["vibes"])
+    f = _analyzer(payload).analyze(_report())[0]
+
+    assert f.status == "observed"
+    assert f.absent_surfaces == ()
+    assert "unknown surface names" in f.rationale
+
+
+def test_no_absence_claim_yields_no_absent_surfaces():
+    payload = _observed_payload()
+    f = _analyzer(payload).analyze(_report())[0]
+
+    assert f.absent_surfaces == ()
+
+
+def test_absence_survives_analysis_from_finding_via_shim():
+    """End-to-end: shim -> finding -> CausalAnalysis keeps absent_surfaces."""
+    from agent_evolve.core.analyzer import ReportAnalyzerShim
+
+    payload = _observed_payload(absent_surfaces=["skills"])
+    shim = ReportAnalyzerShim(
+        analyzer=_analyzer(payload), score_fn=lambda task, trace: 0.0
+    )
+    analysis = shim.analyze(_task(), _trace())
+
+    assert analysis.absent_surfaces == ("skills",)
 
 
 # ---------------------------------------------------------------------- #

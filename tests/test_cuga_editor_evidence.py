@@ -247,3 +247,28 @@ def test_events_preserve_dag_fields() -> None:
     llm = _view().events(kind="llm_call")[0]
     assert llm["event_id"] == "graph:1"
     assert llm["parent_event_id"] == "graph:0"
+
+
+# ------------------------------------------------------------------ #
+# S4-9: measured absence reaches the editor view
+# ------------------------------------------------------------------ #
+def test_absent_surfaces_empty_by_default() -> None:
+    assert _view().absent_surfaces() == ()
+
+
+def test_absent_surfaces_forwarded_from_analysis() -> None:
+    task = _task()
+    analysis = CausalAnalysis(
+        mechanism="no guidance was ever loaded to steer the run",
+        severity=0.9,
+        score=0.0,
+        blame_graph=BlameGraph(nodes=()),
+        absent_surfaces=("skills", "memory"),
+    )
+    view = EvidenceView(
+        analysis=analysis,
+        trace=_trace(),
+        task=task,
+        contamination_terms=contamination_terms_from(task),
+    )
+    assert view.absent_surfaces() == ("skills", "memory")

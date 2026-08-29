@@ -32,6 +32,11 @@ def _check_unit_interval(name: str, value: float) -> float:
     return v
 
 
+#: S4-9: the closed vocabulary of editable surfaces, shared by
+#: :class:`CausalFinding` validation and :class:`CausalAnalysis`.
+_EDITABLE_SURFACES = ("instructions", "skills", "policies", "memory")
+
+
 @dataclass(frozen=True, slots=True)
 class BlameNode:
     """One actor in a causal blame graph (tool, subagent, retriever, etc.)."""
@@ -117,12 +122,28 @@ class CausalAnalysis:
     counterfactual_evidence: tuple[str, ...] = ()
     analyzer_model_id: str = ""
     judge_model_id: str = ""
+    #: S4-9: surfaces whose load evidence is empty and whose absence the
+    #: analyzer holds partially causal (see ``CausalFinding.absent_surfaces``).
+    #: Declared after the defaulted fields: it defaults, so dataclass ordering
+    #: is preserved.
+    absent_surfaces: tuple[str, ...] = ()
+
+    #: S4-9: editable-surface names, one per adapter-declared surface. The
+    #: closed vocabulary both analyses and findings validate against.
+    EDITABLE_SURFACES: tuple[str, ...] = ("instructions", "skills", "policies", "memory")
 
     def __post_init__(self) -> None:
         if not self.mechanism:
             raise ValueError("mechanism is required")
         object.__setattr__(self, "severity", _check_unit_interval("severity", self.severity))
         object.__setattr__(self, "score", _check_unit_interval("score", self.score))
+        unknown_surfaces = sorted(set(self.absent_surfaces) - set(self.EDITABLE_SURFACES))
+        if unknown_surfaces:
+            raise ValueError(
+                "absent_surfaces names unknown surfaces (known: "
+                f"{', '.join(self.EDITABLE_SURFACES)}): {', '.join(unknown_surfaces)}"
+            )
+        object.__setattr__(self, "absent_surfaces", tuple(self.absent_surfaces))
         object.__setattr__(
             self,
             "counterfactual_evidence",
@@ -186,6 +207,14 @@ class CausalFinding(BaseModel):
     confidence: float | None = None
     blame_graph: BlameGraph = Field(default_factory=lambda: BlameGraph(nodes=()))
     evidence_refs: tuple[str, ...] = ()
+    #: S4-9: structured surface absence. Names an editable surface ("skills",
+    #: "policies", "memory", "instructions") whose load evidence is EMPTY in the
+    #: trace and whose absence the analyzer holds partially causal. This is
+    #: evidence of nothing being exercised, NOT a claim about artifact content,
+    #: so it carries no contamination risk. A finding may name absent surfaces
+    #: AND attribute artifacts; empty attributed artifacts plus absent surfaces
+    #: is a legal actionable shape (create-a-new-artifact).
+    absent_surfaces: tuple[str, ...] = ()
     rationale: str = Field(min_length=1)
     counterfactual_notes: tuple[str, ...] = ()
 
@@ -201,6 +230,13 @@ class CausalFinding(BaseModel):
                 raise ValueError(f"{name} must be in [0, 1]")
         if any(not ref.strip() for ref in self.evidence_refs):
             raise ValueError("evidence_refs contains blank IDs")
+        unknown_surfaces = sorted(set(self.absent_surfaces) - set(_EDITABLE_SURFACES))
+        if unknown_surfaces:
+            raise ValueError(
+                "absent_surfaces names unknown surfaces (known: "
+                f"{', '.join(sorted(_EDITABLE_SURFACES))}): "
+                f"{', '.join(unknown_surfaces)}"
+            )
         if self.status == "observed":
             missing: list[str] = []
             if not self.mechanism_description:
@@ -282,6 +318,7 @@ def abstained_analysis(
     evidence: Sequence[str] = (),
     analyzer_model_id: str = "",
     judge_model_id: str = "",
+    absent_surfaces: tuple[str, ...] = (),
 ) -> CausalAnalysis:
     """An analysis recording that no conclusion was reached.
 
@@ -289,6 +326,10 @@ def abstained_analysis(
     impact and blame is an *attribution*, and neither is claimable without a
     conclusion. ``score`` is still carried, because failing to diagnose a
     rollout does not un-measure it.
+
+    ``absent_surfaces`` is accepted and forwarded: measured surface absence
+    (an empty ``surface_activity`` summary) is data that survives even when
+    the analyzer declines to conclude.
     """
     if not reason:
         raise ValueError("reason is required")
@@ -297,6 +338,7 @@ def abstained_analysis(
         severity=0.0,
         score=score,
         blame_graph=BlameGraph(nodes=()),
+        absent_surfaces=absent_surfaces,
         counterfactual_evidence=tuple(evidence),
         analyzer_model_id=analyzer_model_id,
         judge_model_id=judge_model_id,
@@ -395,6 +437,9 @@ def analysis_from_finding(
             severity=severity,
             score=score,
             blame_graph=finding.blame_graph,
+            # S4-9: absence evidence must cross the conversion or the editor
+            # can never see why nothing was exercised.
+            absent_surfaces=finding.absent_surfaces,
             counterfactual_evidence=finding.counterfactual_notes,
             analyzer_model_id=analyzer_model_id,
             judge_model_id=judge_model_id,
@@ -406,6 +451,10 @@ def analysis_from_finding(
         evidence=(finding.rationale, *finding.counterfactual_notes),
         analyzer_model_id=analyzer_model_id,
         judge_model_id=judge_model_id,
+        # S4-9: an abstention can still carry measured absence (the surface
+        # summary is data, not the analyzer's opinion). Forwarded so a
+        # downstream consumer can audit what was and was not exercised.
+        absent_surfaces=finding.absent_surfaces,
     )
 
 

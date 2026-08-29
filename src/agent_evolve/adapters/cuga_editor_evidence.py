@@ -53,6 +53,16 @@ class EvidenceView:
             "severity": self.analysis.severity,
         }
 
+    def absent_surfaces(self) -> tuple[str, ...]:
+        """S4-9: surfaces the analyzer measured as never exercised.
+
+        From the causal analysis, which forwards the finding's grounded
+        ``absent_surfaces`` (the analyzer itself cross-checks claims against
+        the trace's ``surface_activity`` summary). Empty when every surface
+        was exercised or the analyzer attributed no absence.
+        """
+        return tuple(self.analysis.absent_surfaces)
+
     def blamed_actors(self) -> tuple[dict[str, object], ...]:
         nodes = sorted(
             self.analysis.blame_graph.nodes,

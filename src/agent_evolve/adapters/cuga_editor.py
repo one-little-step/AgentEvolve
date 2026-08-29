@@ -134,10 +134,22 @@ def _evidence_summary(view: EvidenceView) -> str:
     actors = ", ".join(
         f"{a['actor_id']} (blame {a['blame']})" for a in view.blamed_actors()
     ) or "none attributed"
+    absent = view.absent_surfaces()
+    absence_line = ""
+    if absent:
+        # S4-9: measured surface absence is evidence, and create is a
+        # first-class answer to it. Named here because evidence the prompt
+        # never mentions is evidence the model never asks for.
+        absence_line = (
+            f"\nMEASURED ABSENT SURFACES: {', '.join(absent)}\n"
+            "  (the trace shows these surfaces were never exercised; a new"
+            " artifact via stage_create is a first-class answer to this)"
+        )
     return (
         f"MECHANISM: {mechanism['mechanism']}\n"
         f"SEVERITY: {mechanism['severity']}\n"
-        f"BLAMED ACTORS: {actors}\n"
+        f"BLAMED ACTORS: {actors}"
+        f"{absence_line}\n"
         f"TASK: {view.task_input()}"
     )
 

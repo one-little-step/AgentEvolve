@@ -47,6 +47,19 @@ _MIN_TERM_LENGTH = 3
 # payload kinds (llm_call_start, checkpoints) carry prompt bodies and state.
 _PAYLOAD_BEARING_KINDS = frozenset({"tool_call"})
 
+#: S4-9: tool_call names that LOAD an editable surface. A load's payload names
+#: the loaded artifact id in its arguments, which is how the surface summary
+#: knows the surface was exercised. Only names, never contents.
+_SURFACE_LOAD_TOOLS: dict[str, str] = {
+    "load_skill": "skills",
+    "load_policy": "policies",
+    "load_memory": "memory",
+}
+
+#: S4-9: per-surface artifact ids actually exercised by a trace. Keyed by the
+#: same surface vocabulary as ``CausalFinding.absent_surfaces``.
+_SURFACE_KEYS = ("skills", "policies", "memory")
+
 _DEFAULT_MAX_EVENTS_PER_TRACE = 50
 
 
@@ -168,6 +181,48 @@ def rollout_group_report(
     )
 
 
+def surface_activity_from(
+    trace: ExecutionTrace, terms: Sequence[str]
+) -> tuple[dict[str, list[str]], int]:
+    """S4-9: which artifact ids did this trace actually exercise, per surface?
+
+    Returns ``(summary, withheld_load_count)``. Derived ONLY from ``tool_call``
+    payloads whose tool name loads a surface (``load_skill`` etc.): the loaded
+    id appears in the call's arguments, so a load is direct evidence that the
+    surface was used. Nothing else is read -- no prompt bodies, no artifact
+    contents -- and a load id that carries answer-key material is withheld
+    (counted in ``withheld_load_count``), mirroring payload handling.
+
+    The summary maps each surface to sorted deduplicated ids, with EMPTY
+    members when the surface was never exercised: explicit absence is the
+    point (S4-9), so the summary is meaningful exactly when it is empty.
+    """
+    loads: dict[str, set[str]] = {key: set() for key in _SURFACE_KEYS}
+    redactions = 0
+    for event in trace.events:
+        if event.kind != "tool_call" or not isinstance(event.payload, Mapping):
+            continue
+        call = event.payload.get("tool_call")
+        if not isinstance(call, Mapping):
+            continue
+        surface = _SURFACE_LOAD_TOOLS.get(str(call.get("name", "")))
+        if surface is None:
+            continue
+        arguments = call.get("arguments")
+        artifact_id = ""
+        if isinstance(arguments, Mapping):
+            candidate = arguments.get("name") or arguments.get("id")
+            if isinstance(candidate, str):
+                artifact_id = candidate.strip()
+        if not artifact_id:
+            continue
+        if is_contaminated(artifact_id, terms):
+            redactions += 1
+            continue
+        loads[surface].add(artifact_id)
+    return {key: list(sorted(loads[key])) for key in _SURFACE_KEYS}, redactions
+
+
 def _trace_evidence(
     task: EvolutionTask,
     trace: ExecutionTrace,
@@ -202,6 +257,7 @@ def _trace_evidence(
             }
         )
 
+    surface, withheld_loads = surface_activity_from(trace, terms)
     return {
         "trace_id": trace.trace_id,
         "status": trace.status,
@@ -209,7 +265,13 @@ def _trace_evidence(
         "actors": tuple(actors),
         "events": tuple(events),
         "events_truncated": len(trace.events) > max_events,
-        "redaction_count": redactions,
+        "redaction_count": redactions + withheld_loads,
+        # S4-9: which surfaces this trace exercised. Computed over the FULL
+        # event list (a load past the trim window still proves use), never
+        # leaking contents. Empty members mean the surface was never loaded;
+        # a withheld load id is folded into redaction_count so it reads as
+        # withheld rather than indistinguishable from never-happened.
+        "surface_activity": surface,
     }
 
 

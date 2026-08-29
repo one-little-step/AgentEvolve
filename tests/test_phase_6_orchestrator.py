@@ -269,6 +269,53 @@ def test_build_issues_skips_tasks_with_insufficient_evidence() -> None:
     assert runner.build_issues([_task()]) == ()
 
 
+class _AbsenceAnalyzer:
+    """S4-9: a failure with no blamed actors but MEASURED surface absence."""
+
+    analyzer_model_id = "absence"
+    judge_model_id = "absence"
+
+    def analyze(self, task: EvolutionTask, trace: object) -> CausalAnalysis:
+        return CausalAnalysis(
+            mechanism="no guidance was ever loaded to steer the run",
+            severity=1.0,
+            score=0.0,
+            blame_graph=BlameGraph(nodes=()),
+            absent_surfaces=("skills",),
+        )
+
+
+def test_absence_finding_forwards_absent_surfaces() -> None:
+    """The synthesized finding carries the analysis's measured absence."""
+    runner = _runner(analyzer_judge=_AbsenceAnalyzer())
+    task = _task()
+    trace, analysis = runner.observe(runner.pool.base, task)
+
+    finding = runner.finding_from_analysis(
+        analysis,
+        task=task,
+        candidate_id="base",
+        trace_id=trace.trace_id,
+        verdict_id="v-1",
+        writable_artifact_ids=("skills/retrieval",),
+    )
+
+    assert finding.absent_surfaces == ("skills",)
+
+
+def test_build_issues_turns_absence_into_a_work_item() -> None:
+    """THE S4-9 live defect: absence with no blamed actor must still be editable."""
+    runner = _runner(analyzer_judge=_AbsenceAnalyzer())
+
+    issues = runner.build_issues([_task()])
+
+    assert len(issues) == 1
+    assert issues[0].absent_surfaces == ("skills",)
+    # Attributed to the declared-but-unused writable artifacts of the
+    # absent surface.
+    assert issues[0].writable_artifact_ids == ("skills/retrieval",)
+
+
 def test_run_attempt_with_no_blame_produces_no_work_item() -> None:
     """A failure with no blamed actor yields a PENDING no-issue outcome."""
     runner = _runner(analyzer_judge=_NoBlameAnalyzer())

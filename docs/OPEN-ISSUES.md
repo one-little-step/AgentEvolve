@@ -308,6 +308,94 @@ Currently harmless only because the flag does nothing (S2-1). When S2-1 is fixed
 this must either refuse the combination or be documented as an ablation-only knob.
 Documented as a warning in `USER-MANUAL.md §4 Budgets`.
 
+### S4-9 RESOLVED 2026-08-27 - Absence of artifact use is never actionable blame, so the "create a new artifact" path is unreachable live
+
+**How observed:** three paid live runs 2026-08-27 (`terminal_output/live-test-judge2/run1-3.log`,
+logs under `logs/`, `logs2/`, `logs3/`), real endpoint + CUGA + GAIA, Judge 2 gate ON.
+Run 3: base scored 1/2; the failed task (`gaia-0383a3ee`) got a correct causal
+diagnosis — `call_model` emitted code that sandbox executed four times but which
+never named any tool (0 `tool_call` events) — with `blamed_actors[].artifacts`
+**empty**. `no_issue=1` in every iteration of all three runs; the editor never ran.
+
+**The mechanism (traced, not inferred):** `core/evidence.py:48`
+`_PAYLOAD_BEARING_KINDS = frozenset({"tool_call"})` — `_safe_payload` strips every
+non-`tool_call` payload to `{}`, so `cuga_analyzer.py:934` can only keep an artifact
+whose id is a literal substring of a `tool_call` payload. A failure whose cause is
+"the guidance that would have made the agent look something up was never there"
+produces no surface evidence at all. (`finding_from_analysis`,
+`orchestrator.py:1741`, stamps the adapter's full writable set onto the top-blame
+actor, so issue-building itself is not blocked by empty `artifacts` — run 3's
+`no_issue=1` also had a flaky-task contribution: the BBC task passed on the
+iteration's re-observation. The structural gap is that **surface absence carries no
+information** anywhere in the chain.)
+
+**Why this is a defect, not just a finding (user's ruling 2026-08-27):** if you pay
+someone to guide you and he is lazy, the *absence* of guidance is itself
+misguidance. Structured absence is evidence: it may justify **creating** a brand-new
+skill/policy (or an instruction) rather than only improving an existing one. The
+analyzer currently cannot express "this failed because nothing was loaded, and the
+fix is a new artifact", so the create-new-artifact capability (`stage_create` tool
+exists in `cuga_editor_tools.py:155`; `apply_edits` allows unknown ids only as
+creates) is unreachable on the live path.
+
+**Why this is a defect, not just a finding (user's ruling 2026-08-27):** if you pay
+someone to guide you and he is lazy, the *absence* of guidance is itself
+misguidance. Empty artifact use is evidence: it may justify **creating** a brand-new
+skill/policy (or an instruction) rather than only improving an existing one. The
+analyzer/schema currently has no way to express "this failed because nothing was
+loaded, and the fix is a new artifact" — so the create-new-artifact capability
+(`ArtifactEdit` operation `create`, `cuga_adapter.apply_edits` allows unknown ids
+only as creates) is unreachable on the live path.
+
+**Fix shape (decided 2026-08-27, before the synthetic-dataset run):**
+1. Surface *structured absence* as analyzer evidence: the sanitized trace gains a
+   `surface_activity` summary (which artifacts each surface-bearing rollout actually
+   loaded — derived from tool_call `load_skill`-shaped payloads and the prepare
+   inventory, never prompt bodies), so "no skill/policy/memory was ever loaded"
+   is visible as data.
+2. Analyzer contract: when the mechanism is absence-shaped and the surface summary
+   is empty, the finding may say so (`unloaded_surface` in `blamed_actors[].artifacts`
+   is NOT allowed — instead a dedicated `absent_surfaces` field on the finding) and
+   `build_issue` treats a finding with `absent_surfaces` as actionable even when
+   attributed artifacts are empty, mapping it to the parent's declared-but-unused
+   writable artifacts (or to a create recommendation when the surface is empty of
+   members).
+3. Editor: the issue carries the absence signal so `stage_create` on a new artifact
+   id is a first-class answer to it.
+4. Tests-first; contamination guard must still hold (the surface summary carries
+   artifact *ids and load counts* only, never contents).
+
+**RESOLVED 2026-08-27 (same day).** Implemented:
+- `core/evidence.py`: `surface_activity_from()` derives a per-surface
+  (`skills`/`policies`/`memory`) summary of artifact ids actually loaded, from
+  `load_skill`-shaped `tool_call` payloads only, over the FULL event list
+  (beyond the 50-event trim window); ids matching answer-key terms are withheld
+  and counted into `redaction_count`; every trace carries the summary, empty
+  members included (explicit absence).
+- `core/blame.py`: `CausalFinding.absent_surfaces` / `CausalAnalysis.absent_surfaces`
+  with a closed vocabulary (`instructions/skills/policies/memory`) validated on
+  both; `analysis_from_finding` and `abstained_analysis` forward it.
+- `adapters/cuga_analyzer.py`: prompt documents the absence semantics
+  ("SURFACE ABSENCE IS EVIDENCE"); schema gains `absent_surfaces`;
+  `_grounded_absent_surfaces()` keeps only claims the trace's
+  `surface_activity` corroborates and notes dropped claims.
+- `core/issues.py`: `build_issue` treats absence + empty attribution as
+  actionable, attributing the declared-but-unused writable artifacts of the
+  absent surfaces; `Issue.absent_surfaces` carries the signal to the editor.
+- `core/orchestrator.py`: `finding_from_analysis` forwards absence (and keeps
+  the judged severity on an absence verdict); `build_issues` no longer drops
+  absence-bearing findings as evidence vacuums.
+- `adapters/cuga_editor_evidence.py` + `cuga_editor.py`: the editor prompt shows
+  `MEASURED ABSENT SURFACES` with the stage_create-is-first-class guidance.
+Tests: `tests/test_absence_evidence.py` (17), analyzer absence tests (5),
+orchestrator absence tests (2), evidence-view tests (2). Non-vacuity: reverting
+the `build_issue` absence fallback killed exactly the 5 absence-path tests.
+Suite after: 2270 passed / 9 known Windows platform failures / 2 skipped.
+Core neutrality re-verified: 37 files, 0 violations.
+
+**Then:** run on a synthetic complex dataset testing BOTH capabilities — improve
+existing artifact vs create new artifact.
+
 ### S4-3 `.env` is not loaded before `RuntimeSettings.from_env()`
 
 `cuga_wrapper.prepare_cuga_environment()` calls `load_dotenv(DOTENV_PATH)`, but
