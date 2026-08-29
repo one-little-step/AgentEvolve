@@ -76,6 +76,10 @@ class ExecutionTrace:
     final_output: str
     status: str
     checkpoint_ids: tuple[str, ...] = ()
+    #: On-disk location of the persisted trace (the tape), e.g. the directory
+    #: holding ``causal-trace.json`` + ``payloads/``. ``""`` means *no location
+    #: is known* -- explicit absence, never a fabricated path (W1).
+    trace_dir: str = ""
 
 
 class ArtifactEdit(BaseModel):

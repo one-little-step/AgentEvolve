@@ -21,6 +21,10 @@ class FeatureGates:
     use_focused_validation: bool = False
     use_entropy_selection: bool = False
     parallel_execution: bool = False
+    #: D5/J2B: attach the positivity judge (Judge 2) on the live path. Off by
+    #: default: it costs one model call per passing rollout, so a run is
+    #: byte-identical to today until the operator opts in.
+    use_positivity_judge: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,6 +254,7 @@ class ResolvedConfig:
                 "use_focused_validation": self.features.use_focused_validation,
                 "use_entropy_selection": self.features.use_entropy_selection,
                 "parallel_execution": self.features.parallel_execution,
+                "use_positivity_judge": self.features.use_positivity_judge,
             },
             "budgets": {
                 "max_attempts": self.budgets.max_attempts,
@@ -314,19 +319,19 @@ _DEFAULT_EMBEDDING_MODEL = "embeddinggemma"
 
 _PROFILES: dict[str, dict] = {
     "minimal": {
-        "gates": (False, False, False, False, False),
+        "gates": (False, False, False, False, False, False),
         "deferred": (),
     },
     "research_sequential": {
-        "gates": (True, True, True, False, False),
+        "gates": (True, True, True, False, False, False),
         "deferred": (),
     },
     "research_parallel": {
-        "gates": (True, True, True, True, False),
+        "gates": (True, True, True, True, False, False),
         "deferred": ("parallel_execution",),
     },
     "full_ablation": {
-        "gates": (True, True, True, True, False),
+        "gates": (True, True, True, True, False, False),
         "deferred": ("parallel_execution",),
     },
 }
@@ -337,6 +342,7 @@ _GATE_ORDER = (
     "use_focused_validation",
     "use_entropy_selection",
     "parallel_execution",
+    "use_positivity_judge",
 )
 
 #: ``{profile_name: {gate_name: bool}}``, derived from :data:`_PROFILES` so the

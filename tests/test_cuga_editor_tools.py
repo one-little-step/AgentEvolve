@@ -136,6 +136,7 @@ def test_every_tool_has_a_cluster_assignment() -> None:
 def test_expected_cluster_names() -> None:
     assert set(TOOL_APP_NAMES.values()) == {
         "evidence", "harness", "history", "parents", "submit", "rollout",
+        "replay",
     }
 
 

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // "plugin": ["superpowers@git+https://github.com/obra/superpowers.git","context-mode"],
+  "lsp": true,
+  "mcp": {
+    "context-mode": {
+      "type": "local",
+      "command": ["context-mode"]
+    },
+    "pdf": {
+      "type": "local",
+      "command": ["npx", "-y", "mcp-pdf"],
+      "enabled": true
+    },
+    "openwork-ui": {
+      "type": "local",
+      "command": ["npx", "-y", "openwork-ui-mcp"],
+      "enabled": true
+    },
+    "context7": {
+      "type": "remote",
+      "enabled": true,
+      "url": "https://mcp.context7.com/mcp"
+    }
+  },
+
+  "providers": {
+    "commandcode": {
+      "name": "Command Code",
+      "package": "@opencode-ai/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://api.commandcode.ai/provider/v1",
+	// "apiKey": "user_4Ndps51xJS1bPJv3uZN4XhsuWJfRrLa7FxfHzVKaqJWWLQCwn49w2daJAVcTYHxR5yHQeU3LLfxV3NB8ZM8aa482"
+      },
+      "models": {
+        "tencent/hy3-paid": {
+          "name": "Tencent HY3"
+        },
+        "tencent/hy4-preview": {
+          "name": "Tencent HY4 Preview"
+        },
+        "zai-org/GLM-5.2": {
+          "name": "GLM 5.2"
+        },
+        "zai-org/GLM-5.3": {
+          "name": "GLM 5.3"
+        },
+        "z-ai/glm-5.3-flash": {
+          "name": "GLM 5.3 Flash"
+        },
+        "google/gemini-3.7-flash": {
+          "name": "Gemini 3.7 Flash"
+        },
+        "deepseek/deepseek-v4-flash": {
+          "name": "DeepSeek V4 Flash"
+        },
+        "deepseek/deepseek-v4-pro": {
+          "name": "DeepSeek V4 Pro"
+        },
+        "deepseek/deepseek-v4-flash-vision-exp": {
+          "name": "DeepSeek V4 Flash Vision Experimental"
+        },
+        "xiaomi/mimo-v2.5-pro": {
+          "name": "MiMo V2.5 Pro"
+        },
+        "meta/muse-spark-1.2-contributor": {
+          "name": "Muse Spark 1.2 Contributor"
+        },
+        "Qwen/Qwen3.8-Flash": {
+          "name": "Qwen 3.8 Flash"
+        },
+        "Qwen/Qwen3.8-Max": {
+          "name": "Qwen 3.8 Max"
+        },
+        "Qwen/Qwen3.7-Plus": {
+          "name": "Qwen 3.7 Plus"
+        },
+        "gpt-5.6-luna": {
+          "name": "GPT 5.6 Luna"
+        },
+        "gpt-5.6-terra": {
+          "name": "GPT 5.6 Terra"
+        },
+        "gpt-5.6-sol": {
+          "name": "GPT 5.6 Sol"
+        },
+        "xai/grok-4.6": {
+          "name": "Grok 4.6"
+        }
+      }
+    }
+  },
+  "model": "commandcode/deepseek/deepseek-v4-flash"
+
+  
+}

@@ -139,6 +139,31 @@ def test_protocol_shape_holds() -> None:
     assert callable(getattr(judge, "analyze_success"))
 
 
+def test_clusters_and_stored_traces_reach_the_prompt() -> None:
+    """S1.3: the judge must be told the generated clusters and the other
+    candidates' traces, so it can decide *which cluster is solved better by
+    which candidate*."""
+    calls: list[dict] = []
+    judge = _judge(_fake(_good_payload(), calls=calls))
+
+    other = ExecutionTrace(
+        trace_id="trace-other", candidate_id="other-cand", task_id="task-1",
+        events=(), final_output="the other candidate's answer", status="success",
+    )
+
+    judge.analyze_success(
+        _task(), _trace(),
+        clusters=("the planner failed to decompose the itinerary",),
+        stored_traces=(other,),
+    )
+
+    prompt = calls[0]["messages"][1]["content"]
+    assert "KNOWN MECHANISM CLUSTERS" in prompt
+    assert "failed to decompose the itinerary" in prompt
+    assert "OTHER CANDIDATES" in prompt
+    assert "other-cand" in prompt
+
+
 # ---------------------------------------------------------------------- #
 # Grounding: inventions are dropped, never trace-backed
 # ---------------------------------------------------------------------- #

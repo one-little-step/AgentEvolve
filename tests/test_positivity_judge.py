@@ -32,7 +32,12 @@ from agent_evolve.core.analyzer import (  # noqa: E402
     FakeAnalyzerJudge,
     FakePositivityJudge,
 )
-from agent_evolve.core.blame import BlameGraph, BlameNode, CausalFinding  # noqa: E402
+from agent_evolve.core.blame import (  # noqa: E402
+    BlameGraph,
+    BlameNode,
+    CausalAnalysis,
+    CausalFinding,
+)
 from agent_evolve.core.clustering import LexicalEmbedder  # noqa: E402
 from agent_evolve.core.config import resolve_profile  # noqa: E402
 from agent_evolve.core.contracts import (  # noqa: E402
@@ -157,6 +162,60 @@ def test_gate_open_analyzes_passing_rollouts_into_stored_strengths() -> None:
     assert all(f.valence == -1 for f in strengths)
 
 
+def test_loop_passes_clusters_and_stored_traces_to_judge() -> None:
+    """S1.3: Judge 2 must see the generated clusters and the cross-candidate
+    stored traces, not just the single just-executed pass."""
+    from agent_evolve.core.contracts import ExecutionTrace
+    from agent_evolve.core.evaluation import ObservedRollout, RolloutScore
+
+    sink: list[tuple[tuple[str, ...], tuple[ExecutionTrace, ...]]] = []
+
+    class _ClusterAwareProbe:
+        analyzer_model_id = "probe"
+
+        def __init__(self, out: list) -> None:
+            self.out = out
+            self._inner = FakePositivityJudge()
+
+        def analyze_success(self, task, trace, *, clusters=(), stored_traces=()):  # type: ignore[no-untyped-def]
+            self.out.append((tuple(clusters), tuple(stored_traces)))
+            return self._inner.analyze_success(task, trace)
+
+    runner = _runner(_ClusterAwareProbe(sink))
+
+    # Seed a generated cluster for task-a.
+    analysis = CausalAnalysis(
+        mechanism="the planner failed to decompose the itinerary",
+        severity=0.7,
+        score=0.0,
+        blame_graph=BlameGraph(
+            nodes=(BlameNode(actor_id="planner", blame=1.0, artifacts=()),)
+        ),
+    )
+    runner.cluster_registry.clusterer_for("task-a").assign(analysis)
+
+    # Seed a stored cross-candidate trace for task-a.
+    prior = ObservedRollout(
+        task=_task(),
+        trace=ExecutionTrace(
+            trace_id="tr-prior", candidate_id="prior-cand", task_id="task-a",
+            events=(), final_output="prior answer", status="success",
+        ),
+        score=RolloutScore(
+            task_id="task-a", grader_name="contract", score=1.0,
+            scorable=True, passed=True, reason="graded",
+        ),
+    )
+    runner._trace_store[("prior-cand", "task-a")] = [prior]
+
+    runner.rollout_group("base-v0", (_task(),), prefix="p")
+
+    assert sink, "the judge must have been invoked"
+    clusters, stored = sink[0]
+    assert clusters, "the judge must see the generated clusters"
+    assert stored, "the judge must see the stored cross-candidate traces"
+
+
 def test_failing_rollouts_do_not_reach_the_positivity_judge() -> None:
     """The positivity judge is for SUCCESSES; failures belong to Judge 1."""
     adapter = FakeAdapter()  # default artifacts lack the token -> failures
@@ -206,12 +265,11 @@ class FakePositivityJudgeProbe:
         self.sink = sink
         self._inner = FakePositivityJudge()
 
-    def analyze_success(self, task, trace):  # type: ignore[no-untyped-def]
+    def analyze_success(self, task, trace, *, clusters=(), stored_traces=()):  # type: ignore[no-untyped-def]
         from agent_evolve.core.correlation import current_correlation
 
         self.sink.append((task.task_id, current_correlation()))
         return self._inner.analyze_success(task, trace)
-
 
 def passing_runner(positivity_judge) -> SequentialGepaRunner:  # type: ignore[no-untyped-def]
     """The passing-base harness whose validate() opens the gate."""
@@ -226,7 +284,7 @@ class _FaultSmuggler:
 
     analyzer_model_id = "rogue-negativity"
 
-    def analyze_success(self, task, trace):  # type: ignore[no-untyped-def]
+    def analyze_success(self, task, trace, *, clusters=(), stored_traces=()):  # type: ignore[no-untyped-def]
         return (
             CausalFinding(
                 verdict_id=f"v-{trace.trace_id}",
@@ -264,7 +322,7 @@ def test_partial_batch_with_one_wrong_polarity_is_refused_entirely() -> None:
     """All-or-nothing: one bad finding poisons the batch; nothing enters."""
 
     class _MostlyStrengths(FakePositivityJudge):
-        def analyze_success(self, task, trace):  # type: ignore[no-untyped-def]
+        def analyze_success(self, task, trace, *, clusters=(), stored_traces=()):  # type: ignore[no-untyped-def]
             good = super().analyze_success(task, trace)
             mixed = good + (
                 CausalFinding(

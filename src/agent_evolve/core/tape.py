@@ -40,6 +40,7 @@ __all__ = [
     "DryRunReport",
     "ToolTapeClassifier",
     "TapeIndex",
+    "boundary_for_fault",
 ]
 
 
@@ -78,6 +79,10 @@ class NodeStart:
     node: str
     step: int
     state_before_ref: str
+    #: W2: event id + nesting parent, carried so resume addressing can
+    #: disambiguate the same actor at different subgraph depths.
+    event_id: str = ""
+    parent_event_id: str | None = None
 
 
 @dataclass
@@ -122,6 +127,12 @@ class TapeIndex:
                 node=str(e["payload"]["node"]),
                 step=int(e["payload"].get("step", 0)),
                 state_before_ref=e["payload"]["state_before_ref"],
+                event_id=str(e.get("event_id", "")),
+                parent_event_id=(
+                    str(e["parent_event_id"])
+                    if e.get("parent_event_id") is not None
+                    else None
+                ),
             )
             for e in self._events if e.get("kind") == "graph_node_start"
         ]
@@ -252,3 +263,41 @@ class TapeIndex:
             counts=counts,
             unclassified_names=unclassified,
         )
+
+
+def boundary_for_fault(tape_index: "TapeIndex", analysis: object) -> int | None:
+    """Map a blame graph to a resume boundary (W2).
+
+    Returns the number of LLM boundaries to tape before going live -- the
+    ``--resume N`` semantics RQ5 settled (boundaries ``< N`` taped, ``>= N``
+    live) -- or ``None`` to fall through to full validation.
+
+    Matching: the max-blame actor (ties broken by ``actor_id``) names the
+    failing node; its LAST ``NodeStart`` occurrence is the failing cycle, and
+    the resume boundary is the count of LLM boundaries with a strictly lower
+    ``sequence``. ``None`` when there is no blame, the actor does not appear,
+    the fault precedes the first boundary (nothing to tape), or it sits at or
+    after the last boundary (tail ~= whole run, replay pointless).
+
+    ``analysis`` is typed ``object`` (duck-typed for ``.blame_graph.nodes``) so
+    this module needs no import of the blame model; it stays agent-neutral.
+    """
+    nodes = getattr(getattr(analysis, "blame_graph", None), "nodes", ())
+    if not nodes:
+        return None
+    # Max-blame actor; ties broken by actor_id for determinism.
+    blamed = max(nodes, key=lambda n: (getattr(n, "blame", 0.0), getattr(n, "actor_id", "")))
+    actor_id = getattr(blamed, "actor_id", "")
+    if not actor_id:
+        return None
+
+    starts = [s for s in tape_index.node_starts if s.node == actor_id]
+    if not starts:
+        return None
+    failing = max(starts, key=lambda s: s.sequence)
+
+    boundaries = tape_index.llm_boundaries
+    resume = sum(1 for b in boundaries if b.sequence < failing.sequence)
+    if resume == 0 or resume == len(boundaries):
+        return None
+    return resume

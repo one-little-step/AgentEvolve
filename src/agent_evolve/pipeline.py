@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
 from agent_evolve.adapters.cuga_adapter import CugaAdapter
-from agent_evolve.adapters.cuga_editor import attach_complement_provider
+from agent_evolve.adapters.cuga_editor import attach_complement_provider, attach_replay_provider
 from agent_evolve.core.mechanism_index import complementary_parent_payload
 from agent_evolve.benchmarks.base import Benchmark, BenchmarkTask
 from agent_evolve.benchmarks.cuga_executor import (
@@ -70,7 +70,7 @@ from agent_evolve.benchmarks.cuga_executor import (
     preflight,
 )
 from agent_evolve.benchmarks.runner import run_benchmark
-from agent_evolve.core.analyzer import FakeAnalyzerJudge
+from agent_evolve.core.analyzer import FakeAnalyzerJudge, PositivityJudge
 from agent_evolve.core.clustering import (
     DEFAULT_BAND_HIGH,
     DEFAULT_BAND_LOW,
@@ -1209,13 +1209,89 @@ def wire_editor_complements(runner: SequentialGepaRunner, editor: CugaEditorAgen
     """
     attach_complement_provider(
         editor,
-        lambda request: lambda: complementary_parent_payload(
+        lambda request: lambda top_k=5: complementary_parent_payload(
             index=runner.signed_mechanism_index(),
             registry=runner.cluster_registry,
             task_id=request.task.task_id,
             analysis=request.analysis,
+            limit=top_k,
         ),
     )
+
+
+def _build_positivity_judge(log_sink: object) -> PositivityJudge:
+    """S1.2: construct the CUGA positivity judge (Judge 2) lazily.
+
+    Imported and built only when the run opts in, so importing this module and
+    every offline test stays free of the CUGA SDK. Credential resolution is
+    lazy on the adapter itself, so no endpoint is touched at construction.
+    """
+    from agent_evolve.adapters.cuga_positivity_judge import CugaPositivityJudge
+
+    return CugaPositivityJudge(log_sink=log_sink)  # type: ignore[arg-type,return-value]
+
+
+def _build_replay_facade():
+    """W4-prime: build the replay facade lazily (CUGA replay model imported only
+    when the tool is invoked)."""
+    from agent_evolve.cuga_wrapper.replay_facade import (
+        ReplayExperimentFacade,
+        default_live_factory,
+    )
+
+    return ReplayExperimentFacade(live_factory=default_live_factory)
+
+
+def wire_editor_replays(
+    runner: SequentialGepaRunner,
+    editor: CugaEditorAgent,
+    facade: object,
+) -> None:
+    """W4-prime: give the live editor the voluntary ``run_replay_experiment`` tool.
+
+    The provider factory closes over the runner (to find the parent's tape) and
+    the replay facade (to run the experiment). It stays lazy: building the
+    per-request provider runs nothing, and each invocation resolves the parent's
+    trace dir + the staged artifacts at call time.
+    """
+    attach_replay_provider(
+        editor,
+        lambda request: _replay_provider_for(runner, request, facade),
+    )
+
+
+def _replay_provider_for(runner: SequentialGepaRunner, request, facade: object):
+    def provider(*, resume=None, gate_enabled=True, artifacts=None):
+        parent_trace_dir = _parent_trace_dir(runner, request)
+        if not parent_trace_dir:
+            return {
+                "status": "error",
+                "error": "no parent tape location is known for this attempt",
+            }
+        harness = {
+            "input": request.task.input_text,
+        }
+        if artifacts:
+            harness["skills"] = dict(artifacts)
+        report = facade.run(  # type: ignore[attr-defined]
+            parent_trace_dir=parent_trace_dir,
+            task_id=request.task.task_id,
+            harness_config=harness,
+            resume=resume,
+            analysis=request.analysis,
+            gate_enabled=gate_enabled,
+        )
+        return report.as_dict()
+
+    return provider
+
+
+def _parent_trace_dir(runner: SequentialGepaRunner, request) -> str:
+    """The on-disk tape location for the request's parent, if known (W1)."""
+    for stored in runner.traces_for(request.base_workspace.parent_version, request.task.task_id):
+        if stored.trace is not None and stored.trace.trace_dir:
+            return stored.trace.trace_dir
+    return ""
 
 
 def build_live_stack(
@@ -1362,6 +1438,14 @@ def build_live_stack(
         # static mismatch here is the whole reason the shim exists.
         analyzer_judge=analyzer_factory(),  # type: ignore[arg-type]
         editor=editor_agent,
+        # S1.2: attach Judge 2 (positivity) only when the operator opts in.
+        # Off by default, the runner's None default keeps a run byte-identical
+        # to today; on, every passing rollout pays one strength-analysis call.
+        positivity_judge=(
+            _build_positivity_judge(sinks["analyzer"])
+            if config.features.use_positivity_judge
+            else None
+        ),
         # SV-12: the embedder and the mechanism registry the CONFIG declares,
         # not a hardcoded 32-dim lexical hash. The registry keys the entropy
         # tracker's cells; mechanism_cluster_id below stays constant because the
@@ -1393,6 +1477,14 @@ def build_live_stack(
     )
     # ?12: the editor's complementary-parents tool reads live pool evidence.
     wire_editor_complements(runner, editor_agent)
+    # W4-prime: the editor's replay tool runs cheap experiments over the
+    # parent's tape. Built lazily; the facade imports the replay model only
+    # when the tool is actually invoked.
+    wire_editor_replays(
+        runner,
+        editor_agent,
+        _build_replay_facade(),
+    )
     return EvolutionStack(
         runner=runner,
         adapter=adapter,

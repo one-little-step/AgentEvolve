@@ -86,7 +86,7 @@ class _JoiningPositivityJudge:
 
     analyzer_model_id = "fake-positivity"
 
-    def analyze_success(self, task, trace):
+    def analyze_success(self, task, trace, *, clusters=(), stored_traces=()):
         return (_strength(_STRENGTH_TEXT, trace.trace_id, task.task_id),)
 
 
@@ -229,6 +229,9 @@ def test_refused_strength_assignment_invents_no_cell() -> None:
                 unassigned_reason="stub refusal",
             )
 
+        def cluster_exemplars(self):
+            return ()
+
     class _Registry:
         def __init__(self):
             self.calls = 0
@@ -271,6 +274,9 @@ def test_multiple_strengths_file_into_each_assigned_cluster() -> None:
                 similarity=0.8,
                 is_new_cluster=True,
             )
+
+        def cluster_exemplars(self):
+            return ()
 
     class _Registry:
         def __init__(self):

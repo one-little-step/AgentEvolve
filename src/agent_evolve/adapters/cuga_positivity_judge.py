@@ -117,8 +117,17 @@ class CugaPositivityJudge:
         self,
         task: EvolutionTask,
         trace: ExecutionTrace,
+        *,
+        clusters: Sequence[str] = (),
+        stored_traces: Sequence[ExecutionTrace] = (),
     ) -> tuple[CausalFinding, ...]:
         """Strengths found in ONE successful rollout.
+
+        ``clusters`` is the generated mechanism cluster exemplars for the task;
+        ``stored_traces`` the cross-candidate traces already on record. Both
+        are context for deciding *which cluster this candidate solves better
+        than its parents* -- they never widen the polarity contract (the
+        returned findings are still strengths of THIS trace).
 
         Raises only if the model call itself fails; response-content problems
         become abstaining findings (still ``valence=-1``).
@@ -134,7 +143,9 @@ class CugaPositivityJudge:
                 "no sanitized evidence could be built from this trace",
             )
 
-        response, messages = self._strength_call(report, evidences)
+        response, messages = self._strength_call(
+            report, evidences, clusters=clusters, stored_traces=stored_traces
+        )
         text = _response_text(response)
 
         def done(findings: tuple[CausalFinding, ...]) -> tuple[CausalFinding, ...]:
@@ -318,26 +329,60 @@ class CugaPositivityJudge:
         self,
         report: RolloutGroupReport,
         evidences: Sequence[Mapping[str, object]],
+        *,
+        clusters: Sequence[str] = (),
+        stored_traces: Sequence[ExecutionTrace] = (),
     ) -> str:
         trimmed = [_trim_evidence(e, self.max_events_in_prompt) for e in evidences]
-        return (
-            f"candidate_id: {report.candidate_id}\n"
-            f"task_id: {report.task_id}\n"
-            f"rollout OUTCOME: success\n"
-            f"tool invocations actually observed:\n{_tool_call_census(evidences)}\n\n"
-            "SANITIZED EVIDENCE (JSON):\n"
-            f"{json.dumps(trimmed, indent=2, default=_jsonable)}\n\n"
-            "Return the JSON object described in the schema. No prose outside it."
+        parts = [
+            f"candidate_id: {report.candidate_id}",
+            f"task_id: {report.task_id}",
+            "rollout OUTCOME: success",
+            f"tool invocations actually observed:\n{_tool_call_census(evidences)}",
+        ]
+        if clusters:
+            parts.append(
+                "KNOWN MECHANISM CLUSTERS (which of these did this candidate "
+                f"solve better than its parents?):\n{json.dumps(list(clusters), default=_jsonable)}"
+            )
+        if stored_traces:
+            census = [
+                {
+                    "candidate_id": t.candidate_id,
+                    "trace_id": t.trace_id,
+                    "final_output": (t.final_output or "")[:500],
+                }
+                for t in stored_traces
+            ]
+            parts.append(
+                "OTHER CANDIDATES' TRACES FOR THIS TASK:\n"
+                f"{json.dumps(census, default=_jsonable)}"
+            )
+        parts.extend(
+            [
+                "SANITIZED EVIDENCE (JSON):\n"
+                f"{json.dumps(trimmed, indent=2, default=_jsonable)}",
+                "Return the JSON object described in the schema. No prose outside it.",
+            ]
         )
+        return "\n\n".join(parts)
 
     def _strength_call(
         self,
         report: RolloutGroupReport,
         evidences: Sequence[Mapping[str, object]],
+        *,
+        clusters: Sequence[str] = (),
+        stored_traces: Sequence[ExecutionTrace] = (),
     ) -> tuple[object, tuple[Mapping[str, object], ...]]:
         messages: tuple[Mapping[str, object], ...] = (
             {"role": "system", "content": _STRENGTH_SYSTEM_PROMPT},
-            {"role": "user", "content": self._user_prompt(report, evidences)},
+            {
+                "role": "user",
+                "content": self._user_prompt(
+                    report, evidences, clusters=clusters, stored_traces=stored_traces
+                ),
+            },
         )
         request = dict(self._resolve_request_base())
         request["messages"] = [dict(m) for m in messages]

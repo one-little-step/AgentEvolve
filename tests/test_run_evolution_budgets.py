@@ -124,8 +124,29 @@ def test_ablation_moves_one_gate_and_leaves_the_rest_on_the_profile() -> None:
     assert config.features.use_causal_blame is base["use_causal_blame"]
     assert config.features.use_focused_validation is base["use_focused_validation"]
     assert config.features.parallel_execution is base["parallel_execution"]
+    assert config.features.use_positivity_judge is base["use_positivity_judge"]
     # The profile still names which profile was requested.
     assert config.profile_name == "research_sequential"
+
+
+def test_positivity_judge_ablation_flag_moves_the_gate() -> None:
+    """``--enable-positivity-judge`` must force the Judge-2 gate on."""
+    from agent_evolve.core.config import resolve_profile
+
+    args = build_parser().parse_args(
+        ["--dry-run", "--enable-positivity-judge"]
+    )
+    config = resolve_profile(
+        "research_sequential", environ={}, **resolve_config_overrides(args)
+    )
+    assert config.features.use_positivity_judge is True
+    config = resolve_profile(
+        "research_sequential", environ={},
+        **resolve_config_overrides(
+            build_parser().parse_args(["--dry-run", "--disable-positivity-judge"])
+        ),
+    )
+    assert config.features.use_positivity_judge is False
 
 
 def test_unset_ablation_flags_leave_features_untouched() -> None:

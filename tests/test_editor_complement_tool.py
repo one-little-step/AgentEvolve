@@ -165,6 +165,28 @@ def test_clusterer_refusal_is_reported_not_swallowed() -> None:
     assert payload["status"] == "unclustered"
 
 
+def test_payload_top_k_limits_returned_members() -> None:
+    index = SignedMechanismIndex()
+    for i, sev in enumerate((0.9, 0.8, 0.7)):
+        index.add(
+            IndexEntry(
+                valence=-1, severity=sev, candidate_id=f"solver-{i}",
+                task_id="task-a", cluster_id="task-a:c0",
+                artifact_ids=(), trace_id=f"tr-{i}",
+            )
+        )
+
+    payload = complementary_parent_payload(
+        index=index, registry=_RegistryShim(),
+        task_id="task-a", analysis=_analysis(), limit=2,
+    )
+
+    assert payload["status"] == "ok"
+    assert [m["candidate_id"] for m in payload["members"]] == [
+        "solver-0", "solver-1",
+    ]
+
+
 # ---------------------------------------------------------------------- #
 # Tool layer
 # ---------------------------------------------------------------------- #
@@ -215,13 +237,41 @@ def _tool_ctx(provider) -> EditorToolContext:  # type: ignore[no-untyped-def]
 def test_tool_registered_and_returns_provider_payload_as_json() -> None:
     assert TOOL_APP_NAMES.get("list_complementary_parents") == "parents"
 
-    provider = lambda: {"status": "ok", "cluster_id": "task-a:c0", "members": [{"role": "solver"}]}  # noqa: E731
+    provider = lambda top_k=5: {"status": "ok", "cluster_id": "task-a:c0", "members": [{"role": "solver"}]}  # noqa: E731
     tools = build_tool_callables(_tool_ctx(provider))
 
     raw = tools["list_complementary_parents"]()
     decoded = json.loads(raw)
     assert decoded["status"] == "ok"
     assert decoded["members"][0]["role"] == "solver"
+
+
+def test_tool_threads_top_k_to_the_provider() -> None:
+    seen: list[int] = []
+
+    def provider(top_k: int) -> dict:
+        seen.append(top_k)
+        return {"status": "ok", "members": [{"role": "solver"}]}
+
+    tools = build_tool_callables(_tool_ctx(provider))
+
+    tools["list_complementary_parents"](top_k=2)
+
+    assert seen == [2]
+
+
+def test_tool_defaults_top_k_to_5() -> None:
+    seen: list[int] = []
+
+    def provider(top_k: int) -> dict:
+        seen.append(top_k)
+        return {"status": "ok", "members": []}
+
+    tools = build_tool_callables(_tool_ctx(provider))
+
+    tools["list_complementary_parents"]()
+
+    assert seen == [5]
 
 
 def test_tool_without_provider_reports_unavailable_at_zero_cost() -> None:
@@ -233,7 +283,7 @@ def test_tool_without_provider_reports_unavailable_at_zero_cost() -> None:
 
 
 def test_tool_converts_a_raising_provider_into_an_error_string() -> None:
-    def boom():
+    def boom(top_k=5):
         raise RuntimeError("index exploded")
 
     tools = build_tool_callables(_tool_ctx(boom))
@@ -250,7 +300,7 @@ def test_attach_sets_the_factory_on_the_agent() -> None:
     from agent_evolve.adapters.cuga_editor import CugaEditorAgent
 
     agent = CugaEditorAgent.__new__(CugaEditorAgent)  # skip SDK init
-    factory = lambda request: (lambda: {"status": "ok", "members": []})  # noqa: E731
+    factory = lambda request: (lambda top_k=5: {"status": "ok", "members": []})  # noqa: E731
 
     attach_complement_provider(agent, factory)
 

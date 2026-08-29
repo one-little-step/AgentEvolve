@@ -1471,6 +1471,11 @@ class SequentialGepaRunner:
             for pos_index, (outcome, _score) in enumerate(to_posit):
                 assert outcome.trace is not None
                 self._positivity_calls += 1
+                # S1.3: Judge 2 sees the generated clusters and the
+                # cross-candidate stored traces so it can determine which
+                # cluster is solved better by which candidate.
+                clusters = self._task_cluster_exemplars(outcome.task.task_id)
+                stored = self._stored_traces_for_task(outcome.task.task_id)
                 # ?03: label these calls as Judge-2 spend on this rollout.
                 with correlation_scope(
                     candidate=outcome.trace.candidate_id,
@@ -1479,7 +1484,10 @@ class SequentialGepaRunner:
                     phase="positivity",
                 ):
                     findings = self.positivity_judge.analyze_success(
-                        outcome.task, outcome.trace
+                        outcome.task,
+                        outcome.trace,
+                        clusters=clusters,
+                        stored_traces=stored,
                     )
                 bad = [
                     f
@@ -1895,6 +1903,7 @@ class SequentialGepaRunner:
                 ),
                 blame_stability=1.0,
                 artifact_versions=dict(entry.candidate.artifact_hashes),
+                trace_dir=rollout.trace.trace_dir,
             ),
         )
         # SV-12 step 3: file the same measurement into the mechanism-keyed
@@ -1930,6 +1939,29 @@ class SequentialGepaRunner:
         Returns them in observation order; empty when nothing was stored.
         """
         return tuple(self._trace_store.get((candidate_id, task_id), ()))
+
+    def _stored_traces_for_task(self, task_id: str) -> tuple[ExecutionTrace, ...]:
+        """Every stored trace for one task, across ALL candidates (S1.3).
+
+        Judge 2 needs the cross-candidate view to say which candidate solved a
+        mechanism better than another; this flattens the store down to the raw
+        traces (any score) for one task, in observation order.
+        """
+        out: list[ExecutionTrace] = []
+        for (candidate_id, tid), rollouts in self._trace_store.items():
+            if tid != task_id:
+                continue
+            for r in rollouts:
+                if r.trace is not None:
+                    out.append(r.trace)
+        return tuple(out)
+
+    def _task_cluster_exemplars(self, task_id: str) -> tuple[str, ...]:
+        """The generated mechanism cluster texts for one task (S1.3)."""
+        registry = self.cluster_registry
+        if registry is None:
+            return ()
+        return registry.clusterer_for(task_id).cluster_exemplars()
 
     def signed_mechanism_index(self) -> SignedMechanismIndex:
         """IDX2: build the ranked complementary-parenthood index.

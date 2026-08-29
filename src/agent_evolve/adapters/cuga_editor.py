@@ -242,7 +242,11 @@ class CugaEditorAgent:
     #: construction (``attach_complement_provider``), closing over the runner:
     #: the index must be rebuilt from live TS2 state per attempt. ``None``
     #: leaves the tool reporting itself unavailable -- zero cost, zero risk.
-    complement_provider_factory: Callable[[EditorRequest], Callable[[], dict]] | None = None
+    complement_provider_factory: Callable[[EditorRequest], Callable[[int], dict]] | None = None
+    #: W4-prime: per-request factory producing the replay provider (keyword
+    #: args -> raw report dict). Attached by the composition root once the
+    #: facade exists; ``None`` makes the tool report itself unavailable.
+    replay_provider_factory: Callable[[EditorRequest], Callable[..., dict]] | None = None
 
     def propose_edit(self, request: EditorRequest) -> EditorResponse:
         ctx = self._build_context(request)
@@ -403,6 +407,11 @@ class CugaEditorAgent:
                 if self.complement_provider_factory is not None
                 else None
             ),
+            replay_provider=(
+                self.replay_provider_factory(request)
+                if self.replay_provider_factory is not None
+                else None
+            ),
         )
 
     @staticmethod
@@ -479,7 +488,7 @@ class CugaEditorAgent:
 
 def attach_complement_provider(
     agent: CugaEditorAgent,
-    provider_factory: Callable[[EditorRequest], Callable[[], dict]],
+    provider_factory: Callable[[EditorRequest], Callable[[int], dict]],
 ) -> None:
     """D5/TL: give this editor the voluntary ``list_complementary_parents`` tool.
 
@@ -490,3 +499,18 @@ def attach_complement_provider(
     nothing.
     """
     agent.complement_provider_factory = provider_factory
+
+
+def attach_replay_provider(
+    agent: CugaEditorAgent,
+    provider_factory: Callable[[EditorRequest], Callable[..., dict]],
+) -> None:
+    """W4-prime: give this editor the voluntary ``run_replay_experiment`` tool.
+
+    Mirror of :func:`attach_complement_provider`. The factory receives each
+    ``EditorRequest``; the INNER callable runs per tool invocation, so every
+    experiment reads live state (staged edits + the request's task) rather
+    than a snapshot frozen at composition. Unattached, the tool reports itself
+    unavailable and costs nothing.
+    """
+    agent.replay_provider_factory = provider_factory

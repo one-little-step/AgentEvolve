@@ -278,6 +278,9 @@ class CugaAdapter:
             events=events,
             final_output=str(raw["final_output"]),
             status=str(raw["status"]),
+            # W1: carry the on-disk location through, so the pool can answer
+            # "where is this candidate's tape?" later. Absent path -> "".
+            trace_dir=str(trace_path) if trace_path else "",
         )
 
     def supports_counterfactual_replay(self) -> bool:

@@ -105,6 +105,9 @@ class PositivityJudge(Protocol):
         self,
         task: EvolutionTask,
         trace: ExecutionTrace,
+        *,
+        clusters: Sequence[str] = (),
+        stored_traces: Sequence[ExecutionTrace] = (),
     ) -> tuple[CausalFinding, ...]: ...
 
 
@@ -124,6 +127,9 @@ class FakePositivityJudge:
         self,
         task: EvolutionTask,
         trace: ExecutionTrace,
+        *,
+        clusters: Sequence[str] = (),
+        stored_traces: Sequence[ExecutionTrace] = (),
     ) -> tuple[CausalFinding, ...]:
         actor_list = sorted({e.actor_id for e in trace.events if e.actor_id})
         if not actor_list:

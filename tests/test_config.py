@@ -76,6 +76,30 @@ def test_full_ablation_profile_gates() -> None:
     assert config.deferred_features == ("parallel_execution",)
 
 
+def test_positivity_judge_gate_defaults_off_in_every_profile() -> None:
+    """S1.2: Judge 2 is opt-in spend. Off by default means a live run is
+    byte-identical to today until the operator turns it on."""
+    for name in PROFILE_GATES:
+        config = resolve_profile(name, environ={})
+        assert config.features.use_positivity_judge is False, name
+
+
+def test_positivity_judge_gate_is_overridable() -> None:
+    config = resolve_profile(
+        "research_sequential",
+        environ={},
+        features=FeatureGates(**{**PROFILE_GATES["research_sequential"],
+                                 "use_positivity_judge": True}),
+    )
+    assert config.features.use_positivity_judge is True
+
+
+def test_positivity_judge_gate_in_manifest() -> None:
+    config = resolve_profile("research_sequential", environ={})
+    payload = config.manifest_payload()
+    assert payload["features"]["use_positivity_judge"] is False
+
+
 def test_unknown_profile_is_rejected() -> None:
     with pytest.raises(ValueError):
         resolve_profile("not_a_profile", environ={})
@@ -138,6 +162,7 @@ def test_profile_gates_matches_every_profile() -> None:
             "use_focused_validation": gates.use_focused_validation,
             "use_entropy_selection": gates.use_entropy_selection,
             "parallel_execution": gates.parallel_execution,
+            "use_positivity_judge": gates.use_positivity_judge,
         }
 
 

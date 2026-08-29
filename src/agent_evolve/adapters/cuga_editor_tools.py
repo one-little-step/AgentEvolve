@@ -45,6 +45,8 @@ TOOL_APP_NAMES: dict[str, str] = {
     "list_complementary_parents": "parents",
     # rollout
     "list_rollout_tools": "rollout",
+    # replay
+    "run_replay_experiment": "replay",
     # submit
     "submit_edit_plan": "submit",
 }
@@ -65,13 +67,19 @@ class EditorToolContext:
     request: EditorRequest
     adapter: object
     memory: EditMemory
-    #: D5/TL: optional zero-arg provider returning the complementary-parent
-    #: payload (``core.mechanism_index.complementary_parent_payload``). The
-    #: composition root attaches it once the runner exists; ``None`` means
-    #: the tool reports itself unavailable rather than raising.
-    complement_provider: Callable[[], dict] | None = field(
+    #: D5/TL: optional provider returning the complementary-parent payload
+    #: (``core.mechanism_index.complementary_parent_payload``), taking ``top_k``
+    #: to bound the ranked list. The composition root attaches it once the
+    #: runner exists; ``None`` means the tool reports itself unavailable rather
+    #: than raising.
+    complement_provider: Callable[[int], dict] | None = field(
         default=None, repr=False
     )
+    #: W4-prime: optional replay provider returning a raw experiment report. It
+    #: takes keyword args (resume/gate_enabled/artifacts) and returns the
+    #: ``ReplayExperimentReport.as_dict()`` payload. ``None`` means the tool
+    #: reports itself unavailable rather than raising.
+    replay_provider: Callable[..., dict] | None = field(default=None, repr=False)
     _plan: dict | None = field(default=None, repr=False)
 
 
@@ -243,12 +251,13 @@ def build_tool_callables(ctx: EditorToolContext) -> dict[str, Callable[..., str]
             content=contents[artifact_id],
         )
 
-    def list_complementary_parents() -> str:
+    def list_complementary_parents(top_k: int = 5) -> str:
         """D5/TL (VOLUNTARY): ranked cross-candidate evidence for THIS failure's mechanism.
 
         Solvers of the same mechanism first, then least-bad failures. Use it
         to transplant what worked elsewhere before inventing a fix; pair each
         candidate_id with read_parent_artifact to inspect its actual content.
+        ``top_k`` bounds how many complementary candidates are returned.
         """
         if ctx.complement_provider is None:
             return _ok(
@@ -257,7 +266,7 @@ def build_tool_callables(ctx: EditorToolContext) -> dict[str, Callable[..., str]
                 members=[],
             )
         try:
-            return _ok(**ctx.complement_provider())
+            return _ok(**ctx.complement_provider(top_k))
         except Exception as exc:  # noqa: BLE001 - never raise into the agent
             return _err(f"list_complementary_parents failed: {exc}")
 
@@ -275,6 +284,34 @@ def build_tool_callables(ctx: EditorToolContext) -> dict[str, Callable[..., str]
         except Exception as exc:  # noqa: BLE001 - never raise into the agent
             return _err(f"list_rollout_tools failed: {exc}")
         return _ok(tools=[dict(entry) for entry in inventory], count=len(inventory))
+
+    # ---------------------------------------------------------- replay
+    def run_replay_experiment(
+        resume: int | None = None, gate_enabled: bool = True
+    ) -> str:
+        """W4-prime (VOLUNTARY): cheaply re-drive the parent's trace with your
+        STAGED edits as the mutation, and read RAW observations back.
+
+        Replays the taped prefix (free) up to ``resume`` boundaries, then lets
+        the live tail run with your edits applied. Returns gate results, final
+        output, and cost -- interpretation is yours; no verdict. Leave ``resume``
+        unset to derive it from the diagnosed fault automatically.
+        """
+        if ctx.replay_provider is None:
+            return _ok(
+                status="unavailable",
+                reason="no replay facade is configured for this run",
+            )
+        try:
+            staged = {
+                e.artifact_id: str(e.payload.get("content", ""))
+                for e in ctx.staging.edits()
+            }
+            return _ok(**ctx.replay_provider(
+                resume=resume, gate_enabled=gate_enabled, artifacts=staged,
+            ))
+        except Exception as exc:  # noqa: BLE001 - never raise into the agent
+            return _err(f"run_replay_experiment failed: {exc}")
 
     # ---------------------------------------------------------- submit
     def submit_edit_plan(
@@ -322,6 +359,7 @@ def build_tool_callables(ctx: EditorToolContext) -> dict[str, Callable[..., str]
         "read_parent_artifact": read_parent_artifact,
         "list_complementary_parents": list_complementary_parents,
         "list_rollout_tools": list_rollout_tools,
+        "run_replay_experiment": run_replay_experiment,
         "submit_edit_plan": submit_edit_plan,
     }
 

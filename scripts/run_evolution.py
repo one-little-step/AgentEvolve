@@ -543,6 +543,8 @@ def _add_ablation_arguments(parser: argparse.ArgumentParser) -> None:
          "entropy-guided parent selection"),
         ("parallel-execution", "parallel_execution",
          "parallel batch execution (snapshots, write leases, coordinator)"),
+        ("positivity-judge", "use_positivity_judge",
+         "Judge-2 positivity analysis (strengths evidence for complementary parents)"),
     ):
         group.add_argument(
             f"--enable-{flag}", dest=dest, action="store_true", default=None,
@@ -846,7 +848,7 @@ def resolve_config_overrides(args: argparse.Namespace) -> dict:
     # compose with --profile rather than replacing the whole bundle.
     gate_fields = (
         "use_causal_blame", "use_edit_memory", "use_focused_validation",
-        "use_entropy_selection", "parallel_execution",
+        "use_entropy_selection", "parallel_execution", "use_positivity_judge",
     )
     moved = {
         name: getattr(args, name)

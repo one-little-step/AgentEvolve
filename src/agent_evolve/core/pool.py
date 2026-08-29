@@ -74,6 +74,10 @@ class ScoreProvenance:
     severity: float = 1.0
     confidence: float = 1.0
     artifact_versions: Mapping[str, str] = field(default_factory=dict)
+    #: On-disk location of the tape this measurement came from (W1). ``""`` is
+    #: explicit absence -- never a fabricated path -- so an undiagnosed or
+    #: untaped score is recognisable as such rather than reading as data.
+    trace_dir: str = ""
 
     def __post_init__(self) -> None:
         if not self.task_id:

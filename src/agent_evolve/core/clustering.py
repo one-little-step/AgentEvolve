@@ -471,6 +471,15 @@ class MechanismClusterer:
     def cluster_ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._clusters.keys()))
 
+    def cluster_exemplars(self) -> tuple[str, ...]:
+        """Representative mechanism text per cluster, in cluster-id order.
+
+        The exemplar is the first mechanism text that formed the cluster; it is
+        what a consumer (e.g. the positivity judge) needs to decide *which
+        cluster* a new observation names. Sorted by cluster id for determinism.
+        """
+        return tuple(self._exemplars[cid] for cid in sorted(self._clusters))
+
     def cluster_size(self, cluster_id: str) -> int:
         if cluster_id not in self._clusters:
             raise KeyError(cluster_id)
