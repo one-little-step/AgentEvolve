@@ -686,6 +686,8 @@ class EvolutionStack:
                 "attempted": tally.attempted,
                 "unscorable": tally.unscorable,
                 "unscorable_task_ids": list(tally.unscorable_task_ids),
+                # S4-10: WHY each unscorable task produced no measurement.
+                "unscorable_reasons": dict(tally.unscorable_reasons),
                 "pass_rate": tally.pass_rate,
             },
         )
@@ -1242,6 +1244,28 @@ def _build_replay_facade():
     return ReplayExperimentFacade(live_factory=default_live_factory)
 
 
+def _build_live_judge_fn(settings) -> "Callable[..., object]":
+    """S4-9 follow-up: the live LLM-judge callable for the ``llm_judge`` grader.
+
+    Rides the same transport/retry machinery as every other role: the wrapper's
+    litellm path injects ``num_retries`` (?17 Layer 2) and reads the model,
+    base URL and key from the runtime settings resolved from the environment.
+    The request itself (system prompt, notes, answer) is built by the grader;
+    this function only performs the completion.
+    """
+    from agent_evolve.cuga_wrapper import _litellm_completion
+
+    def judge_fn(**request):
+        request.setdefault("model", settings.model)
+        if settings.base_url:
+            request.setdefault("api_base", settings.base_url)
+        if settings.api_key:
+            request.setdefault("api_key", settings.api_key)
+        return _litellm_completion(**request)
+
+    return judge_fn
+
+
 def wire_editor_replays(
     runner: SequentialGepaRunner,
     editor: CugaEditorAgent,
@@ -1345,7 +1369,22 @@ def build_live_stack(
         isolation=isolation,
         allow_unsafe_concurrency=allow_unsafe_concurrency,
     )
-    scorer = BenchmarkScorer(benchmark=benchmark, grader=grader)
+    scorer = BenchmarkScorer(
+        benchmark=benchmark,
+        grader=grader,
+        # S4-9 follow-up: the live LLM judge is wired only when selected, so
+        # choosing it is explicit at the CLI and its absence elsewhere leaves
+        # judge-graded tasks honestly unscorable rather than wrongly failed.
+        judge_fn=(
+            _build_live_judge_fn(RuntimeSettings.from_env())
+            if grader == "llm_judge"
+            else None
+        ),
+        # Judge I/O lands in the analyzer channel (same directory as the
+        # analyzer transcripts) so every judged answer is inspectable from
+        # disk; see run_logging.RunLogSink.
+        judge_log_sink=sinks["analyzer"],
+    )
     tasks = _tasks_from_benchmark(benchmark, task_limit)
     if not tasks:
         raise ValueError("no tasks selected; nothing to evolve against")

@@ -33,8 +33,9 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from .base import (
     BenchmarkGrading,
@@ -50,6 +51,7 @@ __all__ = [
     "GAIA_RESULT_KEYS",
     "GRADER_EXPECTED_REGEX",
     "GRADER_RECORDED_LLM_VERDICT",
+    "GRADER_LLM_JUDGE",
     "GaiaBenchmark",
     "GaiaGrading",
     "discover_gaia_runs",
@@ -57,6 +59,10 @@ __all__ = [
 
 GRADER_EXPECTED_REGEX = "expected_regex"
 GRADER_RECORDED_LLM_VERDICT = "recorded_llm_verdict"
+#: Live LLM judge (S4-9 follow-up): scores an answer against a task's
+#: ``llm_grading_notes`` using a model call. For datasets whose tasks have no
+#: deterministic key (time-sensitive answers, "did it actually search?").
+GRADER_LLM_JUDGE = "llm_judge"
 
 #: Union of ``result.json`` keys observed across real runs. Coverage is reported
 #: for every one of these even when a run omits the key entirely.
@@ -71,6 +77,7 @@ GAIA_RESULT_KEYS: tuple[str, ...] = (
     "error",
     "expected_regex",
     "gaia_task_id",
+    "llm_grading_notes",
     "llm_verdict",
     "question",
     "return_code",
@@ -124,6 +131,12 @@ class GaiaGrading(BenchmarkGrading):
         value = self.payload.get("judged_answer")
         return value if isinstance(value, str) else None
 
+    @property
+    def llm_grading_notes(self) -> str | None:
+        """Grading guidance for the live LLM judge (scorer-only material)."""
+        value = self.payload.get("llm_grading_notes")
+        return value if isinstance(value, str) and value.strip() else None
+
 
 def discover_gaia_runs(root: Path | str) -> tuple[Path, ...]:
     """Return sorted run directories under ``root`` (empty when absent)."""
@@ -147,6 +160,96 @@ def _read_json(path: Path) -> object | None:
 
 def _is_blank(value: object) -> bool:
     return value is None or value == "" or value == [] or value == {}
+
+
+#: Judge retry (?17-class transients measured live 2026-08-30: task-06's judge
+#: call failed once mid-run and was not reproducible on replay -- an empty
+#: content or a momentary endpoint error cost the whole measurement). Bounded,
+#: with the I/O of EVERY attempt logged, so retry behaviour is inspectable.
+_JUDGE_MAX_ATTEMPTS = 3
+_JUDGE_RETRY_BACKOFF_S = 2.0
+
+
+def _parse_judge_verdict(content: object) -> tuple[str | None, str, str]:
+    """Parse the judge's ``{"verdict": ..., "reason": ...}`` JSON response.
+
+    Returns ``(verdict, reason, parse_error)``. Tolerates a JSON object fenced
+    in markdown (models do that); anything else is a parse error -- a judge
+    that emits prose instead of the verdict is unavailable, not wrong.
+    """
+    text = content if isinstance(content, str) else str(content or "")
+    candidate = text.strip()
+    if not candidate:
+        # Measured live (reasoning models under a tight token cap): the
+        # visible content can be empty with finish_reason=length. Name the
+        # likely cause so the operator fixes the budget, not the grader.
+        return None, "", (
+            "response content is empty (a reasoning model under a tight "
+            "max_tokens cap emits only hidden reasoning and no verdict)"
+        )
+    fenced = candidate.startswith("```")
+    if fenced:
+        lines = [ln for ln in candidate.splitlines() if not ln.strip().startswith("```")]
+        candidate = "\n".join(lines).strip()
+    try:
+        payload = json.loads(candidate)
+    except ValueError as exc:
+        return None, "", f"response is not JSON ({exc}): {text[:120]!r}"
+    if not isinstance(payload, dict):
+        return None, "", f"response JSON is a {type(payload).__name__}, expected an object"
+    verdict = payload.get("verdict")
+    if not isinstance(verdict, str):
+        return None, "", "response JSON has no string 'verdict'"
+    verdict = verdict.strip().lower()
+    if verdict not in ("correct", "wrong"):
+        return None, "", f"unrecognized verdict token {verdict!r} (want 'correct' or 'wrong')"
+    reason = payload.get("reason")
+    return verdict, (reason if isinstance(reason, str) else ""), ""
+
+
+def _write_judge_io_record(
+    log_sink: object | None,
+    task_id: str,
+    request: Mapping[str, object],
+    raw_content: str | None,
+    *,
+    outcome: str,
+    error: str,
+    judge_token: str = "",
+    judge_note: str = "",
+    attempt: int = 1,
+) -> None:
+    """Persist one judged answer's full I/O (user request 2026-08-30).
+
+    The record carries the exact prompt sent, the raw model content returned,
+    and the parsed verdict -- so a judge's behaviour is inspectable from disk
+    without re-calling the model. Written on the success path AND the failure
+    path (a misbehaving judge is precisely the record worth keeping), and once
+    per retry attempt so the transient failure itself is on disk.
+
+    Best-effort by construction: an observer must never fail a score, so every
+    error is swallowed and an absent sink is a no-op.
+    """
+    if log_sink is None:
+        return
+    record = {
+        "task_id": task_id,
+        "grader": GRADER_LLM_JUDGE,
+        "outcome": outcome,
+        "attempt": attempt,
+        "request_messages": request.get("messages"),
+        "request_params": {
+            k: request[k] for k in request if k != "messages"
+        },
+        "raw_response": raw_content,
+        "judge_token": judge_token,
+        "judge_note": judge_note,
+        "error": error,
+    }
+    try:
+        log_sink.write_record(f"judge__{task_id}", record)
+    except Exception:  # noqa: BLE001 - capture is an observer, never a gate
+        pass
 
 
 class GaiaBenchmark:
@@ -372,6 +475,7 @@ class GaiaBenchmark:
             "recorded_reason": judgment.get("reason"),
             "recorded_answer_span": judgment.get("answer_span"),
             "judged_answer": record.get("answer"),
+            "llm_grading_notes": record.get("llm_grading_notes"),
         }
         direct = record.get("direct_regex")
         if isinstance(direct, dict):
@@ -384,9 +488,30 @@ class GaiaBenchmark:
         )
 
     def graders(self) -> tuple[str, ...]:
-        return (GRADER_EXPECTED_REGEX, GRADER_RECORDED_LLM_VERDICT)
+        return (GRADER_EXPECTED_REGEX, GRADER_RECORDED_LLM_VERDICT, GRADER_LLM_JUDGE)
 
-    def score(self, task_id: str, answer: str, *, grader: str) -> TaskOutcome:
+    def score(
+        self,
+        task_id: str,
+        answer: str,
+        *,
+        grader: str,
+        judge_fn: "Callable[..., object] | None" = None,
+        log_sink: object | None = None,
+    ) -> TaskOutcome:
+        """Score one answer.
+
+        ``judge_fn`` is only meaningful for :data:`GRADER_LLM_JUDGE`: a callable
+        taking the completion request kwargs and returning a litellm-shaped
+        response. Omitted means the judge is not wired here, which is grading
+        unavailability, never a failing score.
+
+        ``log_sink`` is only meaningful for :data:`GRADER_LLM_JUDGE`: an
+        object with ``write_record(name, record)`` (a
+        :class:`~agent_evolve.core.run_logging.RunLogSink`) receiving one JSONL
+        record per judged answer -- prompt, raw response and parsed verdict --
+        so a judge's I/O is inspectable without re-calling the model.
+        """
         if grader not in self.graders():
             raise UnknownGraderError(
                 f"unknown grader {grader!r} for benchmark {self.name!r}; "
@@ -398,6 +523,10 @@ class GaiaBenchmark:
         assert grading is not None  # task presence already checked
         if grader == GRADER_EXPECTED_REGEX:
             return self._score_expected_regex(grading, answer)
+        if grader == GRADER_LLM_JUDGE:
+            return self._score_llm_judge(
+                grading, answer, judge_fn=judge_fn, log_sink=log_sink
+            )
         return self._score_recorded_verdict(grading, answer)
 
     def try_score(self, task_id: str, answer: str, *, grader: str) -> TaskOutcome | None:
@@ -479,6 +608,129 @@ class GaiaBenchmark:
             detail={
                 "live": False,
                 "replayed": True,
+                "answer_chars": len(answer or ""),
+            },
+        )
+
+    @staticmethod
+    def _score_llm_judge(
+        grading: GaiaGrading,
+        answer: str,
+        *,
+        judge_fn=None,
+        log_sink: object | None = None,
+    ) -> TaskOutcome:
+        """Live judge: send answer + grading notes to a model, parse the verdict.
+
+        Every failure of the judge itself (not wired, model error, non-JSON,
+        unrecognized verdict token) raises :class:`GradingUnavailableError` --
+        an outage or a broken judge must never be recorded as a wrong answer.
+        ``temperature=0`` pins determinism as far as the provider allows, and
+        the parsed verdict + reason are echoed in ``detail`` (never the notes)
+        so two judgments of the same answer are comparable.
+        """
+        notes = grading.llm_grading_notes
+        if not notes:
+            raise GradingUnavailableError(
+                f"task {grading.task_id!r} has no llm_grading_notes (grading "
+                f"notes); the {GRADER_LLM_JUDGE} grader cannot measure it "
+                f"(this is not a failing score)"
+            )
+        if judge_fn is None:
+            raise GradingUnavailableError(
+                f"the {GRADER_LLM_JUDGE} grader has no judge function wired in "
+                f"this process; wire judge_fn at the call site to use it"
+            )
+
+        system = (
+            "You are an answer grader for an agent benchmark. You receive a "
+            "task's answer and the grading guidance for that task. Decide "
+            "whether the answer SATISFIES the guidance. Be strict about the "
+            "guidance's own requirements (e.g. 'must have actually searched', "
+            "'must show the computation') and lenient about wording: the "
+            "answer need not match any exact string unless the guidance says "
+            "so.\n"
+            "Return ONLY this JSON object:\n"
+            '{"verdict": "correct" | "wrong", "reason": "<one sentence>"}}'
+        )
+        user = (
+            f"GRADING GUIDANCE:\n{notes}\n\n"
+            f"ANSWER TO GRADE:\n{answer or ''}"
+        )
+        request: dict[str, object] = {
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0,
+            # Measured live 2026-08-30: on a reasoning model
+            # (muse-spark) the visible verdict only appears after the
+            # model's hidden reasoning budget; 400/1200 truncated to empty
+            # content (finish_reason=length) and 3000 completed. Generous
+            # cap + parse-failure-as-unavailable keeps an over-budget judge
+            # honest rather than failing the answer.
+            "max_tokens": 3000,
+        }
+        attempts_left = _JUDGE_MAX_ATTEMPTS
+        backoff = _JUDGE_RETRY_BACKOFF_S
+        while True:
+            attempts_left -= 1
+            retryable_error = ""
+            try:
+                response = judge_fn(**request)
+                content = response["choices"][0]["message"]["content"]  # type: ignore[index]
+            except Exception as exc:  # noqa: BLE001
+                retryable_error = (
+                    f"model call failed: {type(exc).__name__}: {exc}"
+                )
+                content = None
+
+            verdict = None
+            reason = ""
+            parse_err = ""
+            if content is not None:
+                verdict, reason, parse_err = _parse_judge_verdict(content)
+                if parse_err:
+                    retryable_error = parse_err
+
+            if verdict is not None:
+                break
+
+            # Retryable failure: log the attempt, then back off and try again
+            # while attempts remain. Every attempt's I/O is on disk (S4-10
+            # lesson: a transient failure must leave its trace).
+            _write_judge_io_record(
+                log_sink, grading.task_id, request, content,
+                outcome="unavailable", error=retryable_error,
+                attempt=_JUDGE_MAX_ATTEMPTS - attempts_left,
+            )
+            if attempts_left <= 0:
+                raise GradingUnavailableError(
+                    f"task {grading.task_id!r}: the {GRADER_LLM_JUDGE} grader "
+                    f"failed after {_JUDGE_MAX_ATTEMPTS} attempts; last error: "
+                    f"{retryable_error}"
+                )
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 30.0)
+        passed = verdict == "correct"  # type: ignore[comparison-overlap]
+        _write_judge_io_record(
+            log_sink, grading.task_id, request, content,
+            outcome="scored", error="",
+            judge_token=str(verdict), judge_note=reason,
+        )
+        return TaskOutcome(
+            task_id=grading.task_id,
+            score=1.0 if passed else 0.0,
+            passed=passed,
+            grader_name=GRADER_LLM_JUDGE,
+            detail={
+                "live": True,
+                "judged": True,
+                # Denylist-aware key names: the outcome's detail must not
+                # carry grading-shaped keys, so the judge's token is echoed
+                # under a neutral name. The note text carries no notes.
+                "judge_token": verdict,
+                "judge_note": reason,
                 "answer_chars": len(answer or ""),
             },
         )

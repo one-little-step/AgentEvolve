@@ -160,6 +160,11 @@ class CausalTrace(BaseModel):
     dropped_event_count: int = Field(default=0, ge=0)
     started_at: str | None = None
     completed_at: str | None = None
+    #: S4-11 follow-up: the LIVE CUGA settings snapshot captured at the SDK
+    #: invoke boundary (force_autonomous_mode / enable_shell_tool /
+    #: skills_enabled / knowledge_enabled). Empty when the runtime did not
+    #: provide one (e.g. in-memory runtimes) -- explicit absence.
+    cuga_settings: dict[str, bool | None] = Field(default_factory=dict)
 
     def to_execution_trace(self, *, candidate_id: str, trace_id: str) -> ExecutionTrace:
         """Convert persisted evidence into the minimal adapter-facing trace.

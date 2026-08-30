@@ -1,0 +1,50 @@
+[
+  {
+    "id": "MDAE-AGT-001",
+    "domain": "History, Chronology & Number Theory",
+    "target_capabilities": ["Search", "Complex Reasoning", "Math", "Tool Calls"],
+    "problem_statement": "Find the exact number of days between the birth date of Alan Turing and the death date of John von Neumann. Let this integer be N. What is the Nth prime number?",
+    "ground_truth": "180647",
+    "evaluation_criteria": "The agent must correctly search for Alan Turing's DOB (June 23, 1912) and John von Neumann's DOD (February 8, 1957). It must calculate the exact day difference (16,301 days) and use a tool (code) to find the 16,301st prime number, which is 180,647."
+  },
+  {
+    "id": "MDAE-AGT-002",
+    "domain": "Geopolitics, Chemistry & Set Logic",
+    "target_capabilities": ["Search", "Complex Reasoning", "Tool Calls"],
+    "problem_statement": "Calculate the sum of the atomic numbers of all chemical elements whose chemical symbols exactly match the two-letter ISO 3166-1 alpha-2 country codes of sovereign states recognized by the United Nations. Ignore case sensitivity when matching. What is the final integer sum?",
+    "ground_truth": "3485",
+    "evaluation_criteria": "The agent must retrieve the list of UN recognized sovereign states and their ISO alpha-2 codes. It must then compare these against the list of IUPAC chemical symbols (e.g., AL -> Al -> Aluminium -> Z=13; FR -> Fr -> Francium -> Z=87). The agent must write a script to filter, match, and sum the atomic numbers. The exact total is 3485."
+  },
+  {
+    "id": "MDAE-AGT-003",
+    "domain": "Economics, Material Science & Geometry",
+    "target_capabilities": ["Search", "Complex Reasoning", "Math", "Tool Calls"],
+    "problem_statement": "Based on the World Gold Council's estimate of the total amount of gold mined by the end of the year 2022, if all this gold were melted into a single solid cube, what would be the length of one edge of that cube in meters? Round your answer to exactly 2 decimal places.",
+    "ground_truth": "22.15",
+    "evaluation_criteria": "The agent must search for the World Gold Council's 2022 estimate (~209,483 metric tons). It must know/search for the standard density of gold (19,300 kg/m^3). It must use a tool to calculate the volume (mass/density) and then calculate the cube root of that volume to find the edge length. The exact calculation yields 22.1508... which rounds to 22.15."
+  },
+  {
+    "id": "MDAE-AGT-004",
+    "domain": "Astrophysics & Kinematics",
+    "target_capabilities": ["Search", "Complex Reasoning", "Math", "Tool Calls"],
+    "problem_statement": "Calculate the escape velocity from the surface of the dwarf planet Ceres. Express your final answer in kilometers per hour, rounded to the nearest whole number.",
+    "ground_truth": "1860",
+    "evaluation_criteria": "The agent must search for the standard NASA planetary fact sheet values for Ceres: Mass (9.393 × 10^20 kg) and mean radius (469.7 km). It must know the universal gravitational constant G (6.67430 × 10^-11 N(m/kg)^2). It must use a tool to compute the escape velocity formula v = sqrt(2GM/r), convert m/s to km/h, and round correctly to 1860."
+  },
+  {
+    "id": "MDAE-AGT-005",
+    "domain": "Biology, Aerospace & Comparative Mass",
+    "target_capabilities": ["Search", "Complex Reasoning", "Math", "Tool Calls"],
+    "problem_statement": "What is the exact difference in mass, in kilograms, between the heaviest blue whale ever recorded and the maximum operational mass of the International Space Station?",
+    "ground_truth": "229725",
+    "evaluation_criteria": "The agent must search for the Guinness World Record/National Geographic record for the heaviest blue whale (190,000 kg) and search for NASA's documented maximum operational mass of the ISS at full payload/complement (419,725 kg). It must perform an exact subtraction to find the difference (229,725 kg)."
+  },
+  {
+    "id": "MDAE-AGT-006",
+    "domain": "Chemistry & Precision Summation",
+    "target_capabilities": ["Search", "Complex Reasoning", "Math", "Tool Calls"],
+    "problem_statement": "Calculate the total sum of the standard atomic weights of the first 10 elements on the periodic table. Provide your answer as a decimal number rounded to exactly 2 decimal places.",
+    "ground_truth": "112.97",
+    "evaluation_criteria": "The agent must search for the IUPAC standard atomic weights for elements 1 through 10 (H, He, Li, Be, B, C, N, O, F, Ne). The agent must use a tool to sum these precise floating-point values (1.008 + 4.0026 + 6.94 + 9.0122 + 10.81 + 12.011 + 14.007 + 15.999 + 18.998 + 20.180). The exact sum is 112.9678, which rounds to 112.97."
+  }
+]

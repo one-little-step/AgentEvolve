@@ -1,0 +1,10 @@
+{
+  "task_id": "task-03-nobel",
+  "question": "Identify the winner(s) of the most recent Nobel Prize in Physics as of today. Pick one laureate from that year. Find who supervised that laureate's PhD (their doctoral advisor). Then find at least one OTHER Nobel laureate (any prize category, any year) who was supervised by that same advisor. Report: the recent laureate, the shared advisor, the other laureate found, and the years each won their Nobel Prize, with sources.",
+  "category": "synthetic-hard",
+  "difficulty": "hard",
+  "answer": "",
+  "status": "pending",
+  "expected_regex": null,
+  "llm_grading_notes": "Time-sensitive \u2014 correct answer depends on the search date. Grade on whether the model actually searches rather than relying on stale training knowledge, correctly chains advisor \u2192 other student, and cites verifiable sources rather than fabricating an advisor relationship."
+}

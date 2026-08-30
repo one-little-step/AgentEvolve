@@ -27,6 +27,14 @@ from typing import Callable, Mapping, Protocol, Sequence
 from dotenv import load_dotenv
 
 from agent_evolve.core.storage import sanitize_for_persistence
+
+#: Windows rename-retry guard (run 3, task-04 lost its measurement to a
+#: momentary AV/indexer lock during the staging->final rename). Bounded; on
+#: exhaustion the trace is salvaged under a `.partial` name, never deleted.
+_RENAME_MAX_ATTEMPTS = 4
+_RENAME_BACKOFF_S = 0.25
+
+logger = __import__("logging").getLogger(__name__)
 from agent_evolve.core.trace import (
     CausalEvent,
     CausalTrace,
@@ -99,13 +107,47 @@ def prepare_cuga_environment() -> None:
 
 def _require_autonomous_mode() -> None:
     """Fail fast when CUGA autonomous mode is not enabled."""
-    from cuga.config import settings
-
+    settings = _import_cuga_config()
     if not settings.advanced_features.force_autonomous_mode:
         raise RuntimeError(
             "CUGA autonomous mode is disabled. "
             "Set DYNACONF_ADVANCED_FEATURES__FORCE_AUTONOMOUS_MODE=true."
         )
+
+
+def _import_cuga_config():
+    """Import cuga.config lazily; separated for test injection."""
+    from cuga.config import settings
+
+    return settings
+
+
+def cuga_settings_snapshot() -> dict[str, bool | None]:
+    """Read the DYNACONF-gated flags CUGA behaves differently on, LIVE.
+
+    S4-11 follow-up: rollout-quality variance (narration vs work) must be
+    attributable. os.environ holding a value does NOT prove CUGA consumed it
+    (python-dotenv precedence, settings validators, blank-value handling all
+    sit in between), so the snapshot reads the LIVE settings object. ``None``
+    means the surface is absent from this CUGA version -- explicit absence,
+    never a silent False. Logged before and after every SDK invoke() and
+    stamped into every trace manifest, so each rollout permanently records
+    the configuration it actually ran under.
+    """
+    settings = _import_cuga_config()
+
+    def _flag(section: str, attr: str) -> bool | None:
+        obj = getattr(settings, section, None)
+        if obj is None:
+            return None
+        return bool(getattr(obj, attr))
+
+    return {
+        "force_autonomous_mode": _flag("advanced_features", "force_autonomous_mode"),
+        "enable_shell_tool": _flag("advanced_features", "enable_shell_tool"),
+        "skills_enabled": _flag("skills", "enabled"),
+        "knowledge_enabled": _flag("knowledge", "enabled"),
+    }
 
 
 #: Body parameters that disable the upstream gateway's response cache.
@@ -593,6 +635,9 @@ def _build_generic_causal_trace(
         events=events,
         capabilities=_generic_capabilities(config),
         captured_event_count=len(events),
+        # S4-11 follow-up: generic runtimes do not cross the CUGA settings
+        # boundary, so the snapshot is read here, live at trace-build time.
+        cuga_settings=cuga_settings_snapshot(),
     )
 
 
@@ -630,11 +675,55 @@ class TraceWriter:
             self._write_files(staging, redacted)
             self._write_payload_blobs(staging, payload_store)
             self._write_topology(staging, topology)
-            staging.replace(run_dir)
+            run_dir = self._rename_with_retry(staging, run_dir)
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
             raise
         return run_dir
+
+    def _rename_with_retry(self, staging: Path, run_dir: Path) -> Path:
+        """Rename staging -> final with Windows lock tolerance.
+
+        Measured live 2026-08-30 (honing6 run 3, task-04): the atomic
+        staging->final directory rename failed with
+        ``PermissionError: [WinError 5] Access is denied`` -- a momentary
+        antivirus/indexer lock -- and the rollout's PAID measurement was lost
+        to an unscorable. On POSIX this rename cannot fail this way; on
+        Windows a short bounded retry clears the typical transient lock, and
+        if the lock never clears the content is salvaged under a
+        ``.partial`` suffixed directory rather than deleted: a trace in a
+        slightly wrong directory is recoverable evidence, no trace at all is
+        a lost rollout.
+        """
+        backoff = _RENAME_BACKOFF_S
+        for attempt in range(1, _RENAME_MAX_ATTEMPTS + 1):
+            try:
+                staging.replace(run_dir)
+                return run_dir
+            except PermissionError:
+                if attempt >= _RENAME_MAX_ATTEMPTS:
+                    break
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+        salvage = run_dir.with_name(run_dir.name + ".partial")
+        logger.warning(
+            "trace rename still locked after %d attempt(s); salvaging as %s",
+            _RENAME_MAX_ATTEMPTS, salvage,
+        )
+        try:
+            staging.replace(salvage)
+            return salvage
+        except PermissionError:
+            # Even the salvage rename is locked. The staging directory still
+            # holds the complete trace: leave it in place (its dot-prefix
+            # keeps it out of normal trace listings) rather than raising and
+            # triggering the caller's rmtree, which would delete the
+            # measurement entirely.
+            logger.warning(
+                "salvage rename also locked; leaving staging in place at %s",
+                staging,
+            )
+            return staging
 
     def _write_topology(self, staging: Path, topology: Mapping[str, object] | None) -> None:
         """Write the declared graph topology as a sidecar file.
@@ -712,6 +801,10 @@ class TraceWriter:
             "harness_version": data.get("harness_version"),
             "status": data.get("status"),
             "model": data.get("model"),
+            # S4-11 follow-up: the LIVE CUGA settings this rollout ran under,
+            # captured at the invoke boundary. Makes every trace permanently
+            # attributable to its configuration.
+            "cuga_settings": data.get("cuga_settings", {}),
             "payload_level": self._config.payload_level.value,
             "events_truncated": data.get("events_truncated", False),
             "captured_event_count": data.get("captured_event_count", 0),
@@ -2128,6 +2221,18 @@ class CugaSdkRuntime:
                 }
 
         started_at = _now_iso()
+        # S4-11 follow-up: log the LIVE CUGA settings at the invoke boundary,
+        # before and after, so premature-stop forensics never has to infer
+        # configuration from incidental log lines again.
+        settings_before = cuga_settings_snapshot()
+        logger.info(
+            "cuga_settings BEFORE invoke task=%s: force_autonomous_mode=%s "
+            "enable_shell_tool=%s skills_enabled=%s knowledge_enabled=%s",
+            task_id, settings_before["force_autonomous_mode"],
+            settings_before["enable_shell_tool"],
+            settings_before["skills_enabled"],
+            settings_before["knowledge_enabled"],
+        )
         final_state: StateSnapshot | None = None
         try:
             result = asyncio.run(_execute(agent, message, memory_docs, invoke_kwargs))
@@ -2146,6 +2251,17 @@ class CugaSdkRuntime:
                 asyncio.run(agent.aclose())
             except Exception:  # noqa: BLE001 - cleanup must not mask evidence
                 pass
+        settings_after = cuga_settings_snapshot()
+        if settings_after != settings_before:
+            logger.warning(
+                "cuga_settings CHANGED across invoke task=%s: before=%s after=%s",
+                task_id, settings_before, settings_after,
+            )
+        else:
+            logger.info(
+                "cuga_settings AFTER invoke task=%s: unchanged (%s)",
+                task_id, settings_after,
+            )
         completed_at = _now_iso()
 
         events: list[dict[str, object]] = [
@@ -2355,6 +2471,7 @@ class CugaSdkRuntime:
             events_truncated=bool(collector and collector.dropped_event_count),
             started_at=started_at,
             completed_at=completed_at,
+            cuga_settings=cuga_settings_snapshot(),
         )
         return TraceWriter(self._trace_config).write(
             causal, payload_store=payload_store, topology=topology

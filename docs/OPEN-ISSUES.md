@@ -396,6 +396,28 @@ Core neutrality re-verified: 37 files, 0 violations.
 **Then:** run on a synthetic complex dataset testing BOTH capabilities — improve
 existing artifact vs create new artifact.
 
+### S4-10 NEW 2026-08-30, RESOLVED same day - Unscorable reasons are discarded: "no measurement" is indistinguishable from an outage
+
+**How observed:** synthetic honing6 live run 2 (2026-08-30,
+`terminal_output/synthetic-honing6/run2.log`). 4 of 6 tasks unscorable in the
+before-measurement. The tally (`pipeline/before__base.jsonl`) records only
+counts and task ids. Diagnosing WHY required forensic reconstruction: replaying
+judge calls against recorded trace answers, and matching trace mtimes to the
+measurement window. Two causes found (2+2): two tasks had no
+`llm_grading_notes` so the judge grader was deterministically unwired for them
+(dataset materialization gap, since fixed), and the other two failed at the
+judge/rollout layer with a reason string the scorer built and then threw away.
+`BenchmarkScorer.score_rollout` puts the exact cause into
+`RolloutScore.reason` ("grader has no measurement for this task/answer: ..."),
+but `tally_scores` drops it.
+
+**Fix (implemented same day, tests-first):** `ScoreTally.unscorable_reasons`
+maps each unscorable task to its reason; `measure` logs it in the pipeline
+record; `run_evolution._print_tally` prints one line per unscorable task.
+Test: `test_tally_carries_the_unscorable_reason_per_task`,
+`test_tally_has_no_unscorable_reasons_when_everything_scored`. Every future
+run answers "why unscorable" from the log, not from archaeology.
+
 ### S4-3 `.env` is not loaded before `RuntimeSettings.from_env()`
 
 `cuga_wrapper.prepare_cuga_environment()` calls `load_dotenv(DOTENV_PATH)`, but
@@ -409,6 +431,66 @@ Current workaround (used for every live run so far, and documented in
 set -a && . ./.env && set +a
 ```
 Fix direction: load dotenv at CLI entry, before any settings resolution.
+
+### S4-11 NEW 2026-08-30 - Rollout-quality coin-flip: narration-vs-work variance makes single-pass measurements meaningless
+
+**Where it happened (exact):** synthetic honing6 run 3, 2026-08-30,
+`terminal_output/synthetic-honing6/run3.log`, before-measurement pass
+10:54-11:02 local vs champion/after passes 11:22-11:27 local. Tally in
+`terminal_output/synthetic-honing6/logs3/pipeline/before__base.jsonl` vs
+`after__base.jsonl`: before 4/5 scored (80%), after 1/6 (16.7%) — same harness
+(the champion was the base), delta -63.33 pp printed as if it were signal.
+
+**The evidence chain (all matched programmatically,
+`terminal_output/synthetic-honing6/match_judged_answers_to_traces.py`):**
+- Every judged-correct answer traced back to a real-work rollout (>=32 events,
+  tools executed in 5 of 6; task-04 ev=107 sandbox-only).
+- Every judged-wrong answer traced back to a 17-event, 1-LLM-call, 0-tool
+  rollout (7 of 7). The judge mislabeled nothing — its notes cite the real
+  advisor (Devoret's is Anatole Abragam) when refuting fabricated chains.
+- Narration-rollout response blob (`data/traces/4fbb61ec-.../payloads/89e860c3...json`):
+  `finish_reason=stop`, 496 completion tokens, content = *"Your multi-part
+  building puzzle is queued — I'll pinpoint the tallest 2025 tower…"* — the
+  model ended its turn with narration, no fenced code block. CUGA then routed
+  to FinalAnswerAgent with no work done. This is exactly the failure mode
+  documented in `reference/cuga_example_wrapper/docs/cuga-integration-learnings.md`
+  ("Why Multi-Step Runs Can End Early": `extract_code_from_model_response`
+  returns empty -> NL auto-continue classifier -> finalize).
+- Judge variance ruled out: 22/22 verdicts consistent with rollout depth.
+
+**Were the two rollout classes under the same env? YES — verified, not assumed:**
+- Model: run2.log shows 269 `Set model profile ... for
+  meta/muse-spark-1.2-contributor` lines; run3.log shows 162, and **no other
+  model name appears in either log** (count_models_run3.py). Trace-blob
+  metadata redacts `model_name`/`system_fingerprint`, so log-line counts are
+  the surviving model identity evidence.
+- Both runs launched with the identical in-repo `.env`
+  (sha256 prefix `c49d3ddd5bdd570f`), carrying: `CUGA_MODEL` =
+  `LITELLM_MODEL` = `openai/meta/muse-spark-1.2-contributor`,
+  `DYNACONF_ADVANCED_FEATURES__FORCE_AUTONOMOUS_MODE=true`,
+  `DYNACONF_ADVANCED_FEATURES__ENABLE_SHELL_TOOL=true`,
+  `DYNACONF_SKILLS__ENABLED=true`, `DYNACONF_KNOWLEDGE__ENABLED=true`,
+  same base URL, same keys (redacted). Same `--harness vanilla`, same
+  dataset `datasets/synthetic/honing6_v1`, same seed and worker settings.
+- Same-process alternation: within a single pass, real-work and narration
+  rollouts interleave minutes apart under the same worker — this is not a
+  config change between passes.
+
+**Why this is a defect, not just a finding:** with G=1 rollout per
+(task, pass), the before/after delta measures sampling luck of a bimodal
+rollout distribution (work vs narration), not the harness. The 2026-08-30
+"evolution" numbers (-63.33 pp) are noise and must not be quoted as signal.
+The doc's own methodology ("Repeat each configuration before attributing a
+failure"; "three trials of one prompt may be one observation") applies.
+
+**Fix direction:** (1) measurement passes must use rollout groups (G>1) and
+report per-pass narration rate next to pass rate; (2) the narration mode is
+itself the dominant failure mode — it is what the evolution loop's
+instructions edit should target (force one fenced code block per turn, per
+the doc's verified prompt contract); (3) the editor prompt contract already
+exists (EDITOR_INSTRUCTIONS requires code-on-first-turn) — the rollout
+harness does not; a vanilla-harness instruction requiring code-first turns
+is the obvious first candidate edit for the loop to accept.
 
 ### S4-4 Interface B tool invocation is prompt-wording dependent
 

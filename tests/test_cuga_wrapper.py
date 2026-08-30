@@ -347,6 +347,81 @@ def test_enabled_tracing_writes_manifest_split_files_and_export(tmp_path):
     assert manifest["status"] == "success"
 
 
+# --------------------------------------------------------------------------- #
+# CUGA settings snapshot at the SDK boundary (S4-11 follow-up)
+# --------------------------------------------------------------------------- #
+def test_settings_snapshot_reads_live_cuga_settings(monkeypatch):
+    """The snapshot reads the LIVE cuga settings object, not os.environ:
+    .env presence does not prove CUGA consumed the value."""
+    import agent_evolve.cuga_wrapper as cw
+
+    class _FakeAdvanced:
+        force_autonomous_mode = True
+        enable_shell_tool = True
+
+    class _FakeSkills:
+        enabled = True
+
+    class _FakeKnowledge:
+        enabled = True
+
+    class _FakeSettings:
+        advanced_features = _FakeAdvanced()
+        skills = _FakeSkills()
+        knowledge = _FakeKnowledge()
+
+    import types as _types
+    fake = _types.SimpleNamespace()
+    fake.settings = _FakeSettings()
+    monkeypatch.setattr(
+        cw, "_import_cuga_config", lambda: _FakeSettings()
+    )
+    snap = cw.cuga_settings_snapshot()
+    assert snap == {
+        "force_autonomous_mode": True,
+        "enable_shell_tool": True,
+        "skills_enabled": True,
+        "knowledge_enabled": True,
+    }
+
+
+def test_settings_snapshot_tolerates_missing_surfaces(monkeypatch):
+    """A settings object without a knowledge section snapshots what exists."""
+    import agent_evolve.cuga_wrapper as cw
+
+    class _FakeSettings:
+        class advanced_features:
+            force_autonomous_mode = False
+            enable_shell_tool = True
+
+        class skills:
+            enabled = False
+        # no knowledge attribute at all
+
+    monkeypatch.setattr(cw, "_import_cuga_config", lambda: _FakeSettings())
+    snap = cw.cuga_settings_snapshot()
+    assert snap["force_autonomous_mode"] is False
+    assert snap["skills_enabled"] is False
+    assert snap["knowledge_enabled"] is None  # explicit absence, not False
+
+
+def test_manifest_carries_settings_snapshot(tmp_path):
+    """Every trace manifest binds the env it ran under."""
+    wrapper = CugaWrapper(
+        InMemoryRuntime(),
+        RuntimeSettings(model="test-model"),
+        trace_config=TraceConfig(enabled=True, output_root=tmp_path),
+    )
+    result = wrapper.run_task("task-1", {"version": "h1", "input": "hello"})
+    manifest = json.loads(
+        (Path(result["causal_trace_path"]) / "manifest.json").read_text()
+    )
+    snap = manifest["cuga_settings"]
+    assert set(snap) == {
+        "force_autonomous_mode", "enable_shell_tool", "skills_enabled", "knowledge_enabled",
+    }
+
+
 def _make_trace_with_payload(payload):
     return CausalTrace(
         run_id="run-1",
@@ -373,6 +448,66 @@ def test_trace_write_rejects_secret_value_pattern(tmp_path):
         TraceWriter(TraceConfig(enabled=True, output_root=tmp_path)).write(trace)
 
     assert list(tmp_path.iterdir()) == []
+
+
+# --------------------------------------------------------------------------- #
+# Windows rename-retry guard (run 3, task-04 lost to WinError 5)
+# --------------------------------------------------------------------------- #
+def test_trace_write_survives_a_transient_rename_lock(tmp_path, monkeypatch):
+    """First rename raises Windows 'access denied', retry succeeds.
+
+    Measured live 2026-08-30: the atomic staging->final rename failed with
+    PermissionError [WinError 5] (AV/indexer lock) and destroyed a PAID
+    rollout's measurement. A momentary lock must not cost a rollout.
+    """
+    from agent_evolve.cuga_wrapper import _RENAME_MAX_ATTEMPTS
+
+    writer = TraceWriter(TraceConfig(enabled=True, output_root=tmp_path))
+    trace = _make_trace_with_payload({"ok": True})
+    real_replace = type(tmp_path).replace
+    calls = {"n": 0}
+
+    def flaky_replace(self, target):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PermissionError(5, "Access is denied")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(type(tmp_path), "replace", flaky_replace)
+    import agent_evolve.cuga_wrapper as cw_pkg
+
+    monkeypatch.setattr(cw_pkg, "_RENAME_BACKOFF_S", 0.0)
+
+    out = writer.write(trace)
+
+    assert calls["n"] == 2
+    assert (out / "manifest.json").is_file()
+
+
+def test_trace_write_rename_exhaustion_uses_recovery_fallback(
+    tmp_path, monkeypatch
+):
+    """If the lock never clears, salvage the payload instead of losing it."""
+    from agent_evolve.cuga_wrapper import _RENAME_MAX_ATTEMPTS
+
+    writer = TraceWriter(TraceConfig(enabled=True, output_root=tmp_path))
+    trace = _make_trace_with_payload({"ok": True})
+    real_replace = type(tmp_path).replace
+
+    def always_locked(self, target):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(type(tmp_path), "replace", always_locked)
+    import agent_evolve.cuga_wrapper as cw_pkg
+
+    monkeypatch.setattr(cw_pkg, "_RENAME_BACKOFF_S", 0.0)
+
+    out = writer.write(trace)
+
+    # The fallback: content salvaged (renamed, or staging left in place when
+    # even that is locked) -- never deleted, never raised.
+    assert (out / "manifest.json").is_file()
+    assert list(tmp_path.iterdir())
 
 
 def test_trace_config_rejects_non_positive_max_observation_bytes():

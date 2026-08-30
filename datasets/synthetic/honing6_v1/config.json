@@ -1,0 +1,12 @@
+{
+  "experiment_file": "test_dataset/honing6.json",
+  "experiment_name": "honing6-synthetic",
+  "ablation": {
+    "name": "baseline",
+    "config": {}
+  },
+  "model": "openai/glm-5.3-flash",
+  "max_workers": 1,
+  "task_timeout_seconds": 1200,
+  "llm_validation_enabled": true
+}

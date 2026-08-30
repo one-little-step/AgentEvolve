@@ -24,7 +24,7 @@ Two structural invariants drive the design:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping, Protocol, runtime_checkable
+from typing import Callable, Mapping, Protocol, runtime_checkable
 
 __all__ = [
     "GRADING_KEY_DENYLIST",
@@ -232,8 +232,18 @@ class Benchmark(Protocol):
         """Scorer-only grading material, or None when the task is unknown."""
         ...
 
-    def score(self, task_id: str, answer: str, *, grader: str) -> TaskOutcome:
+    def score(
+        self,
+        task_id: str,
+        answer: str,
+        *,
+        grader: str,
+        judge_fn: "Callable[..., object] | None" = None,
+    ) -> TaskOutcome:
         """Score ``answer`` with the explicitly named ``grader``.
+
+        ``judge_fn`` is an optional live-judge callable; only judge graders
+        read it, everything else ignores it.
 
         Raises ``UnknownTaskError``, ``UnknownGraderError`` or
         ``GradingUnavailableError`` rather than defaulting to a failing score.

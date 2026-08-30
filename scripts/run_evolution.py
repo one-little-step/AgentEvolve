@@ -792,6 +792,11 @@ def _print_header(stack: EvolutionStack) -> None:
 
 def _print_tally(label: str, tally: ScoreTally) -> None:
     print(f"{label:<16}: {tally.summary}")
+    # S4-10: an unscorable must always say why. Silent unscorables are how an
+    # unwired judge or a dead endpoint masquerades as "no data".
+    for task_id in tally.unscorable_task_ids:
+        reason = tally.unscorable_reasons.get(task_id) or "reason not recorded"
+        print(f"{'':<16}  unscorable {task_id}: {reason}")
 
 
 def resolve_config_overrides(args: argparse.Namespace) -> dict:

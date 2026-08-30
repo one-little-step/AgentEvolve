@@ -1,0 +1,10 @@
+{
+  "task_id": "task-02-scholars",
+  "question": "Six scholars — Anya, Boris, Chidi, Dara, Elsa, and Farid — each present a paper on exactly one day, Monday through Saturday, one scholar per day, no repeats. Clues: (1) Anya presents exactly two days before Dara. (2) Chidi does not present on Monday, Wednesday, or Saturday. (3) The scholar presenting on Friday works on the same topic as Boris but is not Boris. (4) Elsa presents immediately after Farid. (5) Dara does not present on the last day. (6) Exactly one scholar presents between Boris's day and Chidi's day (in either order). (7) Farid does not present on Monday. Determine the unique day assignment for all six scholars, and prove uniqueness by showing why every other branch fails.",
+  "category": "synthetic-hard",
+  "difficulty": "hard",
+  "answer": "",
+  "status": "pending",
+  "expected_regex": "(?i)(boris[^a-z]{0,10}thursday|boris[^a-z]{0,10}tue|chidi[^a-z]{0,10}thursday|chidi[^a-z]{0,10}tue)",
+  "llm_grading_notes": "Grade on the assignment AND the elimination argument. IMPORTANT: independent brute-force verification shows the clue set admits TWO valid assignments (Anya=Mon, Dara=Wed, Elsa=Sat, Farid=Fri are fixed; Boris and Chidi may swap Tue/Thu). Accept EITHER assignment provided the answer states all six placements consistently with the clues. The uniqueness claim in the problem text is flawed; an answer that correctly reports two valid schedules with elimination reasoning deserves full credit. An answer asserting a single schedule while ignoring the valid alternative is acceptable if its assignment is consistent, but the strongest answers acknowledge both."
+}

@@ -41,7 +41,7 @@ import ``agent_evolve.adapters`` -- is intact. Benchmark *implementations*
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, Sequence
+from typing import Callable, Mapping, Protocol, Sequence
 
 from agent_evolve.benchmarks.base import (
     Benchmark,
@@ -277,6 +277,11 @@ class ScoreTally:
     attempted: int
     unscorable: int
     unscorable_task_ids: tuple[str, ...] = ()
+    #: S4-10: per-task reason each unscorable rollout produced no measurement.
+    #: Without it, "the judge was never wired for this task" and "the judge's
+    #: model call failed" are indistinguishable in the tally, and neither can
+    #: be told apart from an outage. Measured facts, not diagnoses.
+    unscorable_reasons: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.grader_name:
@@ -325,6 +330,10 @@ def tally_scores(
         attempted=len(scores),
         unscorable=len(unscorable),
         unscorable_task_ids=tuple(s.task_id for s in unscorable),
+        # S4-10: keep the reason each unscorable rollout gave. Last one wins
+        # if a task somehow appears twice (the tally is per-measurement-pass,
+        # so this should not happen; deterministic anyway).
+        unscorable_reasons={s.task_id: (s.reason or "") for s in unscorable},
     )
 
 
@@ -457,10 +466,20 @@ class BenchmarkScorer:
     converted into a failing score. On Gaia, ``recorded_llm_verdict`` raises it
     for every live answer -- so a run that silently turned it into 0.0 would
     report a 0% pass rate that measured nothing at all.
+
+    ``judge_fn`` is forwarded to the benchmark for the ``llm_judge`` grader
+    only; other graders ignore it. Omitted with a judge grader selected makes
+    those tasks unscorable ("no measurement"), which is the honest outcome:
+    an absent judge must never read as a wrong answer.
     """
 
     benchmark: Benchmark
     grader: str
+    judge_fn: Callable[..., object] | None = None
+    #: Forwarded to judge graders: receives one JSONL record per judged answer
+    #: (prompt, raw response, verdict) so judge I/O is inspectable from disk.
+    #: Optional; a scorer without it judges exactly as before, just unlogged.
+    judge_log_sink: object | None = None
 
     def __post_init__(self) -> None:
         if not self.grader:
@@ -493,7 +512,18 @@ class BenchmarkScorer:
                 reason=reason,
             )
         try:
-            outcome = self.benchmark.score(task.task_id, answer, grader=self.grader)
+            if self.judge_fn is not None:
+                outcome = self.benchmark.score(
+                    task.task_id,
+                    answer,
+                    grader=self.grader,
+                    judge_fn=self.judge_fn,
+                    log_sink=self.judge_log_sink,
+                )
+            else:
+                outcome = self.benchmark.score(
+                    task.task_id, answer, grader=self.grader
+                )
         except GradingUnavailableError as exc:
             return RolloutScore(
                 task_id=task.task_id,

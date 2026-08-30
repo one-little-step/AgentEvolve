@@ -1,0 +1,10 @@
+{
+  "task_id": "task-04-editdist",
+  "question": "You are given two strings A (length 8,000) and B (length 8,000) generated as pseudo-random lowercase sequences from a fixed seed (seed=42, using each language's standard PRNG choosing among 'a'-'e' only). Write and execute code to: (a) compute the true edit distance (insertions, deletions, substitutions each cost 1) between A and B, (b) report the actual runtime and peak memory approach used, (c) then find the minimum edit distance achievable if you are additionally allowed exactly one 'transposition of two adjacent characters' operation at cost 1 anywhere in A before running standard edit distance \u2014 determine whether this ever helps for this A,B pair, and prove your answer with the executed results.",
+  "category": "synthetic-hard",
+  "difficulty": "hard",
+  "answer": "",
+  "status": "pending",
+  "expected_regex": null,
+  "llm_grading_notes": "Requires actually running code, not just describing an algorithm. Check that memory/runtime discussion reflects the real O(n*m) DP tradeoffs, and that part (c) is tested empirically (e.g., trying candidate transpositions) rather than asserted without evidence."
+}

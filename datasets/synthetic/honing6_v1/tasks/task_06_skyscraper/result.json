@@ -1,0 +1,10 @@
+{
+  "task_id": "task-06-skyscraper",
+  "question": "Find the tallest building topped out or completed in 2025 anywhere in the world, and its height in meters. Using 138.8 meters as the height of the Great Pyramid of Giza, compute how many complete Great Pyramids could be stacked to reach that building's height (round down to the nearest whole number). Then identify the architecture firm responsible for the building's design, find a different building by that same firm completed before 2020, and report the height difference in meters between the two buildings.",
+  "category": "synthetic-hard",
+  "difficulty": "hard",
+  "answer": "",
+  "status": "pending",
+  "expected_regex": null,
+  "llm_grading_notes": "Time-sensitive and requires real search rather than training-data recall (esp. for 'completed in 2025'). Verify the pyramid-stacking arithmetic is computed correctly and that the second building/firm attribution is real and checked, not fabricated."
+}

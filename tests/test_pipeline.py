@@ -274,6 +274,34 @@ def test_tally_reports_no_pass_rate_when_nothing_was_scored() -> None:
     assert "n/a" in tally.summary
 
 
+def test_tally_carries_the_unscorable_reason_per_task() -> None:
+    """S4-10: an unscorable with no recorded reason is indistinguishable from
+    an outage -- the tally must carry WHY each task produced no measurement."""
+    scores = (
+        RolloutScore(task_id="t1", grader_name="g", score=1.0, scorable=True, passed=True),
+        RolloutScore(task_id="t2", grader_name="g", score=0.0, scorable=False,
+                     reason="grader has no measurement: no llm_grading_notes"),
+        RolloutScore(task_id="t3", grader_name="g", score=0.0, scorable=False,
+                     reason="grader has no measurement: judge model call failed: 503"),
+    )
+
+    tally = tally_scores(scores, grader_name="g")
+
+    assert tally.unscorable_reasons == {
+        "t2": "grader has no measurement: no llm_grading_notes",
+        "t3": "grader has no measurement: judge model call failed: 503",
+    }
+    assert tally.unscorable_task_ids == ("t2", "t3")
+
+
+def test_tally_has_no_unscorable_reasons_when_everything_scored() -> None:
+    tally = tally_scores(
+        (RolloutScore(task_id="t1", grader_name="g", score=1.0, scorable=True, passed=True),),
+        grader_name="g",
+    )
+    assert tally.unscorable_reasons == {}
+
+
 def test_a_failed_rollout_is_never_recorded_in_the_pool() -> None:
     """The single most important property: no fabricated zero in the tensor."""
     stack = pipeline.build_offline_stack(

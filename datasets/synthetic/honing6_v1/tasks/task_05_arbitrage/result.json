@@ -1,0 +1,10 @@
+{
+  "task_id": "task-05-arbitrage",
+  "question": "Look up current spot exchange rates for USD/EUR, EUR/JPY, and JPY/USD. Using these three rates and assuming a 0.1% transaction fee is charged on every conversion (three conversions total for a full triangular loop starting and ending in USD), determine whether a triangular arbitrage opportunity exists right now. Compute the net percentage gain or loss for a $10,000 starting position after all three conversions and fees, showing your formula and the executed calculation.",
+  "category": "synthetic-hard",
+  "difficulty": "hard",
+  "answer": "",
+  "status": "pending",
+  "expected_regex": null,
+  "llm_grading_notes": "Time-sensitive; there is almost certainly no real arbitrage (efficient markets), so the model should correctly conclude a small net loss/negligible gain, not hallucinate a profitable opportunity. Check it pulls live rates rather than remembered ones, and that the fee compounding math is applied correctly across all three legs."
+}

@@ -1,0 +1,10 @@
+{
+  "task_id": "task-01-divisibility",
+  "question": "Let S be the set of integers n with 1 ≤ n ≤ 1,000,000 such that n is NOT divisible by any of 2, 3, 5, or 7. Among these n, count how many satisfy the additional condition that n+1 IS divisible by at least two distinct primes from the set {2, 3, 5, 7}. Report the exact count, and show the inclusion-exclusion reasoning you used before verifying computationally.",
+  "category": "synthetic-hard",
+  "difficulty": "hard",
+  "answer": "",
+  "status": "pending",
+  "expected_regex": "(?i)157142",
+  "llm_grading_notes": "There is one exact numeric answer (a precomputed sieve gives 157142; do not require the model to show the number alone). Grade on: (1) the final count is stated and equals 157142; (2) the answer shows genuine inclusion-exclusion or sieve reasoning, not a bare guess; (3) the count was verified by executed code or at minimum an explicit analytic derivation. An answer that reports 157142 with shown reasoning is correct even if heavily formatted or verbose."
+}

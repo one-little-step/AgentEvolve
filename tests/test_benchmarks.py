@@ -325,7 +325,7 @@ def test_grading_for_unknown_task_returns_none(simple_run: Path) -> None:
 
 def test_graders_are_named_and_scored_independently(simple_run: Path) -> None:
     bench = GaiaBenchmark.from_run_dir(simple_run)
-    assert bench.graders() == ("expected_regex", "recorded_llm_verdict")
+    assert bench.graders() == ("expected_regex", "recorded_llm_verdict", "llm_judge")
 
     regex = bench.score("gaia-001", "alpha", grader="expected_regex")
     assert regex.grader_name == "expected_regex"
